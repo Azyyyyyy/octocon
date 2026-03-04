@@ -125,7 +125,7 @@ defmodule OctoconWeb.System.AlterController do
     else
       if Map.has_key?(attrs, :alias) and attrs.alias != nil and
            Alters.alias_taken?({:system, system_id}, attrs.alias) do
-        {:ok, alter} = Alters.get_alter_by_id!({:system, system_id}, {:id, id})
+        {:ok, alter} = Alters.get_alter_by_id({:system, system_id}, {:id, id})
 
         if alter != nil and alter.alias != attrs.alias do
           conn
