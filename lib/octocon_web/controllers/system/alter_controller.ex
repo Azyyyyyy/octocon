@@ -123,7 +123,8 @@ defmodule OctoconWeb.System.AlterController do
       |> put_status(:bad_request)
       |> json(%{error: "No valid alter attributes provided.", code: "no_alter_attributes"})
     else
-      if Map.has_key?(attrs, :alias) and attrs.alias != nil and Alters.alias_taken?({:system, system_id}, attrs.alias) do
+      if Map.has_key?(attrs, :alias) and attrs.alias != nil and
+           Alters.alias_taken?({:system, system_id}, attrs.alias) do
         alter = Alters.get_alter_by_id({:system, system_id}, {:id, id})
 
         if alter != nil and alter.alias != attrs.alias do
