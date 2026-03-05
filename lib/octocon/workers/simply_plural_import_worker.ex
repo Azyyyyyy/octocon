@@ -89,11 +89,6 @@ defmodule Octocon.Workers.SimplyPluralImportWorker do
       Enum.map(custom_fields, fn {_field_id, field} -> field end)
     )
 
-    OctoconWeb.Endpoint.broadcast!("system:#{system_id}", "alters_created", %{
-      alters:
-        Enum.map(alters, fn {alter, _query} -> OctoconWeb.System.AlterJSON.data_me(alter) end)
-    })
-
     OctoconWeb.Endpoint.broadcast!("system:#{system_id}", "sp_import_complete", %{
       alter_count: alter_count
     })
@@ -146,6 +141,9 @@ defmodule Octocon.Workers.SimplyPluralImportWorker do
     e ->
       Logger.error("Error importing Simply Plural alters")
       Logger.error(Exception.format(:error, e, __STACKTRACE__))
+
+      OctoconWeb.Endpoint.broadcast!("system:#{system_id}", "sp_import_failed", %{})
+
       {:error, e}
   end
 

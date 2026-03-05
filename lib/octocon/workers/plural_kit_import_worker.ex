@@ -85,11 +85,6 @@ defmodule Octocon.Workers.PluralKitImportWorker do
       }
     )
 
-    OctoconWeb.Endpoint.broadcast!("system:#{system_id}", "alters_created", %{
-      alters:
-        Enum.map(alters, fn {alter, _query} -> OctoconWeb.System.AlterJSON.data_me(alter) end)
-    })
-
     OctoconWeb.Endpoint.broadcast!("system:#{system_id}", "pk_import_complete", %{
       alter_count: alter_count
     })
@@ -141,6 +136,9 @@ defmodule Octocon.Workers.PluralKitImportWorker do
     e ->
       Logger.error("Error importing PluralKit alters")
       Logger.error(Exception.format(:error, e, __STACKTRACE__))
+
+      OctoconWeb.Endpoint.broadcast!("system:#{system_id}", "pk_import_failed", %{})
+
       {:error, e}
   end
 
