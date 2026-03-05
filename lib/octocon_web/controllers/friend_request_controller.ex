@@ -186,6 +186,14 @@ defmodule OctoconWeb.FriendRequestController do
               code: "already_sent_request"
             })
 
+          {:error, :no_user} ->
+            conn
+            |> put_status(:bad_request)
+            |> json(%{
+              error: "That system does not exist.",
+              code: "no_user"
+            })
+
           _ ->
             conn
             |> put_status(:internal_server_error)

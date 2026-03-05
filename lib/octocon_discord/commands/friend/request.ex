@@ -153,7 +153,7 @@ defmodule OctoconDiscord.Commands.Friend.Request do
       {:error, :already_sent_request} ->
         error_component("You have already sent a friend request to #{decorator}.")
 
-      {:error, %{errors: [to_id: {"does not exist", _}]}} ->
+      {:error, :no_user} ->
         error_component("That system #{decorator} does not exist.")
 
       {:error, _} ->

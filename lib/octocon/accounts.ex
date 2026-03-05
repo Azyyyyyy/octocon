@@ -362,6 +362,40 @@ defmodule Octocon.Accounts do
     link_discord_to_user(user, discord_id)
   end
 
+  def update_username(system_identity, username) do
+    user = get_user!(system_identity)
+
+    cond do
+      user.username == username ->
+        {:error, :already_linked}
+
+      user_exists?({:username, username}) ->
+        {:error, :user_exists}
+
+      true ->
+        user
+        |> User.update_changeset(%{username: username})
+        |> Repo.update_regional({:user, {:system, user.id}})
+        |> case do
+          {:ok, value} ->
+            spawn(fn ->
+              update_user_registry(user.id, %{username: username})
+            end)
+
+            spawn(fn ->
+              OctoconWeb.Endpoint.broadcast!("system:#{user.id}", "username_updated", %{
+                username: username
+              })
+            end)
+
+            {:ok, value}
+
+          {:error, changeset} ->
+            {:error, changeset}
+        end
+    end
+  end
+
   @doc """
   Links an email to an existing user. Accepts either a `User` struct directly or a system identity.
 

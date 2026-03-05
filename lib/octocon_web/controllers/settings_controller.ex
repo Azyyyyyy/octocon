@@ -168,49 +168,37 @@ defmodule OctoconWeb.SettingsController do
 
   def update_username(conn, %{"username" => username}) do
     system_id = conn.private[:guardian_default_resource]
-    user = Accounts.get_user({:system, system_id})
 
-    if username == user.username do
-      conn
-      |> put_status(:bad_request)
-      |> json(%{
-        error: "Your username is already set to \"#{username}\".",
-        code: "username_already_set"
-      })
-    else
-      case Accounts.update_user(user, %{username: username}) do
-        {:ok, _} ->
-          conn
-          |> put_status(:ok)
-          |> json(%{message: "Your username has been changed to \"#{username}\"."})
+    case Accounts.update_username({:system, system_id}, username) do
+      {:error, :already_linked} ->
+        conn
+        |> put_status(:bad_request)
+        |> json(%{
+          error: "Your username is already set to \"#{username}\".",
+          code: "username_already_set"
+        })
 
-        {:error,
-         %Ecto.Changeset{
-           errors: [
-             username: {"has already been taken", _}
-           ]
-         }} ->
-          conn
-          |> put_status(:bad_request)
-          |> json(%{
-            error: "The username \"#{username}\" is already taken.",
-            code: "username_taken"
-          })
+      {:error, :user_exists} ->
+        conn
+        |> put_status(:bad_request)
+        |> json(%{
+          error: "The username \"#{username}\" is already taken.",
+          code: "username_taken"
+        })
 
-        {:error,
-         %Ecto.Changeset{
-           #  errors: [
-           #    username: {"has invalid format", _}
-           #  ]
-         }} ->
-          conn
-          |> put_status(:bad_request)
-          |> json(%{
-            error:
-              "The username \"#{username}\" is invalid. It must satisfy the following criteria:\n\n- Between 5-16 characters\n- Only contains letters, numbers, dashes, and underscores\n- Does not start or end with a symbol\n- Does not consist of seven lowercase letters in a row (like a system ID)",
-            code: "username_invalid"
-          })
-      end
+      {:error, _} ->
+        conn
+        |> put_status(:bad_request)
+        |> json(%{
+          error:
+            "The username \"#{username}\" is invalid. It must satisfy the following criteria:\n\n- Between 5-16 characters\n- Only contains letters, numbers, dashes, and underscores\n- Does not start or end with a symbol\n- Does not consist of seven lowercase letters in a row (like a system ID)",
+          code: "username_invalid"
+        })
+
+      {:ok, _} ->
+        conn
+        |> put_status(:ok)
+        |> json(%{message: "Your username has been changed to \"#{username}\"."})
     end
   end
 

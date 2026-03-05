@@ -17,7 +17,6 @@ defmodule OctoconDiscord.GuildCache do
     Struct.Channel,
     Struct.Emoji,
     Struct.Guild,
-    Struct.Guild.Role,
     Struct.Sticker,
     Util
   }

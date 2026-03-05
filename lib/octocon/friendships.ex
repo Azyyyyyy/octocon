@@ -592,69 +592,78 @@ defmodule Octocon.Friendships do
         from_id = Accounts.id_from_system_identity(from_identity, :system)
         to_id = Accounts.id_from_system_identity(to_identity, :system)
 
-        req =
-          %Request{
-            from_id: from_id,
-            to_id: to_id,
-            date_sent: DateTime.utc_now(:second)
-          }
-          |> change_friend_request()
-          |> Repo.insert_global()
+        cond do
+          to_id == nil or not Accounts.user_exists?({:system, to_id}) ->
+            {:error, :no_user}
 
-        case req do
-          {:ok, _} ->
-            OctoconDiscord.Utils.send_dm(
-              {:system, to_id},
-              ":mailbox_with_mail: New friend request!",
-              "The system **#{from_id}** has sent you a friend request."
-            )
+          to_id == from_id ->
+            {:error, :no_user}
 
-            spawn(fn ->
-              %{request: request, from: from} =
-                get_incoming_friend_request(from_identity, to_identity)
+          true ->
+            req =
+              %Request{
+                from_id: from_id,
+                to_id: to_id,
+                date_sent: DateTime.utc_now(:second)
+              }
+              |> change_friend_request()
+              |> Repo.insert_global()
 
-              OctoconWeb.Endpoint.broadcast!(
-                "system:#{to_id}",
-                "friend_request_received",
-                %{
-                  request: request,
-                  system: from
-                }
-                |> OctoconWeb.FriendRequestJSON.data()
-              )
-            end)
+            case req do
+              {:ok, _} ->
+                OctoconDiscord.Utils.send_dm(
+                  {:system, to_id},
+                  ":mailbox_with_mail: New friend request!",
+                  "The system **#{from_id}** has sent you a friend request."
+                )
 
-            spawn(fn ->
-              %{request: request, to: to} =
-                get_outgoing_friend_request(from_identity, to_identity)
+                spawn(fn ->
+                  %{request: request, from: from} =
+                    get_incoming_friend_request(from_identity, to_identity)
 
-              OctoconWeb.Endpoint.broadcast!(
-                "system:#{from_id}",
-                "friend_request_sent",
-                %{
-                  request: request,
-                  system: to
-                }
-                |> OctoconWeb.FriendRequestJSON.data()
-              )
-            end)
+                  OctoconWeb.Endpoint.broadcast!(
+                    "system:#{to_id}",
+                    "friend_request_received",
+                    %{
+                      request: request,
+                      system: from
+                    }
+                    |> OctoconWeb.FriendRequestJSON.data()
+                  )
+                end)
 
-            spawn(fn ->
-              OctoconDiscord.Autocomplete.FriendRequest.invalidate(
-                {:system, to_id},
-                :incoming
-              )
+                spawn(fn ->
+                  %{request: request, to: to} =
+                    get_outgoing_friend_request(from_identity, to_identity)
 
-              OctoconDiscord.Autocomplete.FriendRequest.invalidate(
-                {:system, from_id},
-                :outgoing
-              )
-            end)
+                  OctoconWeb.Endpoint.broadcast!(
+                    "system:#{from_id}",
+                    "friend_request_sent",
+                    %{
+                      request: request,
+                      system: to
+                    }
+                    |> OctoconWeb.FriendRequestJSON.data()
+                  )
+                end)
 
-            {:ok, :sent}
+                spawn(fn ->
+                  OctoconDiscord.Autocomplete.FriendRequest.invalidate(
+                    {:system, to_id},
+                    :incoming
+                  )
 
-          {:error, error} ->
-            {:error, error}
+                  OctoconDiscord.Autocomplete.FriendRequest.invalidate(
+                    {:system, from_id},
+                    :outgoing
+                  )
+                end)
+
+                {:ok, :sent}
+
+              {:error, error} ->
+                {:error, error}
+            end
         end
     end
   end

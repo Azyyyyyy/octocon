@@ -10,8 +10,6 @@ defmodule OctoconWeb.Utils.Systems do
     Friendships
   }
 
-  @spec parse_system(Plug.Conn.t(), String.t()) ::
-          {:noreply, Plug.Conn.t()} | {:self, User.t()} | {:other, User.t()}
   def parse_system(conn, id)
 
   def parse_system(conn, "me") do

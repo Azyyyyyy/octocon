@@ -56,33 +56,21 @@ defmodule OctoconDiscord.Commands.Settings do
 
   def username(%{system_identity: system_identity}, options) do
     username = get_command_option(options, "username")
-    user = Accounts.get_user!(system_identity)
 
-    if username == user.username do
-      error_component("Your username is already set to `#{username}`.")
-    else
-      case Accounts.update_user(user, %{username: username}) do
-        {:ok, _} ->
-          success_component("Your username has been changed to `#{username}`.")
+    case Accounts.update_username(system_identity, username) do
+      {:error, :already_linked} ->
+        error_component("Your username is already set to `#{username}`.")
 
-        {:error,
-         %Ecto.Changeset{
-           errors: [
-             username: {"has already been taken", _}
-           ]
-         }} ->
-          error_component("The username `#{username}` is already taken.")
+      {:error, :user_exists} ->
+        error_component("The username `#{username}` is already taken.")
 
-        {:error,
-         %Ecto.Changeset{
-           errors: [
-             username: {"has invalid format", _}
-           ]
-         }} ->
-          error_component(
-            "The username `#{username}` is invalid. It must satisfy the following criteria:\n\n- Between 5-16 characters\n- Only contains letters, numbers, dashes, and underscores\n- Does not start or end with a symbol\n- Does not consist of seven lowercase letters in a row (like a system ID)"
-          )
-      end
+      {:error, _} ->
+        error_component(
+          "The username `#{username}` is invalid. It must satisfy the following criteria:\n\n- Between 5-16 characters\n- Only contains letters, numbers, dashes, and underscores\n- Does not start or end with a symbol\n- Does not consist of seven lowercase letters in a row (like a system ID)"
+        )
+
+      {:ok, _} ->
+        success_component("Your username has been changed to `#{username}`.")
     end
   end
 
