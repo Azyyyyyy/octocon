@@ -11,7 +11,7 @@ defmodule Nosedrum.Converters do
 
   alias Nostrum.Error.ApiError
   alias Nostrum.Snowflake
-  alias Nostrum.Struct.Guild.{Member, Role}
+  alias Nostrum.Struct.Guild.Role
   alias Nostrum.Struct.{Channel, Guild}
 
   @typedoc """

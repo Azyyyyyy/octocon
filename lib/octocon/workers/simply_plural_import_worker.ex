@@ -449,5 +449,5 @@ defmodule Octocon.Workers.SimplyPluralImportWorker do
   defp parse_color("#" <> _ = color) when byte_size(color) == 7, do: color
   defp parse_color(color) when byte_size(color) == 6, do: color
   defp parse_color(color) when color == "", do: nil
-  defp parse_color(nil), do: nil
+  defp parse_color(_color), do: nil
 end

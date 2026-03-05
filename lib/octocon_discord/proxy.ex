@@ -290,7 +290,11 @@ defmodule OctoconDiscord.Proxy do
                     }
 
                   true ->
-                    nil
+                    %{
+                      filename: filename,
+                      content_type: attachment.content_type,
+                      title: attachment.title
+                    }
                 end
 
               {:ok, {file_data, attachment_data}}
