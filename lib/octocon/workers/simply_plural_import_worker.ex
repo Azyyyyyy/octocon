@@ -190,11 +190,13 @@ defmodule Octocon.Workers.SimplyPluralImportWorker do
     {:ok, %{body: alters_body}} = send_sp_request(:get, "/members/#{id}", sp_token)
 
     {alters, uuids, avatars} =
-      (Jason.decode!(alters_body) ++ Jason.decode!(custom_fronts_body))
-      |> Stream.map(&{&1["content"], &1["id"]})
+      ((Jason.decode!(alters_body) |> Enum.map(fn alter -> Map.put(alter, "type", :alter) end)) ++
+         (Jason.decode!(custom_fronts_body)
+          |> Enum.map(fn cf -> Map.put(cf, "type", :custom_front) end)))
+      |> Stream.map(&{&1["content"], &1["id"], &1["type"]})
       |> Stream.with_index(start_count)
-      |> Stream.map(fn {{alter, uuid}, index} ->
-        {alter, avatar} = parse_alter(system_id, alter, index, field_associations)
+      |> Stream.map(fn {{alter, uuid, type}, index} ->
+        {alter, avatar} = parse_alter(system_id, alter, type, index, field_associations)
         {alter, uuid, avatar}
       end)
       |> Stream.map(fn {alter, uuid, avatar} ->
@@ -370,7 +372,7 @@ defmodule Octocon.Workers.SimplyPluralImportWorker do
     res
   end
 
-  defp parse_alter(system_id, alter, id, field_associations) do
+  defp parse_alter(system_id, alter, type, id, field_associations) do
     {
       %Alter{
         user_id: system_id,
@@ -382,7 +384,7 @@ defmodule Octocon.Workers.SimplyPluralImportWorker do
         alias: nil,
         pinned: false,
         archived: false,
-        untracked: alter["archived"] == nil,
+        untracked: type == :custom_front,
         last_fronted: nil,
         fields:
           Enum.map(alter["info"] || [], fn {field_id, value} ->
