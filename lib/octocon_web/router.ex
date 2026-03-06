@@ -73,11 +73,9 @@ defmodule OctoconWeb.Router do
       end
 
       scope "/tags" do
-        get "/", System.TagController, :index
         post "/", System.TagController, :create
 
         scope "/:id" do
-          get "/", System.TagController, :show
           patch "/", System.TagController, :update
           delete "/", System.TagController, :delete
 
