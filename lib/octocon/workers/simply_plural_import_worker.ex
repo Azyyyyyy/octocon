@@ -385,18 +385,17 @@ defmodule Octocon.Workers.SimplyPluralImportWorker do
         untracked: type == :custom_front,
         last_fronted: nil,
         fields:
-          alter["info"] ||
-            []
-            |> Enum.map(fn {field_id, value} ->
-              octocon_field_id = Map.get(field_associations, field_id)
+          (alter["info"] ||
+             [])
+          |> Enum.map(fn {field_id, value} ->
+            octocon_field_id = Map.get(field_associations, field_id)
 
-              %Octocon.Alters.Field{
-                id: octocon_field_id,
-                value: value
-              }
-            end)
-            |> Enum.filter(fn field -> field.id != nil end)
-            |> Enum.into(%{}),
+            %Octocon.Alters.Field{
+              id: octocon_field_id,
+              value: value
+            }
+          end)
+          |> Enum.filter(fn field -> field.id != nil end),
         security_level: 3,
         inserted_at: NaiveDateTime.utc_now(:second) |> naive_datetime_to_datetime(),
         updated_at: NaiveDateTime.utc_now(:second) |> naive_datetime_to_datetime()
