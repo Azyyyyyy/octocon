@@ -395,7 +395,8 @@ defmodule Octocon.Workers.SimplyPluralImportWorker do
                 value: value
               }
             end)
-            |> Enum.filter(fn field -> field.id != nil end),
+            |> Enum.filter(fn field -> field.id != nil end)
+            |> Enum.into(%{}),
         security_level: 3,
         inserted_at: NaiveDateTime.utc_now(:second) |> naive_datetime_to_datetime(),
         updated_at: NaiveDateTime.utc_now(:second) |> naive_datetime_to_datetime()
