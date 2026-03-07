@@ -81,8 +81,7 @@ defmodule OctoconWeb.AuthController do
 
     redirect_url =
       case metadata do
-        %{"platform" => "wasm", "is_beta" => "true"} -> "https://beta.octocon.app/app"
-        %{"platform" => "wasm", "is_beta" => "false"} -> "https://octocon.app/app"
+        %{"platform" => "wasm"} -> "https://octocon.app/app"
         _ -> "https://octocon.app/deep/auth/token"
       end
       |> Kernel.<>(url_params)
