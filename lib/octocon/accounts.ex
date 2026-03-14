@@ -1282,7 +1282,7 @@ defmodule Octocon.Accounts do
     %{
       "version" => 2,
       "name" => username,
-      "description" => description,
+      "description" => (description || "") |> String.byte_slice(0, 1000),
       "avatar_url" => avatar_url,
       "switches" => [],
       "members" =>
@@ -1290,9 +1290,9 @@ defmodule Octocon.Accounts do
         |> Enum.map(fn %Octocon.Alters.Alter{} = alter ->
           %{
             "id" => to_string(alter.id),
-            "name" => (alter.name || "") |> String.slice(0, 100),
-            "pronouns" => (alter.pronouns || "") |> String.slice(0, 100),
-            "description" => (alter.description || "") |> String.slice(0, 1000),
+            "name" => (alter.name || "") |> String.byte_slice(0, 100),
+            "pronouns" => (alter.pronouns || "") |> String.byte_slice(0, 100),
+            "description" => (alter.description || "") |> String.byte_slice(0, 1000),
             "color" => format_import_color(alter.color),
             "avatar_url" => alter.avatar_url,
             "proxy_tags" =>
@@ -1304,8 +1304,8 @@ defmodule Octocon.Accounts do
                   |> String.split("text", parts: 2)
 
                 %{
-                  "prefix" => prefix |> String.slice(0, 50),
-                  "suffix" => suffix |> String.slice(0, 50)
+                  "prefix" => prefix |> String.byte_slice(0, 50),
+                  "suffix" => suffix |> String.byte_slice(0, 50)
                 }
               end),
             "display_name" => alter.proxy_name
@@ -1416,4 +1416,5 @@ defmodule Octocon.Accounts do
 
   defp format_import_color(nil), do: nil
   defp format_import_color("#" <> rest = color) when byte_size(color) == 7, do: rest
+  defp format_import_color(_), do: nil
 end
