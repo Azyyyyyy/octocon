@@ -63,7 +63,7 @@ defmodule OctoconWeb.AuthController do
       }) do
     user =
       case Accounts.get_user_registry({:discord, discord_id}) do
-        nil -> Accounts.create_user_from_discord(discord_id) |> elem(1)
+        nil -> raise "Signups disabled"
         user -> user
       end
 
@@ -87,6 +87,13 @@ defmodule OctoconWeb.AuthController do
       |> Kernel.<>(url_params)
 
     redirect(conn, external: redirect_url)
+  rescue
+    _ ->
+      conn
+      |> put_status(403)
+      |> text(
+        "Octocon is shutting down. Sign-ups are disabled. Please see our Discord for more information: https://discord.com/invite/octocon"
+      )
   end
 
   def callback(%{assigns: %{ueberauth_auth: %{info: %{email: email}}}} = conn, %{
@@ -94,7 +101,7 @@ defmodule OctoconWeb.AuthController do
       }) do
     user =
       case Accounts.get_user_registry({:email, email}) do
-        nil -> Accounts.create_user_from_email(email) |> elem(1)
+        nil -> raise "Signups disabled"
         user -> user
       end
 
@@ -119,6 +126,13 @@ defmodule OctoconWeb.AuthController do
       |> Kernel.<>(url_params)
 
     redirect(conn, external: redirect_url)
+  rescue
+    _ ->
+      conn
+      |> put_status(403)
+      |> text(
+        "Octocon is shutting down. Sign-ups are disabled. Please see our Discord for more information: https://discord.com/invite/octocon"
+      )
   end
 
   def callback(%{assigns: %{ueberauth_auth: %{uid: apple_id}}} = conn, %{
@@ -126,7 +140,7 @@ defmodule OctoconWeb.AuthController do
       }) do
     user =
       case Accounts.get_user_registry({:apple, apple_id}) do
-        nil -> Accounts.create_user_from_apple(apple_id) |> elem(1)
+        nil -> raise "Signups disabled"
         user -> user
       end
 
@@ -141,6 +155,13 @@ defmodule OctoconWeb.AuthController do
     url_params = "?token=#{token}&id=#{user_id}"
 
     redirect(conn, external: "https://octocon.app/deep/auth/token#{url_params}")
+  rescue
+    _ ->
+      conn
+      |> put_status(403)
+      |> text(
+        "Octocon is shutting down. Sign-ups are disabled. Please see our Discord for more information: https://discord.com/invite/octocon"
+      )
   end
 
   def callback(conn, _params) do

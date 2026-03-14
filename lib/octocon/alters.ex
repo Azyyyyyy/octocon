@@ -382,6 +382,10 @@ defmodule Octocon.Alters do
       user ->
         alter_id = if force_id == nil, do: user.lifetime_alter_count + 1, else: force_id
 
+        if get_alter_by_id(system_identity, {:id, alter_id}) != {:error, :no_alter_id} do
+          raise "Alter ID conflict"
+        end
+
         case Accounts.update_user(user, %{lifetime_alter_count: alter_id}) do
           {:ok, _user} ->
             {:ok, alter} =
@@ -402,6 +406,21 @@ defmodule Octocon.Alters do
             {:error, :database}
         end
     end
+  rescue
+    _ ->
+      if force_id == nil do
+        expected_alter_id = get_highest_alter_id(system_identity) + 1
+        user = Accounts.get_user(system_identity)
+
+        if user != nil and user.lifetime_alter_count + 1 != expected_alter_id + 1 do
+          # Retry with the correct alter ID
+          create_alter(system_identity, attrs, expected_alter_id)
+        else
+          {:error, :database}
+        end
+      else
+        {:error, :database}
+      end
   end
 
   @doc """

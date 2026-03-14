@@ -12,31 +12,9 @@ defmodule OctoconDiscord.Commands.Register do
 
   @impl Nosedrum.ApplicationCommand
   def command(interaction) do
-    %{
-      id: discord_id
-      # avatar: avatar_hash
-    } = interaction.user
-
-    discord_id = to_string(discord_id)
-
-    if Accounts.user_exists?({:discord, discord_id}) do
-      error_component("You're already registered.")
-    else
-      case Accounts.create_user_from_discord(
-             discord_id
-             # ,%{avatar_url: avatar_url}
-           ) do
-        {:ok, user} ->
-          success_component(
-            "You're registered! Your system ID is: **#{user.id}**\n\nCheck out the `/help` command to learn your way around our platform!\n\nSome tips on how to get started can be found in `/help` -> `FAQ` -> `How do I get started with the bot?`"
-          )
-
-        {:error, _} ->
-          error_component(
-            "An unknown error occurred while registering your system. Please try again."
-          )
-      end
-    end
+    error_component(
+      "Octocon is shutting down. Sign-ups are disabled. Please see our Discord for more information: https://discord.com/invite/octocon"
+    )
   end
 
   @impl Nosedrum.ApplicationCommand

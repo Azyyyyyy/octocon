@@ -23,11 +23,11 @@ defmodule OctoconWeb.Router do
   pipeline :api do
     plug :accepts, ["json"]
 
-    plug Hammer.Plug, [
-      # Allow 10 requests per second
-      rate_limit: {"api_requests", :timer.seconds(1), 10},
-      by: :ip
-    ]
+    # plug Hammer.Plug, [
+    #   # Allow 10 requests per second
+    #   rate_limit: {"api_requests", :timer.seconds(1), 50},
+    #   by: :ip
+    # ]
   end
 
   pipeline :admins_only do

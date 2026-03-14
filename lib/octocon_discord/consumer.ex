@@ -17,7 +17,7 @@ defmodule OctoconDiscord.Consumer do
   alias OctoconDiscord.Events.MessageCreate
 
   @commands %{
-    "register" => Commands.Register,
+    # "register" => Commands.Register,
     "help" => Commands.Help,
     "system" => Commands.System,
     "settings" => Commands.Settings,
@@ -30,6 +30,7 @@ defmodule OctoconDiscord.Consumer do
     "friend" => Commands.Friend,
     "admin" => Commands.Admin,
     "front" => Commands.Front,
+    "export" => Commands.Export,
     # "octo" => Commands.Octo,
     "❓ Who is this?" => Commands.Messages.WhoIsThis,
     "🔔 Ping account" => Commands.Messages.PingAccount,

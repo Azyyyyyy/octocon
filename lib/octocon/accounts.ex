@@ -1175,4 +1175,245 @@ defmodule Octocon.Accounts do
   rescue
     e -> {:error, e}
   end
+
+  def gather_export_data(system_identity) do
+    user = get_user!(system_identity)
+
+    identifier = {:user, {:system, user.id}}
+
+    alters =
+      from(a in Alter,
+        where: a.user_id == ^user.id,
+        select:
+          struct(a, [
+            :id,
+            :name,
+            :description,
+            :pronouns,
+            :pinned,
+            :avatar_url,
+            :untracked,
+            :archived,
+            :alias,
+            :proxy_name,
+            :color,
+            :security_level,
+            :fields,
+            :discord_proxies,
+            :inserted_at,
+            :updated_at
+          ])
+      )
+      |> Repo.all_regional(identifier)
+
+    fronts =
+      from(f in Octocon.Fronts.Front,
+        where: f.user_id == ^user.id,
+        select: struct(f, [:id, :alter_id, :comment, :time_start, :time_end])
+      )
+      |> Repo.all_regional(identifier)
+      |> Enum.filter(fn front -> front.alter_id != nil && front.time_start != nil end)
+
+    alter_tags =
+      from(at in Octocon.Tags.AlterTag,
+        where: at.user_id == ^user.id,
+        select: struct(at, [:tag_id, :alter_id])
+      )
+      |> Repo.all_regional(identifier)
+      |> Enum.filter(fn at -> at.alter_id != nil && at.tag_id != nil end)
+      |> Enum.group_by(& &1.tag_id)
+
+    tags =
+      from(t in Octocon.Tags.Tag,
+        where: t.user_id == ^user.id,
+        select:
+          struct(t, [
+            :id,
+            :name,
+            :description,
+            :color,
+            :security_level,
+            :parent_tag_id,
+            :inserted_at,
+            :updated_at
+          ])
+      )
+      |> Repo.all_regional(identifier)
+      |> Enum.map(fn tag ->
+        %Octocon.Tags.Tag{tag | alters: Map.get(alter_tags, tag.id, [])}
+      end)
+
+    polls =
+      from(p in Octocon.Polls.Poll,
+        where: p.user_id == ^user.id,
+        select:
+          struct(p, [
+            :id,
+            :title,
+            :description,
+            :type,
+            :data,
+            :time_end,
+            :inserted_at,
+            :updated_at
+          ])
+      )
+      |> Repo.all_regional(identifier)
+
+    %{
+      user: user,
+      alters: alters,
+      alter_tags: alter_tags,
+      fronts: fronts,
+      tags: tags,
+      polls: polls
+    }
+  end
+
+  def format_pk_export(%{
+        user: %{
+          username: username,
+          description: description,
+          avatar_url: avatar_url
+        },
+        alters: alters,
+        tags: tags
+      }) do
+    %{
+      "version" => 2,
+      "name" => username,
+      "description" => description,
+      "avatar_url" => avatar_url,
+      "switches" => [],
+      "members" =>
+        alters
+        |> Enum.map(fn %Octocon.Alters.Alter{} = alter ->
+          %{
+            "id" => to_string(alter.id),
+            "name" => (alter.name || "") |> String.slice(0, 100),
+            "pronouns" => (alter.pronouns || "") |> String.slice(0, 100),
+            "description" => (alter.description || "") |> String.slice(0, 1000),
+            "color" => format_import_color(alter.color),
+            "avatar_url" => alter.avatar_url,
+            "proxy_tags" =>
+              (alter.discord_proxies || [])
+              |> Enum.map(fn proxy ->
+                [prefix, suffix] =
+                  proxy
+                  |> String.trim()
+                  |> String.split("text", parts: 2)
+
+                %{
+                  "prefix" => prefix |> String.slice(0, 50),
+                  "suffix" => suffix |> String.slice(0, 50)
+                }
+              end),
+            "display_name" => alter.proxy_name
+          }
+        end),
+      "groups" =>
+        tags
+        |> Enum.with_index()
+        |> Enum.map(fn {%Octocon.Tags.Tag{} = tag, index} ->
+          %{
+            "id" => to_string(index),
+            "name" => tag.name,
+            "description" => tag.description,
+            "color" => format_import_color(tag.color),
+            "members" =>
+              tag.alters
+              |> Enum.map(fn alter_tag ->
+                to_string(alter_tag.alter_id)
+              end)
+          }
+        end)
+    }
+    |> Jason.encode!()
+  end
+
+  def format_full_export(%{
+        user: user,
+        alters: alters,
+        tags: tags,
+        fronts: fronts,
+        polls: polls
+      }) do
+    user = Map.take(user, [:username, :description, :id, :avatar_url, :fields])
+
+    user =
+      if user.fields == nil or user.fields == [],
+        do: user,
+        else: %{
+          user
+          | fields:
+              user.fields
+              |> Enum.map(fn field ->
+                Map.take(field, [:id, :name, :type, :locked, :security_level])
+              end)
+        }
+
+    %{
+      "user" => user,
+      "alters" =>
+        Enum.map(alters, fn alter ->
+          alter =
+            Map.take(alter, [
+              :id,
+              :name,
+              :pronouns,
+              :description,
+              :color,
+              :avatar_url,
+              :proxy_name,
+              :discord_proxies,
+              :fields
+            ])
+
+          if alter.fields == nil or alter.fields == [],
+            do: alter,
+            else: %{
+              alter
+              | fields: alter.fields |> Enum.map(fn field -> Map.take(field, [:id, :value]) end)
+            }
+        end),
+      "fronts" =>
+        Enum.map(fronts, fn front ->
+          Map.take(front, [:id, :alter_id, :comment, :time_start, :time_end])
+        end),
+      "tags" =>
+        Enum.map(tags, fn tag ->
+          Map.take(tag, [
+            :id,
+            :name,
+            :description,
+            :color,
+            :security_level,
+            :parent_tag_id,
+            :inserted_at,
+            :updated_at
+          ])
+          |> Map.put(
+            :alters,
+            Enum.map(tag.alters, fn alter_tag -> alter_tag.alter_id end)
+          )
+        end),
+      "polls" =>
+        Enum.map(polls, fn poll ->
+          Map.take(poll, [
+            :id,
+            :title,
+            :description,
+            :type,
+            :data,
+            :time_end,
+            :inserted_at,
+            :updated_at
+          ])
+        end)
+    }
+    |> Jason.encode!()
+  end
+
+  defp format_import_color(nil), do: nil
+  defp format_import_color("#" <> rest = color) when byte_size(color) == 7, do: rest
 end
