@@ -35,3 +35,16 @@ basic.conf
 
 # Dev config (contains secrets)
 /config/dev.exs
+
+# C# / .NET
+csharp/**/bin/
+csharp/**/obj/
+csharp/**/*.user
+csharp/**/*.suo
+csharp/**/*.vs/
+.vs/
+*.ncrunch*
+TestResults/
+[Pp]ublish/
+*.nuget.props
+*.nuget.targets
