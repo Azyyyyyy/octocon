@@ -1,0 +1,46 @@
+{
+  "version": 1,
+  "description": "Poll lifecycle: create, update, delete — with idempotency replay.",
+  "steps": [
+    {
+      "name": "create poll",
+      "method": "POST",
+      "path": "/api/systems/me/polls",
+      "principalId": "replay-sys-poll",
+      "idempotencyKey": "replay-poll-create-001",
+      "body": { "title": "ReplayPoll", "options": ["A", "B"] },
+      "expectedStatus": 200,
+      "expectedReplay": false,
+      "captureAs": { "pollId": "pollId" }
+    },
+    {
+      "name": "create poll (replay)",
+      "method": "POST",
+      "path": "/api/systems/me/polls",
+      "principalId": "replay-sys-poll",
+      "idempotencyKey": "replay-poll-create-001",
+      "body": { "title": "ReplayPoll", "options": ["A", "B"] },
+      "expectedStatus": 200,
+      "expectedReplay": true
+    },
+    {
+      "name": "update poll",
+      "method": "PATCH",
+      "path": "/api/systems/me/polls/{pollId}",
+      "principalId": "replay-sys-poll",
+      "idempotencyKey": "replay-poll-update-001",
+      "body": { "title": "ReplayPollRenamed" },
+      "expectedStatus": 200,
+      "expectedReplay": false
+    },
+    {
+      "name": "delete poll",
+      "method": "DELETE",
+      "path": "/api/systems/me/polls/{pollId}",
+      "principalId": "replay-sys-poll",
+      "idempotencyKey": "replay-poll-delete-001",
+      "expectedStatus": 200,
+      "expectedReplay": false
+    }
+  ]
+}

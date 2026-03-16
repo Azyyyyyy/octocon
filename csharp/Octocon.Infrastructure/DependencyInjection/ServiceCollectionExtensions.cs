@@ -16,7 +16,7 @@ using Octocon.Infrastructure.Persistence.Scylla;
 
 namespace Octocon.Infrastructure.DependencyInjection;
 
-public static class ServiceCollectionExtensions
+public static partial class ServiceCollectionExtensions
 {
     public static IServiceCollection AddOctoconPersistence(
         this IServiceCollection services,
@@ -36,6 +36,7 @@ public static class ServiceCollectionExtensions
                 .AddSingleton<IAccountRepository, InMemoryRegionalAccountRepository>()
                 .AddSingleton<INotificationTokenRepository, InMemoryNotificationTokenRepository>()
                 .AddSingleton<IEncryptionStateRepository, InMemoryEncryptionStateRepository>()
+                .AddSingleton<ISettingsFieldRepository, InMemorySettingsFieldRepository>()
                 .AddSingleton<IAlterRepository, InMemoryRegionalAlterRepository>()
                 .AddSingleton<IFrontingRepository, InMemoryRegionalFrontingRepository>()
                 .AddSingleton<IFriendshipRepository, InMemoryFriendshipRepository>()
@@ -52,6 +53,7 @@ public static class ServiceCollectionExtensions
                 .AddSingleton<IAccountRepository, ScyllaAccountRepository>()
                 .AddSingleton<INotificationTokenRepository, ScyllaNotificationTokenRepository>()
                 .AddSingleton<IEncryptionStateRepository, ScyllaEncryptionStateRepository>()
+                .AddSingleton<ISettingsFieldRepository, ScyllaSettingsFieldRepository>()
                 .AddSingleton<IAlterRepository, ScyllaAlterRepository>()
                 .AddSingleton<IFrontingRepository, ScyllaFrontingRepository>()
                 .AddSingleton<IFriendshipRepository, ScyllaFriendshipRepository>()

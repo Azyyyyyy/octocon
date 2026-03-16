@@ -86,6 +86,33 @@ public sealed class InMemoryRegionalAlterRepository : IAlterRepository
         return Task.FromResult(store.TryRemove(alterId, out _));
     }
 
+    public Task<IReadOnlyList<AlterPublicReadModel>> ListAsync(string systemId, CancellationToken cancellationToken = default)
+    {
+        var systemKey = GetSystemKey(systemId);
+        if (!_bySystem.TryGetValue(systemKey, out var store))
+        {
+            return Task.FromResult<IReadOnlyList<AlterPublicReadModel>>(Array.Empty<AlterPublicReadModel>());
+        }
+
+        var rows = store.Values
+            .OrderBy(x => x.AlterId)
+            .Select(x => new AlterPublicReadModel(x.AlterId, x.Name, x.Alias))
+            .ToArray();
+
+        return Task.FromResult<IReadOnlyList<AlterPublicReadModel>>(rows);
+    }
+
+    public Task<AlterPublicReadModel?> GetAsync(string systemId, int alterId, CancellationToken cancellationToken = default)
+    {
+        var systemKey = GetSystemKey(systemId);
+        if (!_bySystem.TryGetValue(systemKey, out var store) || !store.TryGetValue(alterId, out var alter))
+        {
+            return Task.FromResult<AlterPublicReadModel?>(null);
+        }
+
+        return Task.FromResult<AlterPublicReadModel?>(new AlterPublicReadModel(alter.AlterId, alter.Name, alter.Alias));
+    }
+
     public Task<bool> AliasTakenByOtherAsync(
         string systemId,
         int alterId,

@@ -165,6 +165,52 @@ public sealed class ScyllaAlterRepository : IAlterRepository
         }, _options, cancellationToken);
     }
 
+    public async Task<IReadOnlyList<AlterPublicReadModel>> ListAsync(string systemId, CancellationToken cancellationToken = default)
+    {
+        return await DatabaseTransientRetry.ExecuteScyllaAsync(async () =>
+        {
+            var session = await _sessionProvider.GetSessionAsync(cancellationToken);
+            var scopedSystemId = GetScopedSystemId(systemId);
+
+            var query = new SimpleStatement(
+                "SELECT alter_id, name, alias FROM alters_by_system WHERE system_id = ?",
+                scopedSystemId
+            );
+
+            var rows = await session.ExecuteAsync(query);
+            return rows
+                .Select(row => new AlterPublicReadModel(
+                    row.GetValue<int>("alter_id"),
+                    row.GetValue<string>("name"),
+                    row.GetValue<string?>("alias")))
+                .OrderBy(x => x.AlterId)
+                .ToArray();
+        }, _options, cancellationToken);
+    }
+
+    public async Task<AlterPublicReadModel?> GetAsync(string systemId, int alterId, CancellationToken cancellationToken = default)
+    {
+        return await DatabaseTransientRetry.ExecuteScyllaAsync(async () =>
+        {
+            var session = await _sessionProvider.GetSessionAsync(cancellationToken);
+            var scopedSystemId = GetScopedSystemId(systemId);
+
+            var query = new SimpleStatement(
+                "SELECT alter_id, name, alias FROM alters_by_system WHERE system_id = ? AND alter_id = ? LIMIT 1",
+                scopedSystemId,
+                alterId
+            );
+
+            var row = (await session.ExecuteAsync(query)).FirstOrDefault();
+            return row is null
+                ? null
+                : new AlterPublicReadModel(
+                    row.GetValue<int>("alter_id"),
+                    row.GetValue<string>("name"),
+                    row.GetValue<string?>("alias"));
+        }, _options, cancellationToken);
+    }
+
     public async Task<bool> AliasTakenByOtherAsync(
         string systemId,
         int alterId,

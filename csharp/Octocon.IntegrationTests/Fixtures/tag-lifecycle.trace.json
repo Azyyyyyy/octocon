@@ -1,0 +1,65 @@
+{
+  "version": 1,
+  "description": "Tag lifecycle: create, attach alter, detach alter, delete — with idempotency replay.",
+  "steps": [
+    {
+      "name": "create alter for tagging",
+      "method": "POST",
+      "path": "/api/systems/me/alters",
+      "principalId": "replay-sys-tag",
+      "idempotencyKey": "replay-tag-alter-create-001",
+      "body": { "name": "TagTestAlter" },
+      "expectedStatus": 200,
+      "expectedReplay": false,
+      "captureAs": { "alterId": "alterId" }
+    },
+    {
+      "name": "create tag",
+      "method": "POST",
+      "path": "/api/systems/me/tags",
+      "principalId": "replay-sys-tag",
+      "idempotencyKey": "replay-tag-create-001",
+      "body": { "name": "ReplayTag" },
+      "expectedStatus": 200,
+      "expectedReplay": false,
+      "captureAs": { "tagId": "tagId" }
+    },
+    {
+      "name": "create tag (replay)",
+      "method": "POST",
+      "path": "/api/systems/me/tags",
+      "principalId": "replay-sys-tag",
+      "idempotencyKey": "replay-tag-create-001",
+      "body": { "name": "ReplayTag" },
+      "expectedStatus": 200,
+      "expectedReplay": true
+    },
+    {
+      "name": "attach alter to tag",
+      "method": "PUT",
+      "path": "/api/systems/me/tags/{tagId}/alters/{alterId}",
+      "principalId": "replay-sys-tag",
+      "idempotencyKey": "replay-tag-attach-001",
+      "expectedStatus": 200,
+      "expectedReplay": false
+    },
+    {
+      "name": "attach alter to tag (replay)",
+      "method": "PUT",
+      "path": "/api/systems/me/tags/{tagId}/alters/{alterId}",
+      "principalId": "replay-sys-tag",
+      "idempotencyKey": "replay-tag-attach-001",
+      "expectedStatus": 200,
+      "expectedReplay": true
+    },
+    {
+      "name": "delete tag",
+      "method": "DELETE",
+      "path": "/api/systems/me/tags/{tagId}",
+      "principalId": "replay-sys-tag",
+      "idempotencyKey": "replay-tag-delete-001",
+      "expectedStatus": 200,
+      "expectedReplay": false
+    }
+  ]
+}

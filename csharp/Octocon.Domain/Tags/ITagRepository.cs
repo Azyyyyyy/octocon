@@ -1,5 +1,12 @@
 namespace Octocon.Domain.Tags;
 
+public sealed record TagPublicReadModel(
+    string TagId,
+    string Name,
+    string? ParentTagId,
+    IReadOnlyList<int> AlterIds
+);
+
 public interface ITagRepository
 {
     /// <summary>Returns the new tag's ID on success, null if the parent was not found.</summary>
@@ -27,4 +34,8 @@ public interface ITagRepository
 
     /// <summary>Returns true if the parent was removed, false if the tag does not exist.</summary>
     Task<bool> RemoveParentAsync(string systemId, string tagId, CancellationToken cancellationToken = default);
+
+    Task<IReadOnlyList<TagPublicReadModel>> ListAsync(string systemId, CancellationToken cancellationToken = default);
+
+    Task<TagPublicReadModel?> GetAsync(string systemId, string tagId, CancellationToken cancellationToken = default);
 }

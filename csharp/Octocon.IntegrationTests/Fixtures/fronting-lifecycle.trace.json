@@ -1,0 +1,56 @@
+{
+  "version": 1,
+  "description": "Fronting lifecycle: start front, end front — with idempotency replay.",
+  "steps": [
+    {
+      "name": "create alter for fronting",
+      "method": "POST",
+      "path": "/api/systems/me/alters",
+      "principalId": "replay-sys-front",
+      "idempotencyKey": "replay-front-alter-create-001",
+      "body": { "name": "FrontTestAlter" },
+      "expectedStatus": 200,
+      "expectedReplay": false,
+      "captureAs": { "alterId": "alterId" }
+    },
+    {
+      "name": "start front",
+      "method": "POST",
+      "path": "/api/systems/me/fronting",
+      "principalId": "replay-sys-front",
+      "idempotencyKey": "replay-front-start-001",
+      "body": { "alterId": "{alterId}" },
+      "expectedStatus": 200,
+      "expectedReplay": false,
+      "captureAs": { "frontId": "frontId" }
+    },
+    {
+      "name": "start front (replay)",
+      "method": "POST",
+      "path": "/api/systems/me/fronting",
+      "principalId": "replay-sys-front",
+      "idempotencyKey": "replay-front-start-001",
+      "body": { "alterId": "{alterId}" },
+      "expectedStatus": 200,
+      "expectedReplay": true
+    },
+    {
+      "name": "end front",
+      "method": "DELETE",
+      "path": "/api/systems/me/fronting/{frontId}",
+      "principalId": "replay-sys-front",
+      "idempotencyKey": "replay-front-end-001",
+      "expectedStatus": 200,
+      "expectedReplay": false
+    },
+    {
+      "name": "end front (replay)",
+      "method": "DELETE",
+      "path": "/api/systems/me/fronting/{frontId}",
+      "principalId": "replay-sys-front",
+      "idempotencyKey": "replay-front-end-001",
+      "expectedStatus": 200,
+      "expectedReplay": true
+    }
+  ]
+}

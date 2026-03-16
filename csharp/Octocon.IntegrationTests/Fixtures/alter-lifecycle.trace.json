@@ -1,0 +1,65 @@
+{
+  "version": 1,
+  "description": "Alter lifecycle: create, update, delete — verifies idempotency replay for each op.",
+  "steps": [
+    {
+      "name": "create alter",
+      "method": "POST",
+      "path": "/api/systems/me/alters",
+      "principalId": "replay-sys-alter",
+      "idempotencyKey": "replay-alter-create-001",
+      "body": { "name": "ReplayAlter" },
+      "expectedStatus": 200,
+      "expectedReplay": false,
+      "captureAs": { "alterId": "alterId" }
+    },
+    {
+      "name": "create alter (replay)",
+      "method": "POST",
+      "path": "/api/systems/me/alters",
+      "principalId": "replay-sys-alter",
+      "idempotencyKey": "replay-alter-create-001",
+      "body": { "name": "ReplayAlter" },
+      "expectedStatus": 200,
+      "expectedReplay": true
+    },
+    {
+      "name": "update alter",
+      "method": "PATCH",
+      "path": "/api/systems/me/alters/{alterId}",
+      "principalId": "replay-sys-alter",
+      "idempotencyKey": "replay-alter-update-001",
+      "body": { "name": "ReplayAlterRenamed" },
+      "expectedStatus": 200,
+      "expectedReplay": false
+    },
+    {
+      "name": "update alter (replay)",
+      "method": "PATCH",
+      "path": "/api/systems/me/alters/{alterId}",
+      "principalId": "replay-sys-alter",
+      "idempotencyKey": "replay-alter-update-001",
+      "body": { "name": "ReplayAlterRenamed" },
+      "expectedStatus": 200,
+      "expectedReplay": true
+    },
+    {
+      "name": "delete alter",
+      "method": "DELETE",
+      "path": "/api/systems/me/alters/{alterId}",
+      "principalId": "replay-sys-alter",
+      "idempotencyKey": "replay-alter-delete-001",
+      "expectedStatus": 200,
+      "expectedReplay": false
+    },
+    {
+      "name": "delete alter (replay)",
+      "method": "DELETE",
+      "path": "/api/systems/me/alters/{alterId}",
+      "principalId": "replay-sys-alter",
+      "idempotencyKey": "replay-alter-delete-001",
+      "expectedStatus": 200,
+      "expectedReplay": true
+    }
+  ]
+}

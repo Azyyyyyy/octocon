@@ -10,16 +10,19 @@ public sealed class SetPrimaryFrontCommandHandler : ICommandHandler<SetPrimaryFr
     private readonly IFrontingRepository _frontingRepository;
     private readonly IIdempotencyStore _idempotencyStore;
     private readonly IAggregateVersionStore _versionStore;
+    private readonly IClusterEventBus _eventBus;
 
     public SetPrimaryFrontCommandHandler(
         IFrontingRepository frontingRepository,
         IIdempotencyStore idempotencyStore,
-        IAggregateVersionStore versionStore
+        IAggregateVersionStore versionStore,
+        IClusterEventBus eventBus
     )
     {
         _frontingRepository = frontingRepository;
         _idempotencyStore = idempotencyStore;
         _versionStore = versionStore;
+        _eventBus = eventBus;
     }
 
     public async Task<CommandExecutionResult<FrontCommandResult>> HandleAsync(
@@ -95,6 +98,8 @@ public sealed class SetPrimaryFrontCommandHandler : ICommandHandler<SetPrimaryFr
             resultJson,
             cancellationToken
         );
+
+        await _eventBus.PublishAsync(new FrontingStateChangedEvent(command.PrincipalId), cancellationToken);
 
         return CommandExecutionResult<FrontCommandResult>.Success(result);
     }

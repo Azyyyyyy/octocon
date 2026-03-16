@@ -10,15 +10,18 @@ public sealed class BulkUpdateFrontCommandHandler : ICommandHandler<BulkUpdateFr
     private readonly IFrontingRepository _frontingRepository;
     private readonly IIdempotencyStore _idempotencyStore;
     private readonly IAggregateVersionStore _versionStore;
+    private readonly IClusterEventBus _eventBus;
 
     public BulkUpdateFrontCommandHandler(
         IFrontingRepository frontingRepository,
         IIdempotencyStore idempotencyStore,
-        IAggregateVersionStore versionStore)
+        IAggregateVersionStore versionStore,
+        IClusterEventBus eventBus)
     {
         _frontingRepository = frontingRepository;
         _idempotencyStore = idempotencyStore;
         _versionStore = versionStore;
+        _eventBus = eventBus;
     }
 
     public async Task<CommandExecutionResult<FrontCommandResult>> HandleAsync(
@@ -84,6 +87,8 @@ public sealed class BulkUpdateFrontCommandHandler : ICommandHandler<BulkUpdateFr
             resultJson,
             cancellationToken);
 
+        await _eventBus.PublishAsync(new FrontingStateChangedEvent(command.PrincipalId), cancellationToken);
+
         return CommandExecutionResult<FrontCommandResult>.Success(result);
     }
 
@@ -116,15 +121,18 @@ public sealed class SetFrontCommandHandler : ICommandHandler<SetFrontCommand, Fr
     private readonly IFrontingRepository _frontingRepository;
     private readonly IIdempotencyStore _idempotencyStore;
     private readonly IAggregateVersionStore _versionStore;
+    private readonly IClusterEventBus _eventBus;
 
     public SetFrontCommandHandler(
         IFrontingRepository frontingRepository,
         IIdempotencyStore idempotencyStore,
-        IAggregateVersionStore versionStore)
+        IAggregateVersionStore versionStore,
+        IClusterEventBus eventBus)
     {
         _frontingRepository = frontingRepository;
         _idempotencyStore = idempotencyStore;
         _versionStore = versionStore;
+        _eventBus = eventBus;
     }
 
     public async Task<CommandExecutionResult<FrontCommandResult>> HandleAsync(
@@ -195,6 +203,8 @@ public sealed class SetFrontCommandHandler : ICommandHandler<SetFrontCommand, Fr
             CommandSerialization.Hash(resultJson),
             resultJson,
             cancellationToken);
+
+        await _eventBus.PublishAsync(new FrontingStateChangedEvent(command.PrincipalId), cancellationToken);
 
         return CommandExecutionResult<FrontCommandResult>.Success(result);
     }

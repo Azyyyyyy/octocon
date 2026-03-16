@@ -11,6 +11,7 @@ public sealed class ScyllaPostgresBootstrapHealthChecker : IDatabaseBootstrapHea
     private static readonly string[] RequiredScyllaTables =
     [
         "account_profiles_by_system",
+        "settings_fields_by_system",
         "alters_by_system",
         "fronting_active_by_system",
         "fronting_primary_by_system",

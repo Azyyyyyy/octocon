@@ -1,8 +1,11 @@
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
+using OpenTelemetry.Metrics;
+using OpenTelemetry.Trace;
 using System.Security.Claims;
 using Microsoft.IdentityModel.Tokens;
 using Octocon.Api;
+using Octocon.Domain.Abstractions;
 using Octocon.Domain.Accounts;
 using Octocon.Domain.Alters;
 using Octocon.Domain.Friendships;
@@ -11,10 +14,19 @@ using Octocon.Domain.Journals;
 using Octocon.Domain.Polls;
 using Octocon.Domain.Settings;
 using Octocon.Domain.Tags;
+using Octocon.Infrastructure.Coordination;
 using Octocon.Infrastructure.DependencyInjection;
 using Octocon.Infrastructure.Persistence;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// --- Node role ---
+// Resolution order mirrors the legacy Elixir runtime:
+//   1. FLY_PROCESS_GROUP (fly.io automatic)
+//   2. OCTOCON_NODE_GROUP (manual override)
+//   3. Default: auxiliary
+var nodeGroup = NodeGroupResolver.Resolve();
+builder.Services.AddOctoconCluster(nodeGroup);
 
 // --- Persistence ---
 var persistenceMode = (Env("OCTOCON_PERSISTENCE") ?? "scylla-postgres").ToLowerInvariant() switch
@@ -57,6 +69,19 @@ builder.Services.AddSingleton<RemovePushTokenCommandHandler>();
 builder.Services.AddSingleton<SetupEncryptionCommandHandler>();
 builder.Services.AddSingleton<RecoverEncryptionCommandHandler>();
 builder.Services.AddSingleton<ResetEncryptionCommandHandler>();
+builder.Services.AddSingleton<UploadAvatarCommandHandler>();
+builder.Services.AddSingleton<DeleteAvatarCommandHandler>();
+builder.Services.AddSingleton<ImportPkCommandHandler>();
+builder.Services.AddSingleton<ImportSpCommandHandler>();
+builder.Services.AddSingleton<UnlinkDiscordCommandHandler>();
+builder.Services.AddSingleton<UnlinkEmailCommandHandler>();
+builder.Services.AddSingleton<UnlinkAppleCommandHandler>();
+builder.Services.AddSingleton<DeleteAccountCommandHandler>();
+builder.Services.AddSingleton<WipeAltersCommandHandler>();
+builder.Services.AddSingleton<CreateFieldCommandHandler>();
+builder.Services.AddSingleton<UpdateFieldCommandHandler>();
+builder.Services.AddSingleton<DeleteFieldCommandHandler>();
+builder.Services.AddSingleton<RelocateFieldCommandHandler>();
 builder.Services.AddSingleton<CreateTagCommandHandler>();
 builder.Services.AddSingleton<UpdateTagCommandHandler>();
 builder.Services.AddSingleton<DeleteTagCommandHandler>();
@@ -127,10 +152,38 @@ builder.Services.AddAuthorization(options =>
         .Build();
 });
 
+// --- OpenTelemetry (Phase N) ---
+// Traces and metrics are exported via OTLP when OCTOCON_OTLP_ENDPOINT is set.
+// Without the env var the SDK still runs in-process so metrics are always available
+// for internal /metrics scraping or future export without code changes.
+var otlpEndpoint = Env("OCTOCON_OTLP_ENDPOINT");
+
+builder.Services
+    .AddOpenTelemetry()
+    .WithMetrics(metrics =>
+    {
+        metrics
+            .AddAspNetCoreInstrumentation()
+            .AddMeter(OctoconMetrics.MeterName);
+
+        if (!string.IsNullOrWhiteSpace(otlpEndpoint))
+            metrics.AddOtlpExporter(o => o.Endpoint = new Uri(otlpEndpoint));
+    })
+    .WithTracing(tracing =>
+    {
+        tracing.AddAspNetCoreInstrumentation();
+
+        if (!string.IsNullOrWhiteSpace(otlpEndpoint))
+            tracing.AddOtlpExporter(o => o.Endpoint = new Uri(otlpEndpoint));
+    });
+
 // --- MVC ---
 builder.Services.AddControllers();
 
 var app = builder.Build();
+
+// Phase N: correlation ID propagation and structured request logging.
+app.UseMiddleware<RequestCorrelationMiddleware>();
 
 // X-Octocon-Contract response header on every response
 app.Use(async (ctx, next) =>

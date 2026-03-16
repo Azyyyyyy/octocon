@@ -297,6 +297,76 @@ public sealed class ScyllaTagRepository : ITagRepository
         }, _options, cancellationToken);
     }
 
+    public async Task<IReadOnlyList<TagPublicReadModel>> ListAsync(string systemId, CancellationToken cancellationToken = default)
+    {
+        return await DatabaseTransientRetry.ExecuteScyllaAsync(async () =>
+        {
+            var session = await _sessionProvider.GetSessionAsync(cancellationToken);
+            var scopedSystemId = GetScopedSystemId(systemId);
+
+            var query = new SimpleStatement(
+                "SELECT tag_id, name, parent_tag_id FROM tags_by_system WHERE system_id = ?",
+                scopedSystemId
+            );
+
+            var rows = await session.ExecuteAsync(query);
+            var tags = new List<TagPublicReadModel>();
+
+            foreach (var row in rows)
+            {
+                var tagId = row.GetValue<string>("tag_id");
+                var alterIds = await GetAlterIdsAsync(session, scopedSystemId, tagId);
+                tags.Add(new TagPublicReadModel(
+                    tagId,
+                    row.GetValue<string>("name"),
+                    row.GetValue<string?>("parent_tag_id"),
+                    alterIds));
+            }
+
+            return tags.OrderBy(x => x.TagId).ToArray();
+        }, _options, cancellationToken);
+    }
+
+    public async Task<TagPublicReadModel?> GetAsync(string systemId, string tagId, CancellationToken cancellationToken = default)
+    {
+        return await DatabaseTransientRetry.ExecuteScyllaAsync(async () =>
+        {
+            var session = await _sessionProvider.GetSessionAsync(cancellationToken);
+            var scopedSystemId = GetScopedSystemId(systemId);
+
+            var query = new SimpleStatement(
+                "SELECT tag_id, name, parent_tag_id FROM tags_by_system WHERE system_id = ? AND tag_id = ? LIMIT 1",
+                scopedSystemId,
+                tagId
+            );
+
+            var row = (await session.ExecuteAsync(query)).FirstOrDefault();
+            if (row is null)
+            {
+                return null;
+            }
+
+            var alterIds = await GetAlterIdsAsync(session, scopedSystemId, tagId);
+            return new TagPublicReadModel(
+                row.GetValue<string>("tag_id"),
+                row.GetValue<string>("name"),
+                row.GetValue<string?>("parent_tag_id"),
+                alterIds);
+        }, _options, cancellationToken);
+    }
+
+    private static async Task<IReadOnlyList<int>> GetAlterIdsAsync(ISession session, string scopedSystemId, string tagId)
+    {
+        var query = new SimpleStatement(
+            "SELECT alter_id FROM tag_alters_by_system WHERE system_id = ? AND tag_id = ?",
+            scopedSystemId,
+            tagId
+        );
+
+        var rows = await session.ExecuteAsync(query);
+        return rows.Select(x => x.GetValue<int>("alter_id")).OrderBy(x => x).ToArray();
+    }
+
     private string GetScopedSystemId(string systemId)
     {
         var region = _regionContext.ResolveUserRegion(systemId);

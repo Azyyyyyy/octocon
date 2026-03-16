@@ -9,6 +9,32 @@ public static class OperationIds
     public const string SettingsPushTokenRemove = "cmd.settings.push_token.remove";
     public const string SettingsEncryptionRecover = "cmd.settings.encryption.recover";
     public const string SettingsEncryptionReset = "cmd.settings.encryption.reset";
+    public const string SettingsLinkToken = "qry.settings.link_token";
+    public const string SettingsAvatarUpload = "cmd.settings.avatar.upload";
+    public const string SettingsAvatarDelete = "cmd.settings.avatar.delete";
+    public const string SettingsImportPk = "cmd.settings.import.pk";
+    public const string SettingsImportSp = "cmd.settings.import.sp";
+    public const string SettingsAuthUnlinkDiscord = "cmd.settings.auth.unlink_discord";
+    public const string SettingsAuthUnlinkEmail = "cmd.settings.auth.unlink_email";
+    public const string SettingsAuthUnlinkApple = "cmd.settings.auth.unlink_apple";
+    public const string SettingsAccountDelete = "cmd.settings.account.delete";
+    public const string SettingsAltersWipe = "cmd.settings.alters.wipe";
+    public const string SettingsFieldCreate = "cmd.settings.field.create";
+    public const string SettingsFieldUpdate = "cmd.settings.field.update";
+    public const string SettingsFieldDelete = "cmd.settings.field.delete";
+    public const string SettingsFieldRelocate = "cmd.settings.field.relocate";
+
+    public const string QueryFrontMonth = "qry.front.month";
+    public const string QueryFrontBetween = "qry.front.between";
+    public const string QueryFrontGet = "qry.front.get";
+    public const string QuerySystemHeartbeat = "qry.system.heartbeat";
+    public const string QuerySystemPublicGet = "qry.system.public.get";
+    public const string QueryAlterPublicList = "qry.alter.public.list";
+    public const string QueryAlterPublicGet = "qry.alter.public.get";
+    public const string QueryTagPublicList = "qry.tag.public.list";
+    public const string QueryTagPublicGet = "qry.tag.public.get";
+    public const string QueryFrontPublicList = "qry.front.public.list";
+    public const string QuerySystemPublicBatch = "qry.system.public.batch";
 
     // Legacy CLI name retained for backward compatibility with idempotency records
     public const string AccountUsernameUpdate = "cmd.account.username.update";

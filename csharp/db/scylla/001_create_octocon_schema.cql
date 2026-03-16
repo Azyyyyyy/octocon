@@ -12,6 +12,8 @@ CREATE TABLE IF NOT EXISTS octocon.alters_by_system (
 CREATE TABLE IF NOT EXISTS octocon.account_profiles_by_system (
     system_id text PRIMARY KEY,
     username text,
+    avatar_url text,
+    link_token text,
     updated_at timestamp
 );
 
@@ -147,4 +149,14 @@ CREATE TABLE IF NOT EXISTS octocon.aggregate_versions_by_region (
     aggregate_id text,
     version bigint,
     PRIMARY KEY ((region_scope, aggregate_type), aggregate_id)
+);
+
+CREATE TABLE IF NOT EXISTS octocon.settings_fields_by_system (
+    system_id text,
+    field_id text,
+    position int,
+    name text,
+    value text,
+    updated_at timestamp,
+    PRIMARY KEY ((system_id), field_id)
 );

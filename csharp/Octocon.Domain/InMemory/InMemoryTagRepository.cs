@@ -131,6 +131,46 @@ public sealed class InMemoryTagRepository : ITagRepository
            return Task.FromResult(true);
        }
 
+       public Task<IReadOnlyList<TagPublicReadModel>> ListAsync(string systemId, CancellationToken cancellationToken = default)
+       {
+           var systemKey = GetSystemKey(systemId);
+           if (!_bySystem.TryGetValue(systemKey, out var store))
+               return Task.FromResult<IReadOnlyList<TagPublicReadModel>>(Array.Empty<TagPublicReadModel>());
+
+           var rows = store.Values
+               .OrderBy(x => x.TagId)
+               .Select(x => new TagPublicReadModel(
+                   x.TagId,
+                   x.Name,
+                   x.ParentTagId,
+                   GetAlterIds(systemKey, x.TagId)))
+               .ToArray();
+
+           return Task.FromResult<IReadOnlyList<TagPublicReadModel>>(rows);
+       }
+
+       public Task<TagPublicReadModel?> GetAsync(string systemId, string tagId, CancellationToken cancellationToken = default)
+       {
+           var systemKey = GetSystemKey(systemId);
+           if (!_bySystem.TryGetValue(systemKey, out var store) || !store.TryGetValue(tagId, out var tag))
+               return Task.FromResult<TagPublicReadModel?>(null);
+
+           return Task.FromResult<TagPublicReadModel?>(new TagPublicReadModel(
+               tag.TagId,
+               tag.Name,
+               tag.ParentTagId,
+               GetAlterIds(systemKey, tag.TagId)));
+       }
+
+    private IReadOnlyList<int> GetAlterIds(string systemKey, string tagId)
+    {
+        var memberKey = $"{systemKey}:{tagId}";
+        if (!_alterMemberships.TryGetValue(memberKey, out var members))
+            return Array.Empty<int>();
+
+        return members.Keys.OrderBy(x => x).ToArray();
+    }
+
     private string GetSystemKey(string systemId)
     {
         var region = _regionContext.ResolveUserRegion(systemId);
