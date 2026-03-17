@@ -36,17 +36,20 @@ public sealed class AlterJournalsController : OctoconControllerBase
         _setPinned = setPinned;
     }
 
-    [HttpGet("{id:int}/journals")]
-    public async Task<IActionResult> Index(int id, CancellationToken ct)
+    [HttpGet("{id}/journals")]
+    public async Task<IActionResult> Index(string id, CancellationToken ct)
     {
         var principal = GetPrincipalId();
         if (principal is null) return Unauthorized();
 
-        var alterExists = await _alterRepository.ExistsAsync(principal, id, ct);
-        if (!alterExists) return NotFound(new { code = "alter:not_found" });
+        if (!TryParseAlterId(id, out var alterId))
+            return BadRequest(new { error = "Invalid alter ID.", code = "invalid_alter_id" });
 
-        var entries = await _journalRepository.ListAlterAsync(principal, id, ct);
-        return Ok(entries);
+        var alterExists = await _alterRepository.ExistsAsync(principal, alterId, ct);
+        if (!alterExists) return NotFound(new { error = "Alter not found.", code = "alter_not_found" });
+
+        var entries = await _journalRepository.ListAlterAsync(principal, alterId, ct);
+        return Ok(new { data = entries });
     }
 
     [HttpGet("journals/{journalId}")]
@@ -56,14 +59,19 @@ public sealed class AlterJournalsController : OctoconControllerBase
         if (principal is null) return Unauthorized();
 
         var entry = await _journalRepository.GetAlterAsync(principal, journalId, ct);
-        return entry is null ? NotFound(new { code = "journal:not_found" }) : Ok(entry);
+        return entry is null
+            ? NotFound(new { error = "Journal entry not found.", code = "journal_entry_not_found" })
+            : Ok(new { data = entry });
     }
 
-    [HttpPost("{id:int}/journals")]
-    public async Task<IActionResult> Create(int id, [FromBody] CreateAlterJournalRequest req, CancellationToken ct)
+    [HttpPost("{id}/journals")]
+    public async Task<IActionResult> Create(string id, [FromBody] CreateAlterJournalRequest req, CancellationToken ct)
     {
         var principal = GetPrincipalId();
         if (principal is null) return Unauthorized();
+
+        if (!TryParseAlterId(id, out var alterId))
+            return BadRequest(new { error = "Invalid alter ID.", code = "invalid_alter_id" });
 
         var envelope = new CommandEnvelope<CreateAlterJournalEntryCommand>(
             OperationIds.JournalAlterCreate,
@@ -72,10 +80,18 @@ public sealed class AlterJournalsController : OctoconControllerBase
             IdempotencyKey: GetIdempotencyKey(req.IdempotencyKey),
             ExpectedVersion: req.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
-            Payload: new CreateAlterJournalEntryCommand(id, req.Title)
+            Payload: new CreateAlterJournalEntryCommand(alterId, req.Title)
         );
 
-        return ToHttpResult(await _create.HandleAsync(envelope, ct));
+        var execution = await _create.HandleAsync(envelope, ct);
+        if (!execution.Accepted)
+        {
+            return ToHttpResult(execution);
+        }
+
+        var entry = await _journalRepository.GetAlterAsync(principal, execution.Result!.EntryId, ct);
+        object data = entry is not null ? entry : execution.Result;
+        return StatusCode(StatusCodes.Status201Created, new { data, replay = execution.Result.Replay });
     }
 
     [HttpPatch("journals/{journalId}")]
@@ -94,7 +110,8 @@ public sealed class AlterJournalsController : OctoconControllerBase
             Payload: new UpdateAlterJournalEntryCommand(journalId, req.Title, req.Content, req.Color)
         );
 
-        return ToHttpResult(await _update.HandleAsync(envelope, ct));
+        var result = ToHttpResult(await _update.HandleAsync(envelope, ct));
+        return result is OkObjectResult ? NoContent() : result;
     }
 
     [HttpDelete("journals/{journalId}")]
@@ -113,7 +130,8 @@ public sealed class AlterJournalsController : OctoconControllerBase
             Payload: new DeleteAlterJournalEntryCommand(journalId)
         );
 
-        return ToHttpResult(await _delete.HandleAsync(envelope, ct));
+        var result = ToHttpResult(await _delete.HandleAsync(envelope, ct));
+        return result is OkObjectResult ? NoContent() : result;
     }
 
     [HttpPost("journals/{journalId}/lock")]
@@ -132,6 +150,9 @@ public sealed class AlterJournalsController : OctoconControllerBase
     public async Task<IActionResult> Unpin(string journalId, [FromBody] AlterJournalActionRequest? req, CancellationToken ct)
         => await SetPinnedInternal(journalId, false, OperationIds.JournalAlterUnpin, req, ct);
 
+    private static bool TryParseAlterId(string value, out int alterId)
+        => int.TryParse(value, out alterId) && alterId > 0;
+
     private async Task<IActionResult> SetLockedInternal(string journalId, bool locked, string operationId, AlterJournalActionRequest? req, CancellationToken ct)
     {
         var principal = GetPrincipalId();
@@ -147,7 +168,8 @@ public sealed class AlterJournalsController : OctoconControllerBase
             Payload: new SetAlterJournalLockedCommand(journalId, locked)
         );
 
-        return ToHttpResult(await _setLocked.HandleAsync(envelope, ct));
+        var result = ToHttpResult(await _setLocked.HandleAsync(envelope, ct));
+        return result is OkObjectResult ? NoContent() : result;
     }
 
     private async Task<IActionResult> SetPinnedInternal(string journalId, bool pinned, string operationId, AlterJournalActionRequest? req, CancellationToken ct)
@@ -165,7 +187,8 @@ public sealed class AlterJournalsController : OctoconControllerBase
             Payload: new SetAlterJournalPinnedCommand(journalId, pinned)
         );
 
-        return ToHttpResult(await _setPinned.HandleAsync(envelope, ct));
+        var result = ToHttpResult(await _setPinned.HandleAsync(envelope, ct));
+        return result is OkObjectResult ? NoContent() : result;
     }
 }
 

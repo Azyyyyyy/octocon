@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
+using Octocon.Api.Services;
 using Octocon.Contracts.Operations;
 using Octocon.Domain.Abstractions;
 using Octocon.Domain.Accounts;
@@ -19,6 +20,7 @@ public sealed class SettingsController : OctoconControllerBase
     private readonly RecoverEncryptionCommandHandler _recoverEncryptionHandler;
     private readonly ResetEncryptionCommandHandler _resetEncryptionHandler;
     private readonly UploadAvatarCommandHandler _uploadAvatarHandler;
+    private readonly IAvatarStorage _avatarStorage;
     private readonly DeleteAvatarCommandHandler _deleteAvatarHandler;
     private readonly ImportPkCommandHandler _importPkHandler;
     private readonly ImportSpCommandHandler _importSpHandler;
@@ -44,6 +46,7 @@ public sealed class SettingsController : OctoconControllerBase
         RecoverEncryptionCommandHandler recoverEncryptionHandler,
         ResetEncryptionCommandHandler resetEncryptionHandler,
         UploadAvatarCommandHandler uploadAvatarHandler,
+        IAvatarStorage avatarStorage,
         DeleteAvatarCommandHandler deleteAvatarHandler,
         ImportPkCommandHandler importPkHandler,
         ImportSpCommandHandler importSpHandler,
@@ -68,6 +71,7 @@ public sealed class SettingsController : OctoconControllerBase
         _recoverEncryptionHandler = recoverEncryptionHandler;
         _resetEncryptionHandler = resetEncryptionHandler;
         _uploadAvatarHandler = uploadAvatarHandler;
+        _avatarStorage = avatarStorage;
         _deleteAvatarHandler = deleteAvatarHandler;
         _importPkHandler = importPkHandler;
         _importSpHandler = importSpHandler;
@@ -265,6 +269,42 @@ public sealed class SettingsController : OctoconControllerBase
             ExpectedVersion: req.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
             Payload: new UploadAvatarCommand(req.AvatarUrl)
+        );
+
+        var result = ToHttpResult(await _uploadAvatarHandler.HandleAsync(envelope, ct));
+        return result is OkObjectResult ? NoContent() : result;
+    }
+
+    [HttpPut("avatar")]
+    [Consumes("multipart/form-data")]
+    public async Task<IActionResult> UploadAvatarMultipart([FromForm] SettingsAvatarMultipartRequest req, CancellationToken ct)
+    {
+        var principal = GetPrincipalId();
+        if (principal is null) return Unauthorized();
+
+        if (req.File is null || req.File.Length <= 0)
+        {
+            return BadRequest(new { error = "No avatar file provided.", code = "avatar_file_required" });
+        }
+
+        string avatarUrl;
+        try
+        {
+            avatarUrl = await _avatarStorage.SaveSystemAvatarAsync(principal, req.File, ct);
+        }
+        catch
+        {
+            return StatusCode(500, new { error = "An error occurred while uploading the file.", code = "unknown_error" });
+        }
+
+        var envelope = new CommandEnvelope<UploadAvatarCommand>(
+            OperationIds.SettingsAvatarUpload,
+            Guid.NewGuid(),
+            PrincipalId: principal,
+            IdempotencyKey: GetIdempotencyKey(req.IdempotencyKey),
+            ExpectedVersion: req.ExpectedVersion,
+            OccurredAt: DateTimeOffset.UtcNow,
+            Payload: new UploadAvatarCommand(avatarUrl)
         );
 
         var result = ToHttpResult(await _uploadAvatarHandler.HandleAsync(envelope, ct));
@@ -543,6 +583,12 @@ public sealed record SettingsCommandRequest(
 
 public sealed record SettingsAvatarRequest(
     string AvatarUrl,
+    string? IdempotencyKey = null,
+    long? ExpectedVersion = null
+);
+
+public sealed record SettingsAvatarMultipartRequest(
+    IFormFile? File,
     string? IdempotencyKey = null,
     long? ExpectedVersion = null
 );

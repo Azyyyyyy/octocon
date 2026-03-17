@@ -4,7 +4,7 @@ using Octocon.Domain.Journals;
 
 namespace Octocon.Api.Controllers;
 
-[Route("api/systems/me/journals")]
+[Route("api/journals")]
 public sealed class JournalsController : OctoconControllerBase
 {
     private readonly IJournalRepository _journalRepository;
@@ -45,7 +45,7 @@ public sealed class JournalsController : OctoconControllerBase
         if (principal is null) return Unauthorized();
 
         var entries = await _journalRepository.ListGlobalAsync(principal, ct);
-        return Ok(entries);
+        return Ok(new { data = entries });
     }
 
     [HttpGet("{id}")]
@@ -55,7 +55,9 @@ public sealed class JournalsController : OctoconControllerBase
         if (principal is null) return Unauthorized();
 
         var entry = await _journalRepository.GetGlobalAsync(principal, id, ct);
-        return entry is null ? NotFound(new { code = "journal:not_found" }) : Ok(entry);
+        return entry is null
+            ? NotFound(new { error = "Journal entry not found.", code = "journal_entry_not_found" })
+            : Ok(new { data = entry });
     }
 
     [HttpPost]
@@ -74,7 +76,15 @@ public sealed class JournalsController : OctoconControllerBase
             Payload: new CreateGlobalJournalEntryCommand(req.Title)
         );
 
-        return ToHttpResult(await _create.HandleAsync(envelope, ct));
+        var execution = await _create.HandleAsync(envelope, ct);
+        if (!execution.Accepted)
+        {
+            return ToHttpResult(execution);
+        }
+
+        var entry = await _journalRepository.GetGlobalAsync(principal, execution.Result!.EntryId, ct);
+        object data = entry is not null ? entry : execution.Result;
+        return StatusCode(StatusCodes.Status201Created, new { data, replay = execution.Result.Replay });
     }
 
     [HttpPatch("{id}")]
@@ -93,7 +103,8 @@ public sealed class JournalsController : OctoconControllerBase
             Payload: new UpdateGlobalJournalEntryCommand(id, req.Title, req.Content, req.Color)
         );
 
-        return ToHttpResult(await _update.HandleAsync(envelope, ct));
+        var result = ToHttpResult(await _update.HandleAsync(envelope, ct));
+        return result is OkObjectResult ? NoContent() : result;
     }
 
     [HttpDelete("{id}")]
@@ -112,7 +123,8 @@ public sealed class JournalsController : OctoconControllerBase
             Payload: new DeleteGlobalJournalEntryCommand(id)
         );
 
-        return ToHttpResult(await _delete.HandleAsync(envelope, ct));
+        var result = ToHttpResult(await _delete.HandleAsync(envelope, ct));
+        return result is OkObjectResult ? NoContent() : result;
     }
 
     [HttpPost("{id}/lock")]
@@ -147,7 +159,8 @@ public sealed class JournalsController : OctoconControllerBase
             Payload: new AttachAlterToGlobalJournalCommand(id, req.AlterId)
         );
 
-        return ToHttpResult(await _attachAlter.HandleAsync(envelope, ct));
+        var result = ToHttpResult(await _attachAlter.HandleAsync(envelope, ct));
+        return result is OkObjectResult ? NoContent() : result;
     }
 
     [HttpDelete("{id}/alter")]
@@ -166,7 +179,8 @@ public sealed class JournalsController : OctoconControllerBase
             Payload: new DetachAlterFromGlobalJournalCommand(id, req.AlterId)
         );
 
-        return ToHttpResult(await _detachAlter.HandleAsync(envelope, ct));
+        var result = ToHttpResult(await _detachAlter.HandleAsync(envelope, ct));
+        return result is OkObjectResult ? NoContent() : result;
     }
 
     private async Task<IActionResult> SetLockedInternal(string id, bool locked, string operationId, JournalActionRequest? req, CancellationToken ct)
@@ -184,7 +198,8 @@ public sealed class JournalsController : OctoconControllerBase
             Payload: new SetGlobalJournalLockedCommand(id, locked)
         );
 
-        return ToHttpResult(await _setLocked.HandleAsync(envelope, ct));
+        var result = ToHttpResult(await _setLocked.HandleAsync(envelope, ct));
+        return result is OkObjectResult ? NoContent() : result;
     }
 
     private async Task<IActionResult> SetPinnedInternal(string id, bool pinned, string operationId, JournalActionRequest? req, CancellationToken ct)
@@ -202,7 +217,8 @@ public sealed class JournalsController : OctoconControllerBase
             Payload: new SetGlobalJournalPinnedCommand(id, pinned)
         );
 
-        return ToHttpResult(await _setPinned.HandleAsync(envelope, ct));
+        var result = ToHttpResult(await _setPinned.HandleAsync(envelope, ct));
+        return result is OkObjectResult ? NoContent() : result;
     }
 }
 

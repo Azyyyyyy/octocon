@@ -127,8 +127,8 @@ public sealed class ReplayParityTests
             $"[{fixtureFileName}] Step '{step.Name}': expected HTTP {step.ExpectedStatus}, " +
             $"got {(int)response.StatusCode}. Body: {body}");
 
-        // Assert replay flag when declared.
-        if (step.ExpectedReplay.HasValue)
+        // Assert replay flag when declared (only when the response has a body).
+        if (step.ExpectedReplay.HasValue && !string.IsNullOrEmpty(body))
         {
             var actualReplay = ReadBoolField(body, "replay");
             Ensure(
@@ -205,6 +205,24 @@ public sealed class ReplayParityTests
             }
         }
 
+        // Also search inside a top-level "data" object (201 create responses use {data:{...}, replay:false}).
+        foreach (var prop in root.EnumerateObject())
+        {
+            if (prop.Name.Equals("data", StringComparison.OrdinalIgnoreCase)
+                && prop.Value.ValueKind == JsonValueKind.Object)
+            {
+                foreach (var child in prop.Value.EnumerateObject())
+                {
+                    if (child.Name.Equals(name, StringComparison.OrdinalIgnoreCase)
+                        && child.Value.ValueKind == JsonValueKind.String)
+                    {
+                        value = child.Value.GetString()!;
+                        return true;
+                    }
+                }
+            }
+        }
+
         value = string.Empty;
         return false;
     }
@@ -218,6 +236,24 @@ public sealed class ReplayParityTests
                 && prop.Value.TryGetInt32(out value))
             {
                 return true;
+            }
+        }
+
+        // Also search inside a top-level "data" object.
+        foreach (var prop in root.EnumerateObject())
+        {
+            if (prop.Name.Equals("data", StringComparison.OrdinalIgnoreCase)
+                && prop.Value.ValueKind == JsonValueKind.Object)
+            {
+                foreach (var child in prop.Value.EnumerateObject())
+                {
+                    if (child.Name.Equals(name, StringComparison.OrdinalIgnoreCase)
+                        && child.Value.ValueKind == JsonValueKind.Number
+                        && child.Value.TryGetInt32(out value))
+                    {
+                        return true;
+                    }
+                }
             }
         }
 

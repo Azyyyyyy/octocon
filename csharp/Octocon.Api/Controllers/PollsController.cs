@@ -4,7 +4,7 @@ using Octocon.Domain.Polls;
 
 namespace Octocon.Api.Controllers;
 
-[Route("api/systems/me/polls")]
+[Route("api/polls")]
 public sealed class PollsController : OctoconControllerBase
 {
     private readonly IPollRepository _pollRepository;
@@ -32,7 +32,7 @@ public sealed class PollsController : OctoconControllerBase
         if (principal is null) return Unauthorized();
 
         var polls = await _pollRepository.ListAsync(principal, ct);
-        return Ok(polls);
+        return Ok(new { data = polls });
     }
 
     [HttpGet("{id}")]
@@ -42,7 +42,9 @@ public sealed class PollsController : OctoconControllerBase
         if (principal is null) return Unauthorized();
 
         var poll = await _pollRepository.GetAsync(principal, id, ct);
-        return poll is null ? NotFound(new { code = "poll:not_found" }) : Ok(poll);
+        return poll is null
+            ? NotFound(new { error = "Poll not found.", code = "poll_not_found" })
+            : Ok(new { data = poll });
     }
 
     [HttpPost]
@@ -61,7 +63,15 @@ public sealed class PollsController : OctoconControllerBase
             Payload: new CreatePollCommand(req.Title, req.Description, req.Type ?? "vote", req.TimeEndIso)
         );
 
-        return ToHttpResult(await _create.HandleAsync(envelope, ct));
+        var execution = await _create.HandleAsync(envelope, ct);
+        if (!execution.Accepted)
+        {
+            return ToHttpResult(execution);
+        }
+
+        var poll = await _pollRepository.GetAsync(principal, execution.Result!.PollId, ct);
+        object data = poll is not null ? poll : execution.Result;
+        return StatusCode(StatusCodes.Status201Created, new { data, replay = execution.Result.Replay });
     }
 
     [HttpPatch("{id}")]
@@ -80,7 +90,8 @@ public sealed class PollsController : OctoconControllerBase
             Payload: new UpdatePollCommand(id, req.Title, req.Description, req.TimeEndIso, req.DataJson)
         );
 
-        return ToHttpResult(await _update.HandleAsync(envelope, ct));
+        var result = ToHttpResult(await _update.HandleAsync(envelope, ct));
+        return result is OkObjectResult ? NoContent() : result;
     }
 
     [HttpDelete("{id}")]
@@ -99,7 +110,8 @@ public sealed class PollsController : OctoconControllerBase
             Payload: new DeletePollCommand(id)
         );
 
-        return ToHttpResult(await _delete.HandleAsync(envelope, ct));
+        var result = ToHttpResult(await _delete.HandleAsync(envelope, ct));
+        return result is OkObjectResult ? NoContent() : result;
     }
 }
 

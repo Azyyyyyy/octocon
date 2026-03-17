@@ -9,7 +9,7 @@
       "principalId": "replay-sys-tag",
       "idempotencyKey": "replay-tag-alter-create-001",
       "body": { "name": "TagTestAlter" },
-      "expectedStatus": 200,
+      "expectedStatus": 201,
       "expectedReplay": false,
       "captureAs": { "alterId": "alterId" }
     },
@@ -20,7 +20,7 @@
       "principalId": "replay-sys-tag",
       "idempotencyKey": "replay-tag-create-001",
       "body": { "name": "ReplayTag" },
-      "expectedStatus": 200,
+      "expectedStatus": 201,
       "expectedReplay": false,
       "captureAs": { "tagId": "tagId" }
     },
@@ -31,7 +31,7 @@
       "principalId": "replay-sys-tag",
       "idempotencyKey": "replay-tag-create-001",
       "body": { "name": "ReplayTag" },
-      "expectedStatus": 200,
+      "expectedStatus": 201,
       "expectedReplay": true
     },
     {
@@ -41,8 +41,7 @@
       "principalId": "replay-sys-tag",
       "idempotencyKey": "replay-tag-attach-001",
       "body": { "alterId": "{alterId}" },
-      "expectedStatus": 200,
-      "expectedReplay": false
+      "expectedStatus": 204
     },
     {
       "name": "attach alter to tag (replay)",
@@ -51,8 +50,7 @@
       "principalId": "replay-sys-tag",
       "idempotencyKey": "replay-tag-attach-001",
       "body": { "alterId": "{alterId}" },
-      "expectedStatus": 200,
-      "expectedReplay": true
+      "expectedStatus": 204
     },
     {
       "name": "delete tag",
@@ -61,8 +59,7 @@
       "principalId": "replay-sys-tag",
       "idempotencyKey": "replay-tag-delete-001",
       "body": {},
-      "expectedStatus": 200,
-      "expectedReplay": false
+      "expectedStatus": 204
     }
   ]
 }

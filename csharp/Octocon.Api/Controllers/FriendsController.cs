@@ -30,7 +30,7 @@ public sealed class FriendsController : OctoconControllerBase
         if (principal is null) return Unauthorized();
 
         var friendships = await _repository.ListFriendshipsAsync(principal, ct);
-        return Ok(friendships);
+        return Ok(new { data = friendships });
     }
 
     [HttpGet("{id}")]
@@ -41,13 +41,17 @@ public sealed class FriendsController : OctoconControllerBase
 
         if (string.Equals(principal, id, StringComparison.Ordinal))
         {
-            return BadRequest(new { code = "cannot_view_own_friendship" });
+            return BadRequest(new
+            {
+                error = "I'm pretty sure you don't count as your own friend. (Cannot view friendship status for self.)",
+                code = "cannot_view_own_friendship"
+            });
         }
 
         var friendship = await _repository.GetFriendshipAsync(principal, id, ct);
         return friendship is null
-            ? NotFound(new { code = "friendship_not_found" })
-            : Ok(friendship);
+            ? NotFound(new { error = "You are not friends with that system.", code = "friendship_not_found" })
+            : Ok(new { data = friendship });
     }
 
     [HttpDelete("{id}")]
@@ -58,7 +62,11 @@ public sealed class FriendsController : OctoconControllerBase
 
         if (string.Equals(principal, id, StringComparison.Ordinal))
         {
-            return BadRequest(new { code = "cannot_delete_own_friendship" });
+            return BadRequest(new
+            {
+                error = "I'm pretty sure you don't count as your own friend. (Cannot delete friendship with self.)",
+                code = "cannot_delete_own_friendship"
+            });
         }
 
         var envelope = new CommandEnvelope<RemoveFriendshipCommand>(

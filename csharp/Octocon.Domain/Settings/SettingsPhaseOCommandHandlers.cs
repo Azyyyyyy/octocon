@@ -302,11 +302,7 @@ public sealed class CreateFieldCommandHandler : ICommandHandler<CreateFieldComma
                 new ConflictResult(ConflictCode.ConflictInvariant, command.OperationId, "settings:field_name_required", null, "manual_merge_required", null)));
         }
 
-        if (!AllowedTypes.Contains(command.Payload.Type))
-        {
-            return Task.FromResult(CommandExecutionResult<SettingsCommandResult>.Rejected(
-                new ConflictResult(ConflictCode.ConflictInvariant, command.OperationId, "settings:field_type_invalid", null, "manual_merge_required", null)));
-        }
+        var normalizedType = NormalizeType(command.Payload.Type);
 
         if (!AllowedSecurityLevels.Contains(command.Payload.SecurityLevel))
         {
@@ -324,11 +320,21 @@ public sealed class CreateFieldCommandHandler : ICommandHandler<CreateFieldComma
             async ct => (await _fieldRepository.CreateAsync(
                 command.PrincipalId,
                 command.Payload.Name,
-                command.Payload.Type,
+                normalizedType,
                 command.Payload.SecurityLevel,
                 command.Payload.Locked,
                 ct)) is not null,
             cancellationToken);
+    }
+
+    private static string NormalizeType(string? type)
+    {
+        if (string.IsNullOrWhiteSpace(type))
+        {
+            return "text";
+        }
+
+        return AllowedTypes.Contains(type) ? type : "text";
     }
 }
 

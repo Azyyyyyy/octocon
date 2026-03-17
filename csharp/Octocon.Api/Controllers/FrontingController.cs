@@ -76,7 +76,19 @@ public sealed class FrontingController : OctoconControllerBase
             OccurredAt: DateTimeOffset.UtcNow,
             Payload: new StartFrontCommand(req.AlterId, req.Comment)
         );
-        return ToHttpResult(await _startHandler.HandleAsync(envelope, ct));
+
+        var execution = await _startHandler.HandleAsync(envelope, ct);
+        if (!execution.Accepted)
+        {
+            return ToHttpResult(execution);
+        }
+
+        if (!string.IsNullOrWhiteSpace(execution.Result?.FrontId))
+        {
+            Response.Headers.Location = $"/api/systems/me/front/{execution.Result.FrontId}";
+        }
+
+        return StatusCode(StatusCodes.Status201Created, new { frontId = execution.Result!.FrontId, replay = execution.Result.Replay });
     }
 
     [HttpPost("end")]
@@ -93,7 +105,8 @@ public sealed class FrontingController : OctoconControllerBase
             OccurredAt: DateTimeOffset.UtcNow,
             Payload: new EndFrontCommand(req.AlterId)
         );
-        return ToHttpResult(await _endHandler.HandleAsync(envelope, ct));
+        var result = ToHttpResult(await _endHandler.HandleAsync(envelope, ct));
+        return result is OkObjectResult ? NoContent() : result;
     }
 
     [HttpPost("set")]
@@ -130,7 +143,8 @@ public sealed class FrontingController : OctoconControllerBase
             OccurredAt: DateTimeOffset.UtcNow,
             Payload: new SetPrimaryFrontCommand(req.AlterId)
         );
-        return ToHttpResult(await _primaryHandler.HandleAsync(envelope, ct));
+        var result = ToHttpResult(await _primaryHandler.HandleAsync(envelope, ct));
+        return result is OkObjectResult ? NoContent() : result;
     }
 
     [HttpGet("month")]
@@ -140,7 +154,7 @@ public sealed class FrontingController : OctoconControllerBase
         if (principal is null) return Unauthorized();
 
         if (!long.TryParse(endAnchor, out var unixEnd))
-            return BadRequest(new { code = "invalid_end_anchor" });
+            return BadRequest(new { error = "Invalid end anchor. Please pass a valid Unix timestamp.", code = "invalid_end_anchor" });
 
         DateTimeOffset end;
         try
@@ -149,12 +163,12 @@ public sealed class FrontingController : OctoconControllerBase
         }
         catch
         {
-            return BadRequest(new { code = "invalid_end_anchor" });
+            return BadRequest(new { error = "Invalid end anchor. Please pass a valid Unix timestamp.", code = "invalid_end_anchor" });
         }
 
         var start = end.AddDays(-30);
         var fronts = await _repository.ListHistoryBetweenAsync(principal, start, end, ct);
-        return Ok(fronts);
+        return Ok(new { data = fronts });
     }
 
     [HttpGet("between")]
@@ -167,7 +181,7 @@ public sealed class FrontingController : OctoconControllerBase
         if (principal is null) return Unauthorized();
 
         if (!long.TryParse(startAnchor, out var unixStart) || !long.TryParse(endAnchor, out var unixEnd))
-            return BadRequest(new { code = "invalid_anchor" });
+            return BadRequest(new { error = "Invalid start or end anchor. Please pass valid Unix timestamps.", code = "invalid_anchor" });
 
         DateTimeOffset start;
         DateTimeOffset end;
@@ -178,11 +192,11 @@ public sealed class FrontingController : OctoconControllerBase
         }
         catch
         {
-            return BadRequest(new { code = "invalid_anchor" });
+            return BadRequest(new { error = "Invalid start or end anchor. Please pass valid Unix timestamps.", code = "invalid_anchor" });
         }
 
         var fronts = await _repository.ListHistoryBetweenAsync(principal, start, end, ct);
-        return Ok(fronts);
+        return Ok(new { data = fronts });
     }
 
     [HttpGet("{id}")]
@@ -192,7 +206,9 @@ public sealed class FrontingController : OctoconControllerBase
         if (principal is null) return Unauthorized();
 
         var front = await _repository.GetActiveByFrontIdAsync(principal, id, ct);
-        return front is null ? NotFound(new { code = "front_not_found" }) : Ok(front);
+        return front is null
+            ? NotFound(new { error = "Front not found.", code = "front_not_found" })
+            : Ok(new { data = front });
     }
 
     [HttpDelete("{id}")]

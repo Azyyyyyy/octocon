@@ -36,7 +36,14 @@ public sealed class FriendRequestsController : OctoconControllerBase
         if (principal is null) return Unauthorized();
 
         var requests = await _repository.GetFriendRequestsAsync(principal, ct);
-        return Ok(requests);
+        return Ok(new
+        {
+            data = new
+            {
+                incoming = requests.Incoming,
+                outgoing = requests.Outgoing
+            }
+        });
     }
 
     [HttpPut("{id}")]
@@ -47,7 +54,11 @@ public sealed class FriendRequestsController : OctoconControllerBase
 
         if (string.Equals(principal, id, StringComparison.Ordinal))
         {
-            return BadRequest(new { code = "cannot_send_self" });
+            return BadRequest(new
+            {
+                error = "You cannot send a friend request to yourself.",
+                code = "cannot_send_self"
+            });
         }
 
         var envelope = new CommandEnvelope<SendFriendRequestCommand>(
@@ -71,7 +82,11 @@ public sealed class FriendRequestsController : OctoconControllerBase
 
         if (string.Equals(principal, id, StringComparison.Ordinal))
         {
-            return BadRequest(new { code = "cannot_cancel_self" });
+            return BadRequest(new
+            {
+                error = "You cannot cancel a friend request to yourself.",
+                code = "cannot_cancel_self"
+            });
         }
 
         var envelope = new CommandEnvelope<CancelFriendRequestCommand>(
@@ -95,7 +110,11 @@ public sealed class FriendRequestsController : OctoconControllerBase
 
         if (string.Equals(principal, id, StringComparison.Ordinal))
         {
-            return BadRequest(new { code = "cannot_accept_self" });
+            return BadRequest(new
+            {
+                error = "You cannot accept a friend request from yourself.",
+                code = "cannot_accept_self"
+            });
         }
 
         var envelope = new CommandEnvelope<AcceptFriendRequestCommand>(
@@ -119,7 +138,11 @@ public sealed class FriendRequestsController : OctoconControllerBase
 
         if (string.Equals(principal, id, StringComparison.Ordinal))
         {
-            return BadRequest(new { code = "cannot_reject_self" });
+            return BadRequest(new
+            {
+                error = "You cannot reject a friend request from yourself.",
+                code = "cannot_reject_self"
+            });
         }
 
         var envelope = new CommandEnvelope<RejectFriendRequestCommand>(

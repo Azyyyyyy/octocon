@@ -41,14 +41,14 @@ public sealed class ApiAuthSmokeTests
 
         var idempotencyKey = Guid.NewGuid().ToString("N");
         var first = await SendAlterCreateAsync(client, "sys-api-smoke", idempotencyKey, "IntegrationOne");
-        Ensure(first.StatusCode == HttpStatusCode.OK,
-            $"Expected first alter-create 200, got {(int)first.StatusCode}. Body: {first.Body}");
+        Ensure(first.StatusCode == HttpStatusCode.Created,
+            $"Expected first alter-create 201, got {(int)first.StatusCode}. Body: {first.Body}");
         Ensure(ReadReplay(first.Body) == false,
             $"Expected first alter-create replay=false. Body: {first.Body}");
 
         var second = await SendAlterCreateAsync(client, "sys-api-smoke", idempotencyKey, "IntegrationOne");
-        Ensure(second.StatusCode == HttpStatusCode.OK,
-            $"Expected replay alter-create 200, got {(int)second.StatusCode}. Body: {second.Body}");
+        Ensure(second.StatusCode == HttpStatusCode.Created,
+            $"Expected replay alter-create 201, got {(int)second.StatusCode}. Body: {second.Body}");
         Ensure(ReadReplay(second.Body) == true,
             $"Expected replay alter-create replay=true. Body: {second.Body}");
     }
@@ -101,16 +101,16 @@ public sealed class ApiAuthSmokeTests
         var startAnchor = DateTimeOffset.UtcNow.AddMinutes(-1).ToUnixTimeSeconds();
 
         var started = await SendFrontStartAsync(client, principalId, alterId: 101, comment: "phase3-history");
-        Ensure(started.StatusCode == HttpStatusCode.OK,
-            $"Expected front start 200, got {(int)started.StatusCode}. Body: {started.Body}");
+        Ensure(started.StatusCode == HttpStatusCode.Created,
+            $"Expected front start 201, got {(int)started.StatusCode}. Body: {started.Body}");
 
         var startedFrontId = ReadStringField(started.Body, "frontId");
         Ensure(!string.IsNullOrWhiteSpace(startedFrontId),
             $"Expected start response to include frontId. Body: {started.Body}");
 
         var ended = await SendFrontEndAsync(client, principalId, alterId: 101);
-        Ensure(ended.StatusCode == HttpStatusCode.OK,
-            $"Expected front end 200, got {(int)ended.StatusCode}. Body: {ended.Body}");
+        Ensure(ended.StatusCode == HttpStatusCode.NoContent,
+            $"Expected front end 204, got {(int)ended.StatusCode}. Body: {ended.Body}");
 
         var endAnchor = DateTimeOffset.UtcNow.AddMinutes(1).ToUnixTimeSeconds();
         using var betweenRequest = new HttpRequestMessage(HttpMethod.Get,

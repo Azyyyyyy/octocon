@@ -7,6 +7,7 @@ namespace Octocon.Api.Controllers;
 [Route("api/systems/me/tags")]
 public sealed class TagsController : OctoconControllerBase
 {
+    private readonly ITagRepository _tagRepository;
    private readonly CreateTagCommandHandler _create;
    private readonly UpdateTagCommandHandler _update;
    private readonly DeleteTagCommandHandler _delete;
@@ -17,6 +18,7 @@ public sealed class TagsController : OctoconControllerBase
 
    public TagsController(
        ApiSettings settings,
+       ITagRepository tagRepository,
        CreateTagCommandHandler create,
        UpdateTagCommandHandler update,
        DeleteTagCommandHandler delete,
@@ -26,6 +28,7 @@ public sealed class TagsController : OctoconControllerBase
        RemoveParentTagCommandHandler removeParent)
         : base(settings)
     {
+       _tagRepository = tagRepository;
        _create = create;
        _update = update;
        _delete = delete;
@@ -54,7 +57,15 @@ public sealed class TagsController : OctoconControllerBase
             Payload: new CreateTagCommand(body.Name, body.ParentTagId)
         );
 
-       return ToHttpResult(await _create.HandleAsync(command, cancellationToken));
+       var execution = await _create.HandleAsync(command, cancellationToken);
+       if (!execution.Accepted)
+       {
+           return ToHttpResult(execution);
+       }
+
+       var tag = await _tagRepository.GetAsync(principal, execution.Result!.TagId, cancellationToken);
+       object data = tag is not null ? tag : execution.Result;
+       return StatusCode(StatusCodes.Status201Created, new { data, replay = execution.Result.Replay });
     }
 
    [HttpPatch("{id}")]
@@ -73,7 +84,8 @@ public sealed class TagsController : OctoconControllerBase
            Payload: new UpdateTagCommand(id, body.Name, body.Color, body.Description, body.SecurityLevel)
        );
 
-       return ToHttpResult(await _update.HandleAsync(command, ct));
+    var result = ToHttpResult(await _update.HandleAsync(command, ct));
+    return result is OkObjectResult ? NoContent() : result;
    }
 
    [HttpDelete("{id}")]
@@ -92,7 +104,8 @@ public sealed class TagsController : OctoconControllerBase
            Payload: new DeleteTagCommand(id)
        );
 
-       return ToHttpResult(await _delete.HandleAsync(command, ct));
+    var result = ToHttpResult(await _delete.HandleAsync(command, ct));
+    return result is OkObjectResult ? NoContent() : result;
    }
 
    [HttpPost("{id}/alter")]
@@ -111,7 +124,8 @@ public sealed class TagsController : OctoconControllerBase
            Payload: new AttachAlterToTagCommand(id, body.AlterId)
        );
 
-       return ToHttpResult(await _attachAlter.HandleAsync(command, ct));
+    var result = ToHttpResult(await _attachAlter.HandleAsync(command, ct));
+    return result is OkObjectResult ? NoContent() : result;
    }
 
    [HttpDelete("{id}/alter")]
@@ -130,7 +144,8 @@ public sealed class TagsController : OctoconControllerBase
            Payload: new DetachAlterFromTagCommand(id, body.AlterId)
        );
 
-       return ToHttpResult(await _detachAlter.HandleAsync(command, ct));
+    var result = ToHttpResult(await _detachAlter.HandleAsync(command, ct));
+    return result is OkObjectResult ? NoContent() : result;
    }
 
    [HttpPost("{id}/parent")]
@@ -149,7 +164,8 @@ public sealed class TagsController : OctoconControllerBase
            Payload: new SetParentTagCommand(id, body.ParentTagId)
        );
 
-       return ToHttpResult(await _setParent.HandleAsync(command, ct));
+    var result = ToHttpResult(await _setParent.HandleAsync(command, ct));
+    return result is OkObjectResult ? NoContent() : result;
    }
 
    [HttpDelete("{id}/parent")]
@@ -168,7 +184,8 @@ public sealed class TagsController : OctoconControllerBase
            Payload: new RemoveParentTagCommand(id)
        );
 
-       return ToHttpResult(await _removeParent.HandleAsync(command, ct));
+       var result = ToHttpResult(await _removeParent.HandleAsync(command, ct));
+       return result is OkObjectResult ? NoContent() : result;
    }
 }
 

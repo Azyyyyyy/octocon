@@ -9,7 +9,7 @@
       "principalId": "replay-sys-alter",
       "idempotencyKey": "replay-alter-create-001",
       "body": { "name": "ReplayAlter" },
-      "expectedStatus": 200,
+      "expectedStatus": 201,
       "expectedReplay": false,
       "captureAs": { "alterId": "alterId" }
     },
@@ -20,7 +20,7 @@
       "principalId": "replay-sys-alter",
       "idempotencyKey": "replay-alter-create-001",
       "body": { "name": "ReplayAlter" },
-      "expectedStatus": 200,
+      "expectedStatus": 201,
       "expectedReplay": true
     },
     {
@@ -30,8 +30,7 @@
       "principalId": "replay-sys-alter",
       "idempotencyKey": "replay-alter-update-001",
       "body": { "name": "ReplayAlterRenamed" },
-      "expectedStatus": 200,
-      "expectedReplay": false
+      "expectedStatus": 204
     },
     {
       "name": "update alter (replay)",
@@ -40,8 +39,7 @@
       "principalId": "replay-sys-alter",
       "idempotencyKey": "replay-alter-update-001",
       "body": { "name": "ReplayAlterRenamed" },
-      "expectedStatus": 200,
-      "expectedReplay": true
+      "expectedStatus": 204
     },
     {
       "name": "delete alter",
@@ -49,8 +47,7 @@
       "path": "/api/systems/me/alters/{alterId}",
       "principalId": "replay-sys-alter",
       "idempotencyKey": "replay-alter-delete-001",
-      "expectedStatus": 200,
-      "expectedReplay": false
+      "expectedStatus": 204
     },
     {
       "name": "delete alter (replay)",
@@ -58,8 +55,7 @@
       "path": "/api/systems/me/alters/{alterId}",
       "principalId": "replay-sys-alter",
       "idempotencyKey": "replay-alter-delete-001",
-      "expectedStatus": 200,
-      "expectedReplay": true
+      "expectedStatus": 204
     }
   ]
 }

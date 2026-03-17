@@ -5,6 +5,7 @@ using OpenTelemetry.Trace;
 using System.Security.Claims;
 using Microsoft.IdentityModel.Tokens;
 using Octocon.Api;
+using Octocon.Api.Services;
 using Octocon.Domain.Abstractions;
 using Octocon.Domain.Accounts;
 using Octocon.Domain.Alters;
@@ -82,6 +83,7 @@ builder.Services.AddSingleton<CreateFieldCommandHandler>();
 builder.Services.AddSingleton<UpdateFieldCommandHandler>();
 builder.Services.AddSingleton<DeleteFieldCommandHandler>();
 builder.Services.AddSingleton<RelocateFieldCommandHandler>();
+builder.Services.AddSingleton<IAvatarStorage, LocalAvatarStorage>();
 builder.Services.AddSingleton<CreateTagCommandHandler>();
 builder.Services.AddSingleton<UpdateTagCommandHandler>();
 builder.Services.AddSingleton<DeleteTagCommandHandler>();
@@ -197,6 +199,7 @@ app.Use(async (ctx, next) =>
 });
 
 app.UseAuthentication();
+app.UseStaticFiles();
 
 if (devPrincipalAllowed)
 {

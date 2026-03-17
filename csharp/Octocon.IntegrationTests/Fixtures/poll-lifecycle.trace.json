@@ -5,42 +5,40 @@
     {
       "name": "create poll",
       "method": "POST",
-      "path": "/api/systems/me/polls",
+      "path": "/api/polls",
       "principalId": "replay-sys-poll",
       "idempotencyKey": "replay-poll-create-001",
       "body": { "title": "ReplayPoll", "options": ["A", "B"] },
-      "expectedStatus": 200,
+      "expectedStatus": 201,
       "expectedReplay": false,
       "captureAs": { "pollId": "pollId" }
     },
     {
       "name": "create poll (replay)",
       "method": "POST",
-      "path": "/api/systems/me/polls",
+      "path": "/api/polls",
       "principalId": "replay-sys-poll",
       "idempotencyKey": "replay-poll-create-001",
       "body": { "title": "ReplayPoll", "options": ["A", "B"] },
-      "expectedStatus": 200,
+      "expectedStatus": 201,
       "expectedReplay": true
     },
     {
       "name": "update poll",
       "method": "PATCH",
-      "path": "/api/systems/me/polls/{pollId}",
+      "path": "/api/polls/{pollId}",
       "principalId": "replay-sys-poll",
       "idempotencyKey": "replay-poll-update-001",
       "body": { "title": "ReplayPollRenamed" },
-      "expectedStatus": 200,
-      "expectedReplay": false
+      "expectedStatus": 204
     },
     {
       "name": "delete poll",
       "method": "DELETE",
-      "path": "/api/systems/me/polls/{pollId}",
+      "path": "/api/polls/{pollId}",
       "principalId": "replay-sys-poll",
       "idempotencyKey": "replay-poll-delete-001",
-      "expectedStatus": 200,
-      "expectedReplay": false
+      "expectedStatus": 204
     }
   ]
 }

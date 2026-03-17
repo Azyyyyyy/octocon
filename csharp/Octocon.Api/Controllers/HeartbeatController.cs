@@ -10,5 +10,5 @@ public sealed class HeartbeatController : OctoconControllerBase
 
     [AllowAnonymous]
     [HttpGet("heartbeat")]
-    public IActionResult Heartbeat() => Ok(new { Status = "ok" });
+    public IActionResult Heartbeat() => Ok(new { response = "ACK" });
 }

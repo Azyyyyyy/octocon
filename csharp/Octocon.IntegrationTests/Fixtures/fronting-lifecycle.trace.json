@@ -9,7 +9,7 @@
       "principalId": "replay-sys-front",
       "idempotencyKey": "replay-front-alter-create-001",
       "body": { "name": "FrontTestAlter" },
-      "expectedStatus": 200,
+      "expectedStatus": 201,
       "expectedReplay": false,
       "captureAs": { "alterId": "alterId" }
     },
@@ -20,7 +20,7 @@
       "principalId": "replay-sys-front",
       "idempotencyKey": "replay-front-start-001",
       "body": { "alterId": "{alterId}" },
-      "expectedStatus": 200,
+      "expectedStatus": 201,
       "expectedReplay": false,
       "captureAs": { "frontId": "frontId" }
     },
@@ -31,7 +31,7 @@
       "principalId": "replay-sys-front",
       "idempotencyKey": "replay-front-start-001",
       "body": { "alterId": "{alterId}" },
-      "expectedStatus": 200,
+      "expectedStatus": 201,
       "expectedReplay": true
     },
     {

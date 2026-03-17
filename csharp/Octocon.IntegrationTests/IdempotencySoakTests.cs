@@ -68,7 +68,7 @@ public sealed class IdempotencySoakTests
 
         await RunSoakAsync(async (client, key) =>
         {
-            using var req = new HttpRequestMessage(HttpMethod.Post, "/api/systems/me/polls")
+            using var req = new HttpRequestMessage(HttpMethod.Post, "/api/polls")
             {
                 Content = JsonContent.Create(new { title = "SoakPoll", options = new[] { "Yes", "No" } })
             };
@@ -85,7 +85,7 @@ public sealed class IdempotencySoakTests
 
         await RunSoakAsync(async (client, key) =>
         {
-            using var req = new HttpRequestMessage(HttpMethod.Post, "/api/systems/me/journals")
+            using var req = new HttpRequestMessage(HttpMethod.Post, "/api/journals")
             {
                 Content = JsonContent.Create(new { title = "SoakJournal", body = "entry body" })
             };
