@@ -1,0 +1,1 @@
+CREATE TABLE IF NOT EXISTS global.notification_tokens (user_id UUID, token TEXT, PRIMARY KEY (user_id, token));

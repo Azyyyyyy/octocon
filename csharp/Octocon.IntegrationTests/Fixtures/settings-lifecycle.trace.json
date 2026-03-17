@@ -4,43 +4,39 @@
   "steps": [
     {
       "name": "update username",
-      "method": "PATCH",
-      "path": "/api/systems/me/username",
+      "method": "POST",
+      "path": "/api/settings/username",
       "principalId": "replay-sys-settings",
       "idempotencyKey": "replay-settings-username-001",
       "body": { "username": "replayuser" },
-      "expectedStatus": 200,
-      "expectedReplay": false
+      "expectedStatus": 204
     },
     {
       "name": "update username (replay)",
-      "method": "PATCH",
-      "path": "/api/systems/me/username",
+      "method": "POST",
+      "path": "/api/settings/username",
       "principalId": "replay-sys-settings",
       "idempotencyKey": "replay-settings-username-001",
       "body": { "username": "replayuser" },
-      "expectedStatus": 200,
-      "expectedReplay": true
+      "expectedStatus": 204
     },
     {
       "name": "update description",
-      "method": "PATCH",
-      "path": "/api/systems/me/description",
+      "method": "POST",
+      "path": "/api/settings/description",
       "principalId": "replay-sys-settings",
       "idempotencyKey": "replay-settings-desc-001",
       "body": { "description": "replay description" },
-      "expectedStatus": 200,
-      "expectedReplay": false
+      "expectedStatus": 204
     },
     {
       "name": "update description (replay)",
-      "method": "PATCH",
-      "path": "/api/systems/me/description",
+      "method": "POST",
+      "path": "/api/settings/description",
       "principalId": "replay-sys-settings",
       "idempotencyKey": "replay-settings-desc-001",
       "body": { "description": "replay description" },
-      "expectedStatus": 200,
-      "expectedReplay": true
+      "expectedStatus": 204
     }
   ]
 }

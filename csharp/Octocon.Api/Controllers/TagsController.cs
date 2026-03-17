@@ -77,7 +77,7 @@ public sealed class TagsController : OctoconControllerBase
    }
 
    [HttpDelete("{id}")]
-   public async Task<IActionResult> DeleteTag(string id, [FromBody] TagIdempotencyRequest body, CancellationToken ct)
+   public async Task<IActionResult> DeleteTag(string id, [FromBody] TagIdempotencyRequest? body, CancellationToken ct)
    {
        var principal = GetPrincipalId();
        if (principal is null) return Unauthorized();
@@ -86,8 +86,8 @@ public sealed class TagsController : OctoconControllerBase
            OperationId: OperationIds.TagDelete,
            CommandId: Guid.NewGuid(),
            PrincipalId: principal,
-           IdempotencyKey: GetIdempotencyKey(body.IdempotencyKey),
-           ExpectedVersion: body.ExpectedVersion,
+           IdempotencyKey: GetIdempotencyKey(body?.IdempotencyKey),
+           ExpectedVersion: body?.ExpectedVersion,
            OccurredAt: DateTimeOffset.UtcNow,
            Payload: new DeleteTagCommand(id)
        );

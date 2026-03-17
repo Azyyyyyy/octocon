@@ -216,12 +216,13 @@ public sealed class ReplayParityTests
 
     private static async Task<RunningApi> StartApiAsync(string workspaceRoot, int port)
     {
+        var gateLease = await ApiProcessGate.AcquireAsync();
         var apiProjectPath = Path.Combine(workspaceRoot, "csharp", "Octocon.Api", "Octocon.Api.csproj");
 
         var psi = new ProcessStartInfo
         {
             FileName = "dotnet",
-            Arguments = $"run --project \"{apiProjectPath}\"",
+            Arguments = $"run --no-build --project \"{apiProjectPath}\"",
             WorkingDirectory = workspaceRoot,
             RedirectStandardOutput = true,
             RedirectStandardError  = true,
@@ -244,6 +245,7 @@ public sealed class ReplayParityTests
             {
                 var stderr = await process.StandardError.ReadToEndAsync();
                 var stdout = await process.StandardOutput.ReadToEndAsync();
+                await gateLease.DisposeAsync();
                 throw new InvalidOperationException(
                     $"API exited unexpectedly. stdout: {stdout} stderr: {stderr}");
             }
@@ -258,7 +260,7 @@ public sealed class ReplayParityTests
             await Task.Delay(200);
         }
 
-        return new RunningApi(process);
+        return new RunningApi(process, gateLease);
     }
 
     private static int GetFreePort()
@@ -292,14 +294,14 @@ public sealed class ReplayParityTests
         if (!condition) throw new InvalidOperationException(message);
     }
 
-    private sealed class RunningApi(Process process) : IAsyncDisposable
+    private sealed class RunningApi(Process process, IAsyncDisposable gateLease) : IAsyncDisposable
     {
-        public ValueTask DisposeAsync()
+        public async ValueTask DisposeAsync()
         {
             try { if (!process.HasExited) process.Kill(entireProcessTree: true); }
             catch { }
             process.Dispose();
-            return ValueTask.CompletedTask;
+            await gateLease.DisposeAsync();
         }
     }
 }

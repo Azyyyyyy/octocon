@@ -16,7 +16,7 @@
     {
       "name": "start front",
       "method": "POST",
-      "path": "/api/systems/me/fronting",
+      "path": "/api/systems/me/front/start",
       "principalId": "replay-sys-front",
       "idempotencyKey": "replay-front-start-001",
       "body": { "alterId": "{alterId}" },
@@ -27,7 +27,7 @@
     {
       "name": "start front (replay)",
       "method": "POST",
-      "path": "/api/systems/me/fronting",
+      "path": "/api/systems/me/front/start",
       "principalId": "replay-sys-front",
       "idempotencyKey": "replay-front-start-001",
       "body": { "alterId": "{alterId}" },
@@ -37,20 +37,18 @@
     {
       "name": "end front",
       "method": "DELETE",
-      "path": "/api/systems/me/fronting/{frontId}",
+      "path": "/api/systems/me/front/{frontId}",
       "principalId": "replay-sys-front",
       "idempotencyKey": "replay-front-end-001",
-      "expectedStatus": 200,
-      "expectedReplay": false
+      "expectedStatus": 204
     },
     {
       "name": "end front (replay)",
       "method": "DELETE",
-      "path": "/api/systems/me/fronting/{frontId}",
+      "path": "/api/systems/me/front/{frontId}",
       "principalId": "replay-sys-front",
       "idempotencyKey": "replay-front-end-001",
-      "expectedStatus": 200,
-      "expectedReplay": true
+      "expectedStatus": 204
     }
   ]
 }

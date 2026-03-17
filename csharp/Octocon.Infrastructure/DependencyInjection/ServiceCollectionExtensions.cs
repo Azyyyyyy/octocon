@@ -28,11 +28,11 @@ public static partial class ServiceCollectionExtensions
         configure?.Invoke(options);
 
         services.AddSingleton(options);
-        services.AddSingleton<IRegionContext>(_ => new InMemoryRegionContext(options.DefaultRegion));
 
         return mode switch
         {
             PersistenceMode.InMemory => services
+                .AddSingleton<IRegionContext>(_ => new InMemoryRegionContext(options.DefaultRegion))
                 .AddSingleton<IAccountRepository, InMemoryRegionalAccountRepository>()
                 .AddSingleton<INotificationTokenRepository, InMemoryNotificationTokenRepository>()
                 .AddSingleton<IEncryptionStateRepository, InMemoryEncryptionStateRepository>()
@@ -50,6 +50,11 @@ public static partial class ServiceCollectionExtensions
             PersistenceMode.ScyllaPostgres => services
                 .AddSingleton<IPostgresConnectionFactory>(_ => new PostgresConnectionFactory(options.PostgresConnectionString, options))
                 .AddSingleton<IScyllaSessionProvider, ScyllaSessionProvider>()
+                .AddSingleton<IScyllaKeyspaceResolver, ScyllaKeyspaceResolver>()
+                .AddSingleton<IRegionContext>(sp =>
+                    new ScyllaUserRegistryRegionContext(
+                        sp.GetRequiredService<IScyllaSessionProvider>(),
+                        options))
                 .AddSingleton<IAccountRepository, ScyllaAccountRepository>()
                 .AddSingleton<INotificationTokenRepository, ScyllaNotificationTokenRepository>()
                 .AddSingleton<IEncryptionStateRepository, ScyllaEncryptionStateRepository>()
@@ -68,3 +73,4 @@ public static partial class ServiceCollectionExtensions
         };
     }
 }
+

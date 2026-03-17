@@ -1,5 +1,4 @@
 using Cassandra;
-using Octocon.Domain.Abstractions;
 using Octocon.Domain.Friendships;
 using Octocon.Infrastructure.Persistence.Transient;
 
@@ -7,17 +6,20 @@ namespace Octocon.Infrastructure.Persistence.Scylla;
 
 public sealed class ScyllaFriendshipRepository : IFriendshipRepository
 {
+    private const short FriendLevel = 0;
+    private const short TrustedFriendLevel = 1;
+
     private readonly IScyllaSessionProvider _sessionProvider;
-    private readonly IRegionContext _regionContext;
+    private readonly IScyllaKeyspaceResolver _keyspaceResolver;
     private readonly PersistenceRegistrationOptions _options;
 
     public ScyllaFriendshipRepository(
         IScyllaSessionProvider sessionProvider,
-        IRegionContext regionContext,
+        IScyllaKeyspaceResolver keyspaceResolver,
         PersistenceRegistrationOptions options)
     {
         _sessionProvider = sessionProvider;
-        _regionContext = regionContext;
+        _keyspaceResolver = keyspaceResolver;
         _options = options;
     }
 
@@ -26,11 +28,11 @@ public sealed class ScyllaFriendshipRepository : IFriendshipRepository
         return await DatabaseTransientRetry.ExecuteScyllaAsync(async () =>
         {
             var session = await _sessionProvider.GetSessionAsync(cancellationToken);
-            var scopedSystemId = GetScopedSystemId(systemId);
+            var normalizedSystemId = _keyspaceResolver.NormalizeSystemId(systemId);
 
             var query = new SimpleStatement(
-                "SELECT friend_id, level, since FROM friendships_by_system WHERE system_id = ?",
-                scopedSystemId);
+                "SELECT friend_id, level, since FROM global.friendships WHERE user_id = ?",
+                normalizedSystemId);
 
             var rows = await session.ExecuteAsync(query);
             var result = new List<FriendshipReadModel>();
@@ -38,7 +40,7 @@ public sealed class ScyllaFriendshipRepository : IFriendshipRepository
             foreach (var row in rows)
             {
                 var friendId = row.GetValue<string>("friend_id");
-                var level = row.GetValue<string>("level");
+                var level = ToDomainLevel(row.GetValue<short>("level"));
                 var since = row.GetValue<DateTimeOffset?>("since") ?? DateTimeOffset.UtcNow;
 
                 var profile = await GetFriendProfileAsync(session, friendId);
@@ -56,12 +58,13 @@ public sealed class ScyllaFriendshipRepository : IFriendshipRepository
         return await DatabaseTransientRetry.ExecuteScyllaAsync(async () =>
         {
             var session = await _sessionProvider.GetSessionAsync(cancellationToken);
-            var scopedSystemId = GetScopedSystemId(systemId);
+            var normalizedSystemId = _keyspaceResolver.NormalizeSystemId(systemId);
+            var normalizedFriendSystemId = _keyspaceResolver.NormalizeSystemId(friendSystemId);
 
             var query = new SimpleStatement(
-                "SELECT friend_id, level, since FROM friendships_by_system WHERE system_id = ? AND friend_id = ? LIMIT 1",
-                scopedSystemId,
-                friendSystemId);
+                "SELECT friend_id, level, since FROM global.friendships WHERE user_id = ? AND friend_id = ? LIMIT 1",
+                normalizedSystemId,
+                normalizedFriendSystemId);
 
             var row = (await session.ExecuteAsync(query)).FirstOrDefault();
             if (row is null)
@@ -70,12 +73,12 @@ public sealed class ScyllaFriendshipRepository : IFriendshipRepository
             }
 
             var since = row.GetValue<DateTimeOffset?>("since") ?? DateTimeOffset.UtcNow;
-            var profile = await GetFriendProfileAsync(session, friendSystemId);
-            var fronting = await GetFrontingAsync(session, friendSystemId);
+            var profile = await GetFriendProfileAsync(session, normalizedFriendSystemId);
+            var fronting = await GetFrontingAsync(session, normalizedFriendSystemId);
 
             return new FriendshipReadModel(
                 profile,
-                row.GetValue<string>("level"),
+                ToDomainLevel(row.GetValue<short>("level")),
                 since,
                 fronting);
         }, _options, cancellationToken);
@@ -86,24 +89,24 @@ public sealed class ScyllaFriendshipRepository : IFriendshipRepository
         return await DatabaseTransientRetry.ExecuteScyllaAsync(async () =>
         {
             var session = await _sessionProvider.GetSessionAsync(cancellationToken);
-            var scopedSystemId = GetScopedSystemId(systemId);
-            var scopedFriendId = GetScopedSystemId(friendSystemId);
+            var normalizedSystemId = _keyspaceResolver.NormalizeSystemId(systemId);
+            var normalizedFriendId = _keyspaceResolver.NormalizeSystemId(friendSystemId);
 
-            var exists = await ExistsFriendshipAsync(session, scopedSystemId, friendSystemId);
+            var exists = await ExistsFriendshipAsync(session, normalizedSystemId, normalizedFriendId);
             if (!exists)
             {
                 return false;
             }
 
             await session.ExecuteAsync(new SimpleStatement(
-                "DELETE FROM friendships_by_system WHERE system_id = ? AND friend_id = ?",
-                scopedSystemId,
-                friendSystemId));
+                "DELETE FROM global.friendships WHERE user_id = ? AND friend_id = ?",
+                normalizedSystemId,
+                normalizedFriendId));
 
             await session.ExecuteAsync(new SimpleStatement(
-                "DELETE FROM friendships_by_system WHERE system_id = ? AND friend_id = ?",
-                scopedFriendId,
-                systemId));
+                "DELETE FROM global.friendships WHERE user_id = ? AND friend_id = ?",
+                normalizedFriendId,
+                normalizedSystemId));
 
             return true;
         }, _options, cancellationToken);
@@ -114,19 +117,20 @@ public sealed class ScyllaFriendshipRepository : IFriendshipRepository
         return await DatabaseTransientRetry.ExecuteScyllaAsync(async () =>
         {
             var session = await _sessionProvider.GetSessionAsync(cancellationToken);
-            var scopedSystemId = GetScopedSystemId(systemId);
+            var normalizedSystemId = _keyspaceResolver.NormalizeSystemId(systemId);
+            var normalizedFriendSystemId = _keyspaceResolver.NormalizeSystemId(friendSystemId);
 
-            var exists = await ExistsFriendshipAsync(session, scopedSystemId, friendSystemId);
+            var exists = await ExistsFriendshipAsync(session, normalizedSystemId, normalizedFriendSystemId);
             if (!exists)
             {
                 return false;
             }
 
             await session.ExecuteAsync(new SimpleStatement(
-                "UPDATE friendships_by_system SET level = ? WHERE system_id = ? AND friend_id = ?",
-                trusted ? "trusted_friend" : "friend",
-                scopedSystemId,
-                friendSystemId));
+                "UPDATE global.friendships SET level = ? WHERE user_id = ? AND friend_id = ?",
+                trusted ? TrustedFriendLevel : FriendLevel,
+                normalizedSystemId,
+                normalizedFriendSystemId));
 
             return true;
         }, _options, cancellationToken);
@@ -137,20 +141,20 @@ public sealed class ScyllaFriendshipRepository : IFriendshipRepository
         return await DatabaseTransientRetry.ExecuteScyllaAsync(async () =>
         {
             var session = await _sessionProvider.GetSessionAsync(cancellationToken);
-            var scopedSystemId = GetScopedSystemId(systemId);
+            var normalizedSystemId = _keyspaceResolver.NormalizeSystemId(systemId);
 
             var incomingRows = await session.ExecuteAsync(new SimpleStatement(
-                "SELECT from_system_id, date_sent FROM friend_requests_by_recipient WHERE to_system_id = ?",
-                scopedSystemId));
+                "SELECT from_id, date_sent FROM global.friend_requests WHERE to_id = ?",
+                normalizedSystemId));
 
             var outgoingRows = await session.ExecuteAsync(new SimpleStatement(
-                "SELECT to_system_id, date_sent FROM friend_requests_by_sender WHERE from_system_id = ?",
-                scopedSystemId));
+                "SELECT to_id, date_sent FROM global.friend_requests WHERE from_id = ?",
+                normalizedSystemId));
 
             var incoming = new List<FriendRequestReadModel>();
             foreach (var row in incomingRows)
             {
-                var sourceSystemId = row.GetValue<string>("from_system_id");
+                var sourceSystemId = row.GetValue<string>("from_id");
                 var profile = await GetFriendProfileAsync(session, sourceSystemId);
                 incoming.Add(new FriendRequestReadModel(profile, row.GetValue<DateTimeOffset?>("date_sent") ?? DateTimeOffset.UtcNow));
             }
@@ -158,7 +162,7 @@ public sealed class ScyllaFriendshipRepository : IFriendshipRepository
             var outgoing = new List<FriendRequestReadModel>();
             foreach (var row in outgoingRows)
             {
-                var targetSystemId = row.GetValue<string>("to_system_id");
+                var targetSystemId = row.GetValue<string>("to_id");
                 var profile = await GetFriendProfileAsync(session, targetSystemId);
                 outgoing.Add(new FriendRequestReadModel(profile, row.GetValue<DateTimeOffset?>("date_sent") ?? DateTimeOffset.UtcNow));
             }
@@ -174,33 +178,33 @@ public sealed class ScyllaFriendshipRepository : IFriendshipRepository
         return await DatabaseTransientRetry.ExecuteScyllaAsync(async () =>
         {
             var session = await _sessionProvider.GetSessionAsync(cancellationToken);
-            var scopedSystemId = GetScopedSystemId(systemId);
-            var scopedTargetSystemId = GetScopedSystemId(targetSystemId);
+            var normalizedSystemId = _keyspaceResolver.NormalizeSystemId(systemId);
+            var normalizedTargetSystemId = _keyspaceResolver.NormalizeSystemId(targetSystemId);
 
-            if (!await SystemExistsAsync(session, scopedTargetSystemId))
+            if (!await SystemExistsAsync(session, normalizedTargetSystemId))
             {
                 return SendFriendRequestOutcome.NoUser;
             }
 
-            if (await ExistsFriendshipAsync(session, scopedSystemId, targetSystemId))
+            if (await ExistsFriendshipAsync(session, normalizedSystemId, normalizedTargetSystemId))
             {
                 return SendFriendRequestOutcome.AlreadyFriends;
             }
 
-            if (await ExistsRequestAsync(session, scopedSystemId, scopedTargetSystemId))
+            if (await ExistsRequestAsync(session, normalizedSystemId, normalizedTargetSystemId))
             {
                 return SendFriendRequestOutcome.AlreadySent;
             }
 
-            if (await ExistsRequestAsync(session, scopedTargetSystemId, scopedSystemId))
+            if (await ExistsRequestAsync(session, normalizedTargetSystemId, normalizedSystemId))
             {
-                await LinkFriendsAsync(session, scopedSystemId, systemId, scopedTargetSystemId, targetSystemId);
-                await DeleteRequestAsync(session, scopedTargetSystemId, scopedSystemId, targetSystemId, systemId);
-                await DeleteRequestAsync(session, scopedSystemId, scopedTargetSystemId, systemId, targetSystemId);
+                await LinkFriendsAsync(session, normalizedSystemId, normalizedTargetSystemId);
+                await DeleteRequestAsync(session, normalizedTargetSystemId, normalizedSystemId);
+                await DeleteRequestAsync(session, normalizedSystemId, normalizedTargetSystemId);
                 return SendFriendRequestOutcome.Accepted;
             }
 
-            await CreateRequestAsync(session, scopedSystemId, scopedTargetSystemId, systemId, targetSystemId);
+            await CreateRequestAsync(session, normalizedSystemId, normalizedTargetSystemId);
             return SendFriendRequestOutcome.Sent;
         }, _options, cancellationToken);
     }
@@ -210,27 +214,27 @@ public sealed class ScyllaFriendshipRepository : IFriendshipRepository
         return await DatabaseTransientRetry.ExecuteScyllaAsync(async () =>
         {
             var session = await _sessionProvider.GetSessionAsync(cancellationToken);
-            var scopedSystemId = GetScopedSystemId(systemId);
-            var scopedSourceSystemId = GetScopedSystemId(sourceSystemId);
+            var normalizedSystemId = _keyspaceResolver.NormalizeSystemId(systemId);
+            var normalizedSourceSystemId = _keyspaceResolver.NormalizeSystemId(sourceSystemId);
 
-            if (!await SystemExistsAsync(session, scopedSourceSystemId))
+            if (!await SystemExistsAsync(session, normalizedSourceSystemId))
             {
                 return FriendRequestMutationOutcome.NoUser;
             }
 
-            if (await ExistsFriendshipAsync(session, scopedSystemId, sourceSystemId))
+            if (await ExistsFriendshipAsync(session, normalizedSystemId, normalizedSourceSystemId))
             {
                 return FriendRequestMutationOutcome.AlreadyFriends;
             }
 
-            if (!await ExistsRequestAsync(session, scopedSourceSystemId, scopedSystemId))
+            if (!await ExistsRequestAsync(session, normalizedSourceSystemId, normalizedSystemId))
             {
                 return FriendRequestMutationOutcome.NotRequested;
             }
 
-            await LinkFriendsAsync(session, scopedSystemId, systemId, scopedSourceSystemId, sourceSystemId);
-            await DeleteRequestAsync(session, scopedSourceSystemId, scopedSystemId, sourceSystemId, systemId);
-            await DeleteRequestAsync(session, scopedSystemId, scopedSourceSystemId, systemId, sourceSystemId);
+            await LinkFriendsAsync(session, normalizedSystemId, normalizedSourceSystemId);
+            await DeleteRequestAsync(session, normalizedSourceSystemId, normalizedSystemId);
+            await DeleteRequestAsync(session, normalizedSystemId, normalizedSourceSystemId);
             return FriendRequestMutationOutcome.Ok;
         }, _options, cancellationToken);
     }
@@ -240,25 +244,25 @@ public sealed class ScyllaFriendshipRepository : IFriendshipRepository
         return await DatabaseTransientRetry.ExecuteScyllaAsync(async () =>
         {
             var session = await _sessionProvider.GetSessionAsync(cancellationToken);
-            var scopedSystemId = GetScopedSystemId(systemId);
-            var scopedSourceSystemId = GetScopedSystemId(sourceSystemId);
+            var normalizedSystemId = _keyspaceResolver.NormalizeSystemId(systemId);
+            var normalizedSourceSystemId = _keyspaceResolver.NormalizeSystemId(sourceSystemId);
 
-            if (!await SystemExistsAsync(session, scopedSourceSystemId))
+            if (!await SystemExistsAsync(session, normalizedSourceSystemId))
             {
                 return FriendRequestMutationOutcome.NoUser;
             }
 
-            if (await ExistsFriendshipAsync(session, scopedSystemId, sourceSystemId))
+            if (await ExistsFriendshipAsync(session, normalizedSystemId, normalizedSourceSystemId))
             {
                 return FriendRequestMutationOutcome.AlreadyFriends;
             }
 
-            if (!await ExistsRequestAsync(session, scopedSourceSystemId, scopedSystemId))
+            if (!await ExistsRequestAsync(session, normalizedSourceSystemId, normalizedSystemId))
             {
                 return FriendRequestMutationOutcome.NotRequested;
             }
 
-            await DeleteRequestAsync(session, scopedSourceSystemId, scopedSystemId, sourceSystemId, systemId);
+            await DeleteRequestAsync(session, normalizedSourceSystemId, normalizedSystemId);
             return FriendRequestMutationOutcome.Ok;
         }, _options, cancellationToken);
     }
@@ -268,138 +272,133 @@ public sealed class ScyllaFriendshipRepository : IFriendshipRepository
         return await DatabaseTransientRetry.ExecuteScyllaAsync(async () =>
         {
             var session = await _sessionProvider.GetSessionAsync(cancellationToken);
-            var scopedSystemId = GetScopedSystemId(systemId);
-            var scopedTargetSystemId = GetScopedSystemId(targetSystemId);
+            var normalizedSystemId = _keyspaceResolver.NormalizeSystemId(systemId);
+            var normalizedTargetSystemId = _keyspaceResolver.NormalizeSystemId(targetSystemId);
 
-            if (!await SystemExistsAsync(session, scopedTargetSystemId))
+            if (!await SystemExistsAsync(session, normalizedTargetSystemId))
             {
                 return FriendRequestMutationOutcome.NoUser;
             }
 
-            if (await ExistsFriendshipAsync(session, scopedSystemId, targetSystemId))
+            if (await ExistsFriendshipAsync(session, normalizedSystemId, normalizedTargetSystemId))
             {
                 return FriendRequestMutationOutcome.AlreadyFriends;
             }
 
-            if (!await ExistsRequestAsync(session, scopedSystemId, scopedTargetSystemId))
+            if (!await ExistsRequestAsync(session, normalizedSystemId, normalizedTargetSystemId))
             {
                 return FriendRequestMutationOutcome.NotRequested;
             }
 
-            await DeleteRequestAsync(session, scopedSystemId, scopedTargetSystemId, systemId, targetSystemId);
+            await DeleteRequestAsync(session, normalizedSystemId, normalizedTargetSystemId);
             return FriendRequestMutationOutcome.Ok;
         }, _options, cancellationToken);
     }
 
-    private async Task<bool> ExistsFriendshipAsync(ISession session, string scopedSystemId, string friendSystemId)
+    internal static string ToDomainLevel(short level) => level == TrustedFriendLevel ? "trusted_friend" : "friend";
+
+    private static async Task<bool> ExistsFriendshipAsync(ISession session, string userId, string friendId)
     {
         var query = new SimpleStatement(
-            "SELECT friend_id FROM friendships_by_system WHERE system_id = ? AND friend_id = ? LIMIT 1",
-            scopedSystemId,
-            friendSystemId);
+            "SELECT friend_id FROM global.friendships WHERE user_id = ? AND friend_id = ? LIMIT 1",
+            userId,
+            friendId);
 
         return (await session.ExecuteAsync(query)).Any();
     }
 
-    private async Task<bool> SystemExistsAsync(ISession session, string scopedSystemId)
+    private static async Task<bool> SystemExistsAsync(ISession session, string userId)
     {
         var query = new SimpleStatement(
-            "SELECT system_id FROM account_profiles_by_system WHERE system_id = ? LIMIT 1",
-            scopedSystemId);
+            "SELECT id FROM global.users WHERE id = ? LIMIT 1",
+            userId);
 
         return (await session.ExecuteAsync(query)).Any();
     }
 
-    private async Task<bool> ExistsRequestAsync(ISession session, string scopedFrom, string scopedTo)
+    private static async Task<bool> ExistsRequestAsync(ISession session, string fromId, string toId)
     {
         var query = new SimpleStatement(
-            "SELECT to_system_id FROM friend_requests_by_sender WHERE from_system_id = ? AND to_system_id = ? LIMIT 1",
-            scopedFrom,
-            scopedTo);
+            "SELECT to_id FROM global.friend_requests WHERE from_id = ? AND to_id = ? LIMIT 1",
+            fromId,
+            toId);
 
         return (await session.ExecuteAsync(query)).Any();
     }
 
-    private async Task CreateRequestAsync(ISession session, string scopedFrom, string scopedTo, string fromSystemId, string toSystemId)
+    private static async Task CreateRequestAsync(ISession session, string fromId, string toId)
     {
         await session.ExecuteAsync(new SimpleStatement(
-            "INSERT INTO friend_requests_by_sender (from_system_id, to_system_id, date_sent) VALUES (?, ?, toTimestamp(now()))",
-            scopedFrom,
-            scopedTo));
-
-        await session.ExecuteAsync(new SimpleStatement(
-            "INSERT INTO friend_requests_by_recipient (to_system_id, from_system_id, date_sent) VALUES (?, ?, toTimestamp(now()))",
-            scopedTo,
-            scopedFrom));
+            "INSERT INTO global.friend_requests (from_id, to_id, date_sent, inserted_at, updated_at) VALUES (?, ?, toTimestamp(now()), toTimestamp(now()), toTimestamp(now()))",
+            fromId,
+            toId));
     }
 
-    private async Task DeleteRequestAsync(ISession session, string scopedFrom, string scopedTo, string fromSystemId, string toSystemId)
+    private static async Task DeleteRequestAsync(ISession session, string fromId, string toId)
     {
         await session.ExecuteAsync(new SimpleStatement(
-            "DELETE FROM friend_requests_by_sender WHERE from_system_id = ? AND to_system_id = ?",
-            scopedFrom,
-            scopedTo));
-
-        await session.ExecuteAsync(new SimpleStatement(
-            "DELETE FROM friend_requests_by_recipient WHERE to_system_id = ? AND from_system_id = ?",
-            scopedTo,
-            scopedFrom));
+            "DELETE FROM global.friend_requests WHERE from_id = ? AND to_id = ?",
+            fromId,
+            toId));
     }
 
-    private async Task LinkFriendsAsync(ISession session, string scopedLeft, string leftSystemId, string scopedRight, string rightSystemId)
+    private static async Task LinkFriendsAsync(ISession session, string leftSystemId, string rightSystemId)
     {
         await session.ExecuteAsync(new SimpleStatement(
-            "INSERT INTO friendships_by_system (system_id, friend_id, level, since) VALUES (?, ?, ?, toTimestamp(now()))",
-            scopedLeft,
-            rightSystemId,
-            "friend"));
-
-        await session.ExecuteAsync(new SimpleStatement(
-            "INSERT INTO friendships_by_system (system_id, friend_id, level, since) VALUES (?, ?, ?, toTimestamp(now()))",
-            scopedRight,
+            "INSERT INTO global.friendships (user_id, friend_id, level, since, inserted_at, updated_at) VALUES (?, ?, ?, toTimestamp(now()), toTimestamp(now()), toTimestamp(now()))",
             leftSystemId,
-            "friend"));
+            rightSystemId,
+            FriendLevel));
+
+        await session.ExecuteAsync(new SimpleStatement(
+            "INSERT INTO global.friendships (user_id, friend_id, level, since, inserted_at, updated_at) VALUES (?, ?, ?, toTimestamp(now()), toTimestamp(now()), toTimestamp(now()))",
+            rightSystemId,
+            leftSystemId,
+            FriendLevel));
     }
 
     private async Task<FriendProfileReadModel> GetFriendProfileAsync(ISession session, string friendSystemId)
     {
-        var scopedFriendId = GetScopedSystemId(friendSystemId);
         var profileQuery = new SimpleStatement(
-            "SELECT username FROM account_profiles_by_system WHERE system_id = ? LIMIT 1",
-            scopedFriendId);
+            "SELECT username, avatar_url, description, discord_id FROM global.users WHERE id = ? LIMIT 1",
+            friendSystemId);
 
         var profileRow = (await session.ExecuteAsync(profileQuery)).FirstOrDefault();
-        var username = profileRow is null ? null : profileRow.GetValue<string?>("username");
 
-        return new FriendProfileReadModel(friendSystemId, username, null, null, null);
+        return new FriendProfileReadModel(
+            friendSystemId,
+            profileRow?.GetValue<string?>("username"),
+            profileRow?.GetValue<string?>("avatar_url"),
+            profileRow?.GetValue<string?>("description"),
+            profileRow?.GetValue<string?>("discord_id"));
     }
 
     private async Task<IReadOnlyList<FriendFrontingReadModel>> GetFrontingAsync(ISession session, string friendSystemId)
     {
-        var scopedFriendId = GetScopedSystemId(friendSystemId);
+        var regionalKeyspace = _keyspaceResolver.ResolveRegionalKeyspace(friendSystemId);
 
         var activeRows = await session.ExecuteAsync(new SimpleStatement(
-            "SELECT alter_id, comment FROM fronting_active_by_system WHERE system_id = ?",
-            scopedFriendId));
+            $"SELECT alter_id, comment FROM {regionalKeyspace}.current_fronts WHERE user_id = ?",
+            friendSystemId));
 
         var primaryRow = (await session.ExecuteAsync(new SimpleStatement(
-            "SELECT alter_id FROM fronting_primary_by_system WHERE system_id = ? LIMIT 1",
-            scopedFriendId))).FirstOrDefault();
+            "SELECT primary_front FROM global.users WHERE id = ? LIMIT 1",
+            friendSystemId))).FirstOrDefault();
 
-        var primaryAlterId = primaryRow?.GetValue<int>("alter_id");
+        var primaryAlterId = primaryRow?.GetValue<int?>("primary_front");
 
         var alterRows = await session.ExecuteAsync(new SimpleStatement(
-            "SELECT alter_id, name, alias FROM alters_by_system WHERE system_id = ?",
-            scopedFriendId));
+            $"SELECT id, name, alias FROM {regionalKeyspace}.alters WHERE user_id = ?",
+            friendSystemId));
 
         var alterMap = alterRows.ToDictionary(
-            row => row.GetValue<int>("alter_id"),
+            row => row.GetValue<short>("id"),
             row => (Name: row.GetValue<string?>("name"), Alias: row.GetValue<string?>("alias")));
 
         return activeRows
             .Select(row =>
             {
-                var alterId = row.GetValue<int>("alter_id");
+                var alterId = row.GetValue<short>("alter_id");
                 alterMap.TryGetValue(alterId, out var alter);
                 return new FriendFrontingReadModel(
                     alterId,
@@ -410,11 +409,5 @@ public sealed class ScyllaFriendshipRepository : IFriendshipRepository
             })
             .OrderBy(x => x.AlterId)
             .ToList();
-    }
-
-    private string GetScopedSystemId(string systemId)
-    {
-        var region = _regionContext.ResolveUserRegion(systemId);
-        return $"{region}:{systemId}";
     }
 }

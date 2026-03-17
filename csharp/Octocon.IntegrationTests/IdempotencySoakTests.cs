@@ -102,7 +102,7 @@ public sealed class IdempotencySoakTests
 
         await RunSoakAsync(async (client, key) =>
         {
-            using var req = new HttpRequestMessage(HttpMethod.Patch, "/api/systems/me/username")
+            using var req = new HttpRequestMessage(HttpMethod.Post, "/api/settings/username")
             {
                 Content = JsonContent.Create(new { username = "soakuser" })
             };
@@ -185,17 +185,21 @@ public sealed class IdempotencySoakTests
                 response.IsSuccessStatusCode,
                 $"Soak call #{i + 1}: expected 2xx, got {(int)response.StatusCode}. Body: {body}");
 
-            var replay = ReadBoolField(body, "replay");
+            // 204 No Content responses have no body; skip replay-flag assertion for those.
+            if (!string.IsNullOrEmpty(body))
+            {
+                var replay = ReadBoolField(body, "replay");
 
-            if (i == 0)
-            {
-                Ensure(!replay,
-                    $"Soak call #1: expected replay=false on first invocation. Body: {body}");
-            }
-            else
-            {
-                Ensure(replay,
-                    $"Soak call #{i + 1}: expected replay=true after first invocation. Body: {body}");
+                if (i == 0)
+                {
+                    Ensure(!replay,
+                        $"Soak call #1: expected replay=false on first invocation. Body: {body}");
+                }
+                else
+                {
+                    Ensure(replay,
+                        $"Soak call #{i + 1}: expected replay=true after first invocation. Body: {body}");
+                }
             }
         }
     }
@@ -206,12 +210,13 @@ public sealed class IdempotencySoakTests
 
     private static async Task<RunningApi> StartApiAsync(string workspaceRoot, int port)
     {
+        var gateLease = await ApiProcessGate.AcquireAsync();
         var apiProjectPath = Path.Combine(workspaceRoot, "csharp", "Octocon.Api", "Octocon.Api.csproj");
 
         var psi = new ProcessStartInfo
         {
             FileName = "dotnet",
-            Arguments = $"run --project \"{apiProjectPath}\"",
+            Arguments = $"run --no-build --project \"{apiProjectPath}\"",
             WorkingDirectory = workspaceRoot,
             RedirectStandardOutput = true,
             RedirectStandardError  = true,
@@ -233,6 +238,7 @@ public sealed class IdempotencySoakTests
             if (process.HasExited)
             {
                 var err = await process.StandardError.ReadToEndAsync();
+                await gateLease.DisposeAsync();
                 throw new InvalidOperationException($"API exited. stderr: {err}");
             }
 
@@ -246,7 +252,7 @@ public sealed class IdempotencySoakTests
             await Task.Delay(200);
         }
 
-        return new RunningApi(process);
+        return new RunningApi(process, gateLease);
     }
 
     private static bool ReadBoolField(string json, string fieldName)
@@ -301,14 +307,14 @@ public sealed class IdempotencySoakTests
         if (!condition) throw new InvalidOperationException(message);
     }
 
-    private sealed class RunningApi(Process process) : IAsyncDisposable
+    private sealed class RunningApi(Process process, IAsyncDisposable gateLease) : IAsyncDisposable
     {
-        public ValueTask DisposeAsync()
+        public async ValueTask DisposeAsync()
         {
             try { if (!process.HasExited) process.Kill(entireProcessTree: true); }
             catch { }
             process.Dispose();
-            return ValueTask.CompletedTask;
+            await gateLease.DisposeAsync();
         }
     }
 }

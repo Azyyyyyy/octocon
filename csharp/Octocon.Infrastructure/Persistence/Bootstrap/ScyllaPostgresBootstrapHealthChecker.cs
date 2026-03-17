@@ -8,14 +8,30 @@ namespace Octocon.Infrastructure.Persistence.Bootstrap;
 
 public sealed class ScyllaPostgresBootstrapHealthChecker : IDatabaseBootstrapHealthChecker
 {
-    private static readonly string[] RequiredScyllaTables =
+    private const string GlobalKeyspace = "global";
+
+    private static readonly string[] RequiredGlobalScyllaTables =
     [
-        "account_profiles_by_system",
-        "settings_fields_by_system",
-        "alters_by_system",
-        "fronting_active_by_system",
-        "fronting_primary_by_system",
+        "users",
+        "user_registry",
+        "notification_tokens",
+        "friendships",
+        "friend_requests",
         "aggregate_versions_by_region"
+    ];
+
+    private static readonly string[] RequiredRegionalScyllaTables =
+    [
+        "alters",
+        "tags",
+        "alter_tags",
+        "polls",
+        "fronts",
+        "current_fronts",
+        "global_journals",
+        "global_journal_alters",
+        "alter_journals",
+        "settings_fields"
     ];
 
     private readonly IPostgresConnectionFactory _postgresConnectionFactory;
@@ -84,28 +100,33 @@ public sealed class ScyllaPostgresBootstrapHealthChecker : IDatabaseBootstrapHea
             await DatabaseTransientRetry.ExecuteScyllaAsync(async () =>
             {
                 var session = await _scyllaSessionProvider.GetSessionAsync(cancellationToken);
+                var regionalKeyspace = _options.ScyllaKeyspace;
 
-                var missingTables = new List<string>();
-                foreach (var tableName in RequiredScyllaTables)
+                var missingGlobal = await GetMissingTablesAsync(
+                    session,
+                    GlobalKeyspace,
+                    RequiredGlobalScyllaTables);
+
+                var missingRegional = await GetMissingTablesAsync(
+                    session,
+                    regionalKeyspace,
+                    RequiredRegionalScyllaTables);
+
+                if (missingGlobal.Count > 0 || missingRegional.Count > 0)
                 {
-                    var tableQuery = new SimpleStatement(
-                        "SELECT table_name FROM system_schema.tables WHERE keyspace_name = ? AND table_name = ? LIMIT 1",
-                        _options.ScyllaKeyspace,
-                        tableName
-                    );
-
-                    var tableResult = await session.ExecuteAsync(tableQuery);
-                    if (!tableResult.Any())
+                    var details = new List<string>(2);
+                    if (missingGlobal.Count > 0)
                     {
-                        missingTables.Add(tableName);
+                        details.Add($"{GlobalKeyspace}: {string.Join(", ", missingGlobal)}");
                     }
-                }
 
-                if (missingTables.Count > 0)
-                {
+                    if (missingRegional.Count > 0)
+                    {
+                        details.Add($"{regionalKeyspace}: {string.Join(", ", missingRegional)}");
+                    }
+
                     throw new InvalidOperationException(
-                        $"Scylla keyspace '{_options.ScyllaKeyspace}' is reachable but missing tables: {string.Join(", ", missingTables)}. Run the CQL bootstrap script first."
-                    );
+                        $"Scylla is reachable but missing canonical tables ({string.Join(" | ", details)}). Run the canonical CQL bootstrap script first.");
                 }
             }, _options, cancellationToken);
 
@@ -115,5 +136,26 @@ public sealed class ScyllaPostgresBootstrapHealthChecker : IDatabaseBootstrapHea
         {
             return new DatabaseStoreHealth("scylla", false, ex.Message);
         }
+    }
+
+    private static async Task<List<string>> GetMissingTablesAsync(ISession session, string keyspace, IEnumerable<string> tableNames)
+    {
+        var missingTables = new List<string>();
+        foreach (var tableName in tableNames)
+        {
+            var tableQuery = new SimpleStatement(
+                "SELECT table_name FROM system_schema.tables WHERE keyspace_name = ? AND table_name = ? LIMIT 1",
+                keyspace,
+                tableName
+            );
+
+            var tableResult = await session.ExecuteAsync(tableQuery);
+            if (!tableResult.Any())
+            {
+                missingTables.Add(tableName);
+            }
+        }
+
+        return missingTables;
     }
 }

@@ -1,5 +1,4 @@
 using Cassandra;
-using Octocon.Domain.Abstractions;
 using Octocon.Domain.Alters;
 using Octocon.Infrastructure.Persistence.Transient;
 
@@ -8,17 +7,17 @@ namespace Octocon.Infrastructure.Persistence.Scylla;
 public sealed class ScyllaAlterRepository : IAlterRepository
 {
     private readonly IScyllaSessionProvider _sessionProvider;
-    private readonly IRegionContext _regionContext;
+    private readonly IScyllaKeyspaceResolver _keyspaceResolver;
     private readonly PersistenceRegistrationOptions _options;
 
     public ScyllaAlterRepository(
         IScyllaSessionProvider sessionProvider,
-        IRegionContext regionContext,
+        IScyllaKeyspaceResolver keyspaceResolver,
         PersistenceRegistrationOptions options
     )
     {
         _sessionProvider = sessionProvider;
-        _regionContext = regionContext;
+        _keyspaceResolver = keyspaceResolver;
         _options = options;
     }
 
@@ -27,20 +26,21 @@ public sealed class ScyllaAlterRepository : IAlterRepository
         return await DatabaseTransientRetry.ExecuteScyllaAsync(async () =>
         {
             var session = await _sessionProvider.GetSessionAsync(cancellationToken);
-            var scopedSystemId = GetScopedSystemId(systemId);
+            var normalizedSystemId = _keyspaceResolver.NormalizeSystemId(systemId);
+            var keyspace = _keyspaceResolver.ResolveRegionalKeyspace(systemId);
 
             var nextIdQuery = new SimpleStatement(
-                "SELECT alter_id FROM alters_by_system WHERE system_id = ? ORDER BY alter_id DESC LIMIT 1",
-                scopedSystemId
+                $"SELECT id FROM {keyspace}.alters WHERE user_id = ? ORDER BY id DESC LIMIT 1",
+                normalizedSystemId
             );
 
             var rows = await session.ExecuteAsync(nextIdQuery);
-            var current = rows.FirstOrDefault()?.GetValue<int>("alter_id") ?? 0;
-            var next = current + 1;
+            var current = rows.FirstOrDefault()?.GetValue<short>("id") ?? (short)0;
+            var next = (short)(current + 1);
 
             var insert = new SimpleStatement(
-                "INSERT INTO alters_by_system (system_id, alter_id, name, alias) VALUES (?, ?, ?, ?)",
-                scopedSystemId,
+                $"INSERT INTO {keyspace}.alters (user_id, id, name, alias, inserted_at, updated_at) VALUES (?, ?, ?, ?, toTimestamp(now()), toTimestamp(now()))",
+                normalizedSystemId,
                 next,
                 command.Name,
                 null
@@ -56,12 +56,13 @@ public sealed class ScyllaAlterRepository : IAlterRepository
         return await DatabaseTransientRetry.ExecuteScyllaAsync(async () =>
         {
             var session = await _sessionProvider.GetSessionAsync(cancellationToken);
-            var scopedSystemId = GetScopedSystemId(systemId);
+            var normalizedSystemId = _keyspaceResolver.NormalizeSystemId(systemId);
+            var keyspace = _keyspaceResolver.ResolveRegionalKeyspace(systemId);
 
             var query = new SimpleStatement(
-                "SELECT alter_id FROM alters_by_system WHERE system_id = ? AND alter_id = ? LIMIT 1",
-                scopedSystemId,
-                alterId
+                $"SELECT id FROM {keyspace}.alters WHERE user_id = ? AND id = ? LIMIT 1",
+                normalizedSystemId,
+                (short)alterId
             );
 
             var rows = await session.ExecuteAsync(query);
@@ -71,40 +72,44 @@ public sealed class ScyllaAlterRepository : IAlterRepository
 
     public async Task<bool> UpdateAsync(string systemId, UpdateAlterCommand command, CancellationToken cancellationToken = default)
     {
-        var session = await _sessionProvider.GetSessionAsync(cancellationToken);
-        var scopedSystemId = GetScopedSystemId(systemId);
-
-        var exists = await ExistsAsync(systemId, command.AlterId, cancellationToken);
-        if (!exists)
+        return await DatabaseTransientRetry.ExecuteScyllaAsync(async () =>
         {
-            return false;
-        }
+            var session = await _sessionProvider.GetSessionAsync(cancellationToken);
+            var normalizedSystemId = _keyspaceResolver.NormalizeSystemId(systemId);
+            var keyspace = _keyspaceResolver.ResolveRegionalKeyspace(systemId);
 
-        if (command.Name is not null)
-        {
-            var updateName = new SimpleStatement(
-                "UPDATE alters_by_system SET name = ? WHERE system_id = ? AND alter_id = ?",
-                command.Name,
-                scopedSystemId,
-                command.AlterId
-            );
+            var exists = await ExistsAsync(systemId, command.AlterId, cancellationToken);
+            if (!exists)
+            {
+                return false;
+            }
 
-            await session.ExecuteAsync(updateName);
-        }
+            if (command.Name is not null)
+            {
+                var updateName = new SimpleStatement(
+                    $"UPDATE {keyspace}.alters SET name = ?, updated_at = toTimestamp(now()) WHERE user_id = ? AND id = ?",
+                    command.Name,
+                    normalizedSystemId,
+                    (short)command.AlterId
+                );
 
-        if (command.Alias is not null)
-        {
-            var updateAlias = new SimpleStatement(
-                "UPDATE alters_by_system SET alias = ? WHERE system_id = ? AND alter_id = ?",
-                command.Alias,
-                scopedSystemId,
-                command.AlterId
-            );
+                await session.ExecuteAsync(updateName);
+            }
 
-            await session.ExecuteAsync(updateAlias);
-        }
+            if (command.Alias is not null)
+            {
+                var updateAlias = new SimpleStatement(
+                    $"UPDATE {keyspace}.alters SET alias = ?, updated_at = toTimestamp(now()) WHERE user_id = ? AND id = ?",
+                    command.Alias,
+                    normalizedSystemId,
+                    (short)command.AlterId
+                );
 
-        return true;
+                await session.ExecuteAsync(updateAlias);
+            }
+
+            return true;
+        }, _options, cancellationToken);
     }
 
     public async Task<bool> DeleteAsync(string systemId, int alterId, CancellationToken cancellationToken = default)
@@ -112,7 +117,9 @@ public sealed class ScyllaAlterRepository : IAlterRepository
         return await DatabaseTransientRetry.ExecuteScyllaAsync(async () =>
         {
             var session = await _sessionProvider.GetSessionAsync(cancellationToken);
-            var scopedSystemId = GetScopedSystemId(systemId);
+            var normalizedSystemId = _keyspaceResolver.NormalizeSystemId(systemId);
+            var keyspace = _keyspaceResolver.ResolveRegionalKeyspace(systemId);
+            var alterIdShort = (short)alterId;
 
             var exists = await ExistsAsync(systemId, alterId, cancellationToken);
             if (!exists)
@@ -120,45 +127,34 @@ public sealed class ScyllaAlterRepository : IAlterRepository
                 return false;
             }
 
-            var deleteAlter = new SimpleStatement(
-                "DELETE FROM alters_by_system WHERE system_id = ? AND alter_id = ?",
-                scopedSystemId,
-                alterId
-            );
-            await session.ExecuteAsync(deleteAlter);
+            await session.ExecuteAsync(new SimpleStatement(
+                $"DELETE FROM {keyspace}.alters WHERE user_id = ? AND id = ?",
+                normalizedSystemId,
+                alterIdShort));
 
-            // Clean up active fronting state and primary pointer for deleted alter.
-            var deleteFrontActive = new SimpleStatement(
-                "DELETE FROM fronting_active_by_system WHERE system_id = ? AND alter_id = ?",
-                scopedSystemId,
-                alterId
-            );
-            await session.ExecuteAsync(deleteFrontActive);
+            await session.ExecuteAsync(new SimpleStatement(
+                $"DELETE FROM {keyspace}.current_fronts WHERE user_id = ? AND alter_id = ?",
+                normalizedSystemId,
+                alterIdShort));
 
-            var clearPrimary = new SimpleStatement(
-                "DELETE FROM fronting_primary_by_system WHERE system_id = ? IF alter_id = ?",
-                scopedSystemId,
-                alterId
-            );
-            await session.ExecuteAsync(clearPrimary);
+            await session.ExecuteAsync(new SimpleStatement(
+                "UPDATE global.users SET primary_front = null WHERE id = ? IF primary_front = ?",
+                normalizedSystemId,
+                alterId));
 
-            // Remove alter from any tags under this system.
-            var membershipQuery = new SimpleStatement(
-                "SELECT tag_id FROM tag_alters_by_system WHERE system_id = ? ALLOW FILTERING",
-                scopedSystemId
-            );
+            var membershipRows = await session.ExecuteAsync(new SimpleStatement(
+                $"SELECT tag_id FROM {keyspace}.alter_tags WHERE user_id = ? AND alter_id = ?",
+                normalizedSystemId,
+                alterIdShort));
 
-            var membershipRows = await session.ExecuteAsync(membershipQuery);
             foreach (var row in membershipRows)
             {
-                var tagId = row.GetValue<string>("tag_id");
-                var deleteMembership = new SimpleStatement(
-                    "DELETE FROM tag_alters_by_system WHERE system_id = ? AND tag_id = ? AND alter_id = ?",
-                    scopedSystemId,
+                var tagId = row.GetValue<Guid>("tag_id");
+                await session.ExecuteAsync(new SimpleStatement(
+                    $"DELETE FROM {keyspace}.alter_tags WHERE user_id = ? AND tag_id = ? AND alter_id = ?",
+                    normalizedSystemId,
                     tagId,
-                    alterId
-                );
-                await session.ExecuteAsync(deleteMembership);
+                    alterIdShort));
             }
 
             return true;
@@ -170,17 +166,18 @@ public sealed class ScyllaAlterRepository : IAlterRepository
         return await DatabaseTransientRetry.ExecuteScyllaAsync(async () =>
         {
             var session = await _sessionProvider.GetSessionAsync(cancellationToken);
-            var scopedSystemId = GetScopedSystemId(systemId);
+            var normalizedSystemId = _keyspaceResolver.NormalizeSystemId(systemId);
+            var keyspace = _keyspaceResolver.ResolveRegionalKeyspace(systemId);
 
             var query = new SimpleStatement(
-                "SELECT alter_id, name, alias FROM alters_by_system WHERE system_id = ?",
-                scopedSystemId
+                $"SELECT id, name, alias FROM {keyspace}.alters WHERE user_id = ?",
+                normalizedSystemId
             );
 
             var rows = await session.ExecuteAsync(query);
             return rows
                 .Select(row => new AlterPublicReadModel(
-                    row.GetValue<int>("alter_id"),
+                    row.GetValue<short>("id"),
                     row.GetValue<string>("name"),
                     row.GetValue<string?>("alias")))
                 .OrderBy(x => x.AlterId)
@@ -193,19 +190,20 @@ public sealed class ScyllaAlterRepository : IAlterRepository
         return await DatabaseTransientRetry.ExecuteScyllaAsync(async () =>
         {
             var session = await _sessionProvider.GetSessionAsync(cancellationToken);
-            var scopedSystemId = GetScopedSystemId(systemId);
+            var normalizedSystemId = _keyspaceResolver.NormalizeSystemId(systemId);
+            var keyspace = _keyspaceResolver.ResolveRegionalKeyspace(systemId);
 
             var query = new SimpleStatement(
-                "SELECT alter_id, name, alias FROM alters_by_system WHERE system_id = ? AND alter_id = ? LIMIT 1",
-                scopedSystemId,
-                alterId
+                $"SELECT id, name, alias FROM {keyspace}.alters WHERE user_id = ? AND id = ? LIMIT 1",
+                normalizedSystemId,
+                (short)alterId
             );
 
             var row = (await session.ExecuteAsync(query)).FirstOrDefault();
             return row is null
                 ? null
                 : new AlterPublicReadModel(
-                    row.GetValue<int>("alter_id"),
+                    row.GetValue<short>("id"),
                     row.GetValue<string>("name"),
                     row.GetValue<string?>("alias"));
         }, _options, cancellationToken);
@@ -221,29 +219,17 @@ public sealed class ScyllaAlterRepository : IAlterRepository
         return await DatabaseTransientRetry.ExecuteScyllaAsync(async () =>
         {
             var session = await _sessionProvider.GetSessionAsync(cancellationToken);
-            var scopedSystemId = GetScopedSystemId(systemId);
+            var normalizedSystemId = _keyspaceResolver.NormalizeSystemId(systemId);
+            var keyspace = _keyspaceResolver.ResolveRegionalKeyspace(systemId);
 
             var query = new SimpleStatement(
-                "SELECT alter_id, alias FROM alters_by_system WHERE system_id = ?",
-                scopedSystemId
+                $"SELECT id, alias FROM {keyspace}.alters WHERE user_id = ? AND alias = ?",
+                normalizedSystemId,
+                alias
             );
 
             var rows = await session.ExecuteAsync(query);
-            return rows.Any(row =>
-            {
-                var existingId = row.GetValue<int>("alter_id");
-                var existingAlias = row.GetValue<string?>("alias");
-
-                return existingId != alterId &&
-                       !string.IsNullOrWhiteSpace(existingAlias) &&
-                       string.Equals(existingAlias, alias, StringComparison.OrdinalIgnoreCase);
-            });
+            return rows.Any(row => row.GetValue<short>("id") != (short)alterId);
         }, _options, cancellationToken);
-    }
-
-    private string GetScopedSystemId(string systemId)
-    {
-        var region = _regionContext.ResolveUserRegion(systemId);
-        return $"{region}:{systemId}";
     }
 }

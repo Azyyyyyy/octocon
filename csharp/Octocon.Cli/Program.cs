@@ -5,6 +5,7 @@ using Octocon.Domain.Accounts;
 using Octocon.Domain.Alters;
 using Octocon.Domain.Fronting;
 using Octocon.Infrastructure.DependencyInjection;
+using Octocon.Infrastructure.Coordination;
 using Octocon.Infrastructure.Persistence;
 using Octocon.Infrastructure.Persistence.Bootstrap;
 
@@ -251,6 +252,7 @@ static int PrintResult<TResult>(CommandExecutionResult<TResult> result)
 static CliRuntime BuildRuntime(IReadOnlyDictionary<string, string> options)
 {
     var persistence = ResolvePersistenceMode(options);
+    var nodeGroup = NodeGroupResolver.Resolve();
     var services = new ServiceCollection();
 
     services.AddOctoconPersistence(persistence, cfg =>
@@ -268,7 +270,7 @@ static CliRuntime BuildRuntime(IReadOnlyDictionary<string, string> options)
         cfg.ScyllaKeyspace =
             TryGet(options, "scylla-keyspace") ??
             Environment.GetEnvironmentVariable("OCTOCON_SCYLLA_KEYSPACE") ??
-            cfg.ScyllaKeyspace;
+            cfg.DefaultRegion;
 
         cfg.ScyllaLocalDatacenter =
             TryGet(options, "scylla-datacenter") ??
@@ -308,6 +310,7 @@ static CliRuntime BuildRuntime(IReadOnlyDictionary<string, string> options)
             TryIntFromEnv("OCTOCON_DB_RETRY_MAX_DELAY_MS") ??
             cfg.DbRetryMaxDelayMs;
     });
+    services.AddOctoconCluster(nodeGroup);
     services.AddSingleton<UpdateUsernameCommandHandler>();
     services.AddSingleton<CreateAlterCommandHandler>();
     services.AddSingleton<UpdateAlterCommandHandler>();
@@ -402,7 +405,7 @@ static void PrintHelp()
     Console.WriteLine("  --region <nam|eur|ocn|sam|sas|gdpr> (default: nam)");
     Console.WriteLine("  --postgres-connection <connection-string>");
     Console.WriteLine("  --scylla-contact-points <host1,host2>");
-    Console.WriteLine("  --scylla-keyspace <name>");
+    Console.WriteLine("  --scylla-keyspace <name> (default: --region value)");
     Console.WriteLine("  --scylla-datacenter <name>");
     Console.WriteLine("  --scylla-username <name>");
     Console.WriteLine("  --scylla-password <password>");

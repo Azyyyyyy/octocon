@@ -1,7 +1,6 @@
 using Cassandra;
 using System.Security.Cryptography;
 using System.Text;
-using Octocon.Domain.Abstractions;
 using Octocon.Domain.Accounts;
 using Octocon.Infrastructure.Persistence.Transient;
 
@@ -10,17 +9,17 @@ namespace Octocon.Infrastructure.Persistence.Scylla;
 public sealed class ScyllaAccountRepository : IAccountRepository
 {
     private readonly IScyllaSessionProvider _sessionProvider;
-    private readonly IRegionContext _regionContext;
+    private readonly IScyllaKeyspaceResolver _keyspaceResolver;
     private readonly PersistenceRegistrationOptions _options;
 
     public ScyllaAccountRepository(
         IScyllaSessionProvider sessionProvider,
-        IRegionContext regionContext,
+        IScyllaKeyspaceResolver keyspaceResolver,
         PersistenceRegistrationOptions options
     )
     {
         _sessionProvider = sessionProvider;
-        _regionContext = regionContext;
+        _keyspaceResolver = keyspaceResolver;
         _options = options;
     }
 
@@ -29,12 +28,12 @@ public sealed class ScyllaAccountRepository : IAccountRepository
         return await DatabaseTransientRetry.ExecuteScyllaAsync(async () =>
         {
             var session = await _sessionProvider.GetSessionAsync(cancellationToken);
-            var scopedSystemId = GetScopedSystemId(systemId);
+            var normalizedSystemId = _keyspaceResolver.NormalizeSystemId(systemId);
 
             var statement = new SimpleStatement(
-                "UPDATE account_profiles_by_system SET username = ?, updated_at = toTimestamp(now()) WHERE system_id = ?",
+                "UPDATE global.users SET username = ?, updated_at = toTimestamp(now()) WHERE id = ?",
                 username,
-                scopedSystemId
+                normalizedSystemId
             );
 
             await session.ExecuteAsync(statement);
@@ -47,12 +46,12 @@ public sealed class ScyllaAccountRepository : IAccountRepository
         return await DatabaseTransientRetry.ExecuteScyllaAsync(async () =>
         {
             var session = await _sessionProvider.GetSessionAsync(cancellationToken);
-            var scopedSystemId = GetScopedSystemId(systemId);
+            var normalizedSystemId = _keyspaceResolver.NormalizeSystemId(systemId);
 
             var statement = new SimpleStatement(
-                "UPDATE account_descriptions_by_system SET description = ?, updated_at = toTimestamp(now()) WHERE system_id = ?",
+                "UPDATE global.users SET description = ?, updated_at = toTimestamp(now()) WHERE id = ?",
                 description,
-                scopedSystemId
+                normalizedSystemId
             );
 
             await session.ExecuteAsync(statement);
@@ -65,12 +64,12 @@ public sealed class ScyllaAccountRepository : IAccountRepository
         return await DatabaseTransientRetry.ExecuteScyllaAsync(async () =>
         {
             var session = await _sessionProvider.GetSessionAsync(cancellationToken);
-            var scopedSystemId = GetScopedSystemId(systemId);
+            var normalizedSystemId = _keyspaceResolver.NormalizeSystemId(systemId);
 
             var statement = new SimpleStatement(
-                "UPDATE account_profiles_by_system SET avatar_url = ?, updated_at = toTimestamp(now()) WHERE system_id = ?",
+                "UPDATE global.users SET avatar_url = ?, updated_at = toTimestamp(now()) WHERE id = ?",
                 avatarUrl,
-                scopedSystemId
+                normalizedSystemId
             );
 
             await session.ExecuteAsync(statement);
@@ -83,12 +82,12 @@ public sealed class ScyllaAccountRepository : IAccountRepository
         return await DatabaseTransientRetry.ExecuteScyllaAsync(async () =>
         {
             var session = await _sessionProvider.GetSessionAsync(cancellationToken);
-            var scopedSystemId = GetScopedSystemId(systemId);
+            var normalizedSystemId = _keyspaceResolver.NormalizeSystemId(systemId);
 
             var statement = new SimpleStatement(
-                "UPDATE account_profiles_by_system SET avatar_url = ?, updated_at = toTimestamp(now()) WHERE system_id = ?",
+                "UPDATE global.users SET avatar_url = ?, updated_at = toTimestamp(now()) WHERE id = ?",
                 null,
-                scopedSystemId
+                normalizedSystemId
             );
 
             await session.ExecuteAsync(statement);
@@ -101,24 +100,24 @@ public sealed class ScyllaAccountRepository : IAccountRepository
         return await DatabaseTransientRetry.ExecuteScyllaAsync(async () =>
         {
             var session = await _sessionProvider.GetSessionAsync(cancellationToken);
-            var scopedSystemId = GetScopedSystemId(systemId);
+            var normalizedSystemId = _keyspaceResolver.NormalizeSystemId(systemId);
 
             var read = new SimpleStatement(
-                "SELECT link_token FROM account_profiles_by_system WHERE system_id = ? LIMIT 1",
-                scopedSystemId
+                "SELECT link_token FROM global.users WHERE id = ? LIMIT 1",
+                normalizedSystemId
             );
 
             var existing = (await session.ExecuteAsync(read)).FirstOrDefault()?.GetValue<string?>("link_token");
             if (!string.IsNullOrWhiteSpace(existing))
                 return existing;
 
-            var hash = SHA256.HashData(Encoding.UTF8.GetBytes(scopedSystemId));
+            var hash = SHA256.HashData(Encoding.UTF8.GetBytes(normalizedSystemId));
             var token = Convert.ToHexString(hash)[..32].ToLowerInvariant();
 
             var write = new SimpleStatement(
-                "UPDATE account_profiles_by_system SET link_token = ?, updated_at = toTimestamp(now()) WHERE system_id = ?",
+                "UPDATE global.users SET link_token = ?, updated_at = toTimestamp(now()) WHERE id = ?",
                 token,
-                scopedSystemId
+                normalizedSystemId
             );
 
             await session.ExecuteAsync(write);
@@ -131,11 +130,11 @@ public sealed class ScyllaAccountRepository : IAccountRepository
         return await DatabaseTransientRetry.ExecuteScyllaAsync(async () =>
         {
             var session = await _sessionProvider.GetSessionAsync(cancellationToken);
-            var scopedSystemId = GetScopedSystemId(systemId);
+            var normalizedSystemId = _keyspaceResolver.NormalizeSystemId(systemId);
 
             var read = new SimpleStatement(
-                "SELECT link_token FROM account_profiles_by_system WHERE system_id = ? LIMIT 1",
-                scopedSystemId
+                "SELECT link_token FROM global.users WHERE id = ? LIMIT 1",
+                normalizedSystemId
             );
 
             var existing = (await session.ExecuteAsync(read)).FirstOrDefault()?.GetValue<string?>("link_token");
@@ -148,37 +147,24 @@ public sealed class ScyllaAccountRepository : IAccountRepository
         return await DatabaseTransientRetry.ExecuteScyllaAsync(async () =>
         {
             var session = await _sessionProvider.GetSessionAsync(cancellationToken);
-            var scopedSystemId = GetScopedSystemId(systemId);
+            var normalizedSystemId = _keyspaceResolver.NormalizeSystemId(systemId);
 
             var profileQuery = new SimpleStatement(
-                "SELECT username, avatar_url FROM account_profiles_by_system WHERE system_id = ? LIMIT 1",
-                scopedSystemId
-            );
-
-            var descriptionQuery = new SimpleStatement(
-                "SELECT description FROM account_descriptions_by_system WHERE system_id = ? LIMIT 1",
-                scopedSystemId
+                "SELECT username, avatar_url, description FROM global.users WHERE id = ? LIMIT 1",
+                normalizedSystemId
             );
 
             var profile = (await session.ExecuteAsync(profileQuery)).FirstOrDefault();
-            var description = (await session.ExecuteAsync(descriptionQuery)).FirstOrDefault();
-
-            if (profile is null && description is null)
+            if (profile is null)
             {
                 return null;
             }
 
             return new AccountPublicProfileReadModel(
-                systemId,
-                profile?.GetValue<string?>("username"),
-                description?.GetValue<string?>("description"),
-                profile?.GetValue<string?>("avatar_url"));
+                normalizedSystemId,
+                profile.GetValue<string?>("username"),
+                profile.GetValue<string?>("description"),
+                profile.GetValue<string?>("avatar_url"));
         }, _options, cancellationToken);
-    }
-
-    private string GetScopedSystemId(string systemId)
-    {
-        var region = _regionContext.ResolveUserRegion(systemId);
-        return $"{region}:{systemId}";
     }
 }

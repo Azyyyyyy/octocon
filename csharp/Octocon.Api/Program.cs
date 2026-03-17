@@ -40,7 +40,7 @@ builder.Services.AddOctoconPersistence(persistenceMode, cfg =>
 {
     cfg.DefaultRegion         = Env("OCTOCON_REGION") ?? cfg.DefaultRegion;
     cfg.PostgresConnectionString = Env("OCTOCON_POSTGRES_CONNECTION") ?? cfg.PostgresConnectionString;
-    cfg.ScyllaKeyspace        = Env("OCTOCON_SCYLLA_KEYSPACE") ?? cfg.ScyllaKeyspace;
+    cfg.ScyllaKeyspace        = Env("OCTOCON_SCYLLA_KEYSPACE") ?? cfg.DefaultRegion;
     cfg.ScyllaLocalDatacenter = Env("OCTOCON_SCYLLA_DATACENTER") ?? cfg.ScyllaLocalDatacenter;
 
     var contactPoints = Env("OCTOCON_SCYLLA_CONTACT_POINTS");

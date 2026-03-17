@@ -1,6 +1,5 @@
-using Octocon.Domain.Settings;
 using Cassandra;
-using Octocon.Domain.Abstractions;
+using Octocon.Domain.Settings;
 using Octocon.Infrastructure.Persistence.Transient;
 
 namespace Octocon.Infrastructure.Persistence.Scylla;
@@ -8,16 +7,16 @@ namespace Octocon.Infrastructure.Persistence.Scylla;
 public sealed class ScyllaNotificationTokenRepository : INotificationTokenRepository
 {
     private readonly IScyllaSessionProvider _sessionProvider;
-    private readonly IRegionContext _regionContext;
+    private readonly IScyllaKeyspaceResolver _keyspaceResolver;
     private readonly PersistenceRegistrationOptions _options;
 
     public ScyllaNotificationTokenRepository(
         IScyllaSessionProvider sessionProvider,
-        IRegionContext regionContext,
+        IScyllaKeyspaceResolver keyspaceResolver,
         PersistenceRegistrationOptions options)
     {
         _sessionProvider = sessionProvider;
-        _regionContext = regionContext;
+        _keyspaceResolver = keyspaceResolver;
         _options = options;
     }
 
@@ -27,19 +26,13 @@ public sealed class ScyllaNotificationTokenRepository : INotificationTokenReposi
         {
             var session = await _sessionProvider.GetSessionAsync(cancellationToken);
             var now = DateTimeOffset.UtcNow;
-            var scopedSystemId = GetScopedSystemId(systemId);
+            var normalizedSystemId = _keyspaceResolver.NormalizeSystemId(systemId);
 
-            var writeBySystem = await session.PrepareAsync(@"
-                INSERT INTO notification_tokens_by_system (system_id, push_token, inserted_at)
-                VALUES (?, ?, ?)");
+            var write = await session.PrepareAsync(@"
+                INSERT INTO global.notification_tokens (user_id, push_token, inserted_at, updated_at)
+                VALUES (?, ?, ?, ?)");
 
-            var writeByToken = await session.PrepareAsync(@"
-                INSERT INTO notification_tokens_by_token (push_token, system_id, inserted_at)
-                VALUES (?, ?, ?)");
-
-            await session.ExecuteAsync(writeBySystem.Bind(scopedSystemId, token, now.UtcDateTime));
-            await session.ExecuteAsync(writeByToken.Bind(token, scopedSystemId, now.UtcDateTime));
-
+            await session.ExecuteAsync(write.Bind(normalizedSystemId, token, now.UtcDateTime, now.UtcDateTime));
             return true;
         }, _options, cancellationToken);
     }
@@ -51,35 +44,23 @@ public sealed class ScyllaNotificationTokenRepository : INotificationTokenReposi
             var session = await _sessionProvider.GetSessionAsync(cancellationToken);
 
             var findByToken = await session.PrepareAsync(@"
-                SELECT system_id FROM notification_tokens_by_token
+                SELECT user_id, push_token FROM global.notification_tokens
                 WHERE push_token = ?");
 
-            var existing = await session.ExecuteAsync(findByToken.Bind(token));
-            var row = existing.FirstOrDefault();
-            var systemId = row?.GetValue<string>("system_id");
-
-            var deleteByToken = await session.PrepareAsync(@"
-                DELETE FROM notification_tokens_by_token
-                WHERE push_token = ?");
-
-            await session.ExecuteAsync(deleteByToken.Bind(token));
-
-            if (!string.IsNullOrWhiteSpace(systemId))
+            var rows = await session.ExecuteAsync(findByToken.Bind(token));
+            foreach (var row in rows)
             {
-                var deleteBySystem = await session.PrepareAsync(@"
-                    DELETE FROM notification_tokens_by_system
-                    WHERE system_id = ? AND push_token = ?");
+                var userId = row.GetValue<string>("user_id");
+                var pushToken = row.GetValue<string>("push_token");
 
-                await session.ExecuteAsync(deleteBySystem.Bind(systemId, token));
+                var deleteByPrimaryKey = await session.PrepareAsync(@"
+                    DELETE FROM global.notification_tokens
+                    WHERE user_id = ? AND push_token = ?");
+
+                await session.ExecuteAsync(deleteByPrimaryKey.Bind(userId, pushToken));
             }
 
             return true;
         }, _options, cancellationToken);
-    }
-
-    private string GetScopedSystemId(string systemId)
-    {
-        var region = _regionContext.ResolveUserRegion(systemId);
-        return $"{region}:{systemId}";
     }
 }

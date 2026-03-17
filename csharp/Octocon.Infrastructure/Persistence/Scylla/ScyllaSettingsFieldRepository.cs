@@ -1,5 +1,4 @@
 using Cassandra;
-using Octocon.Domain.Abstractions;
 using Octocon.Domain.Settings;
 using Octocon.Infrastructure.Persistence.Transient;
 
@@ -8,16 +7,16 @@ namespace Octocon.Infrastructure.Persistence.Scylla;
 public sealed class ScyllaSettingsFieldRepository : ISettingsFieldRepository
 {
     private readonly IScyllaSessionProvider _sessionProvider;
-    private readonly IRegionContext _regionContext;
+    private readonly IScyllaKeyspaceResolver _keyspaceResolver;
     private readonly PersistenceRegistrationOptions _options;
 
     public ScyllaSettingsFieldRepository(
         IScyllaSessionProvider sessionProvider,
-        IRegionContext regionContext,
+        IScyllaKeyspaceResolver keyspaceResolver,
         PersistenceRegistrationOptions options)
     {
         _sessionProvider = sessionProvider;
-        _regionContext = regionContext;
+        _keyspaceResolver = keyspaceResolver;
         _options = options;
     }
 
@@ -26,12 +25,13 @@ public sealed class ScyllaSettingsFieldRepository : ISettingsFieldRepository
         return await DatabaseTransientRetry.ExecuteScyllaAsync(async () =>
         {
             var session = await _sessionProvider.GetSessionAsync(cancellationToken);
-            var scopedSystemId = GetScopedSystemId(systemId);
-            var fieldId = Guid.NewGuid().ToString("N");
+            var normalizedSystemId = _keyspaceResolver.NormalizeSystemId(systemId);
+            var keyspace = _keyspaceResolver.ResolveRegionalKeyspace(systemId);
+            var fieldId = Guid.NewGuid();
 
             var statement = new SimpleStatement(
-                "INSERT INTO settings_fields_by_system (system_id, field_id, position, name, value, updated_at) VALUES (?, ?, ?, ?, ?, toTimestamp(now()))",
-                scopedSystemId,
+                $"INSERT INTO {keyspace}.settings_fields (user_id, id, position, name, value, updated_at) VALUES (?, ?, ?, ?, ?, toTimestamp(now()))",
+                normalizedSystemId,
                 fieldId,
                 position,
                 name,
@@ -39,7 +39,7 @@ public sealed class ScyllaSettingsFieldRepository : ISettingsFieldRepository
             );
 
             await session.ExecuteAsync(statement);
-            return fieldId;
+            return fieldId.ToString("N");
         }, _options, cancellationToken);
     }
 
@@ -47,29 +47,37 @@ public sealed class ScyllaSettingsFieldRepository : ISettingsFieldRepository
     {
         return await DatabaseTransientRetry.ExecuteScyllaAsync(async () =>
         {
-            var session = await _sessionProvider.GetSessionAsync(cancellationToken);
-            var scopedSystemId = GetScopedSystemId(systemId);
-
-            var exists = await ExistsAsync(session, scopedSystemId, fieldId);
-            if (!exists)
+            if (!TryParseUuid(fieldId, out var fieldGuid))
+            {
                 return false;
+            }
+
+            var session = await _sessionProvider.GetSessionAsync(cancellationToken);
+            var normalizedSystemId = _keyspaceResolver.NormalizeSystemId(systemId);
+            var keyspace = _keyspaceResolver.ResolveRegionalKeyspace(systemId);
+
+            var exists = await ExistsAsync(session, keyspace, normalizedSystemId, fieldGuid);
+            if (!exists)
+            {
+                return false;
+            }
 
             if (name is not null)
             {
                 await session.ExecuteAsync(new SimpleStatement(
-                    "UPDATE settings_fields_by_system SET name = ?, updated_at = toTimestamp(now()) WHERE system_id = ? AND field_id = ?",
+                    $"UPDATE {keyspace}.settings_fields SET name = ?, updated_at = toTimestamp(now()) WHERE user_id = ? AND id = ?",
                     name,
-                    scopedSystemId,
-                    fieldId));
+                    normalizedSystemId,
+                    fieldGuid));
             }
 
             if (value is not null)
             {
                 await session.ExecuteAsync(new SimpleStatement(
-                    "UPDATE settings_fields_by_system SET value = ?, updated_at = toTimestamp(now()) WHERE system_id = ? AND field_id = ?",
+                    $"UPDATE {keyspace}.settings_fields SET value = ?, updated_at = toTimestamp(now()) WHERE user_id = ? AND id = ?",
                     value,
-                    scopedSystemId,
-                    fieldId));
+                    normalizedSystemId,
+                    fieldGuid));
             }
 
             return true;
@@ -80,17 +88,25 @@ public sealed class ScyllaSettingsFieldRepository : ISettingsFieldRepository
     {
         return await DatabaseTransientRetry.ExecuteScyllaAsync(async () =>
         {
-            var session = await _sessionProvider.GetSessionAsync(cancellationToken);
-            var scopedSystemId = GetScopedSystemId(systemId);
-
-            var exists = await ExistsAsync(session, scopedSystemId, fieldId);
-            if (!exists)
+            if (!TryParseUuid(fieldId, out var fieldGuid))
+            {
                 return false;
+            }
+
+            var session = await _sessionProvider.GetSessionAsync(cancellationToken);
+            var normalizedSystemId = _keyspaceResolver.NormalizeSystemId(systemId);
+            var keyspace = _keyspaceResolver.ResolveRegionalKeyspace(systemId);
+
+            var exists = await ExistsAsync(session, keyspace, normalizedSystemId, fieldGuid);
+            if (!exists)
+            {
+                return false;
+            }
 
             await session.ExecuteAsync(new SimpleStatement(
-                "DELETE FROM settings_fields_by_system WHERE system_id = ? AND field_id = ?",
-                scopedSystemId,
-                fieldId));
+                $"DELETE FROM {keyspace}.settings_fields WHERE user_id = ? AND id = ?",
+                normalizedSystemId,
+                fieldGuid));
 
             return true;
         }, _options, cancellationToken);
@@ -100,36 +116,48 @@ public sealed class ScyllaSettingsFieldRepository : ISettingsFieldRepository
     {
         return await DatabaseTransientRetry.ExecuteScyllaAsync(async () =>
         {
-            var session = await _sessionProvider.GetSessionAsync(cancellationToken);
-            var scopedSystemId = GetScopedSystemId(systemId);
-
-            var exists = await ExistsAsync(session, scopedSystemId, fieldId);
-            if (!exists)
+            if (!TryParseUuid(fieldId, out var fieldGuid))
+            {
                 return false;
+            }
+
+            var session = await _sessionProvider.GetSessionAsync(cancellationToken);
+            var normalizedSystemId = _keyspaceResolver.NormalizeSystemId(systemId);
+            var keyspace = _keyspaceResolver.ResolveRegionalKeyspace(systemId);
+
+            var exists = await ExistsAsync(session, keyspace, normalizedSystemId, fieldGuid);
+            if (!exists)
+            {
+                return false;
+            }
 
             await session.ExecuteAsync(new SimpleStatement(
-                "UPDATE settings_fields_by_system SET position = ?, updated_at = toTimestamp(now()) WHERE system_id = ? AND field_id = ?",
+                $"UPDATE {keyspace}.settings_fields SET position = ?, updated_at = toTimestamp(now()) WHERE user_id = ? AND id = ?",
                 position,
-                scopedSystemId,
-                fieldId));
+                normalizedSystemId,
+                fieldGuid));
 
             return true;
         }, _options, cancellationToken);
     }
 
-    private static async Task<bool> ExistsAsync(ISession session, string scopedSystemId, string fieldId)
+    private static async Task<bool> ExistsAsync(ISession session, string keyspace, string normalizedSystemId, Guid fieldId)
     {
         var query = new SimpleStatement(
-            "SELECT field_id FROM settings_fields_by_system WHERE system_id = ? AND field_id = ? LIMIT 1",
-            scopedSystemId,
+            $"SELECT id FROM {keyspace}.settings_fields WHERE user_id = ? AND id = ? LIMIT 1",
+            normalizedSystemId,
             fieldId);
 
         return (await session.ExecuteAsync(query)).Any();
     }
 
-    private string GetScopedSystemId(string systemId)
+    internal static bool TryParseUuid(string value, out Guid guid)
     {
-        var region = _regionContext.ResolveUserRegion(systemId);
-        return $"{region}:{systemId}";
+        if (Guid.TryParseExact(value, "N", out guid))
+        {
+            return true;
+        }
+
+        return Guid.TryParse(value, out guid);
     }
 }

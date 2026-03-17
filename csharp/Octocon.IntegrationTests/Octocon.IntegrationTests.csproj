@@ -12,6 +12,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\Octocon.Infrastructure\Octocon.Infrastructure.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- Copy replay trace fixtures to the output directory so tests can discover them at runtime. -->
     <Content Include="Fixtures\*.trace.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>

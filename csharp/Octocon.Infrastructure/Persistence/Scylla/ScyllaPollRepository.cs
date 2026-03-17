@@ -1,5 +1,4 @@
 using Cassandra;
-using Octocon.Domain.Abstractions;
 using Octocon.Domain.Polls;
 using Octocon.Infrastructure.Persistence.Transient;
 
@@ -7,17 +6,31 @@ namespace Octocon.Infrastructure.Persistence.Scylla;
 
 public sealed class ScyllaPollRepository : IPollRepository
 {
+    private static readonly Dictionary<string, short> PollTypeToCode = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["single_choice"] = 0,
+        ["multiple_choice"] = 1,
+        ["approval"] = 2
+    };
+
+    private static readonly Dictionary<short, string> PollCodeToType = new()
+    {
+        [0] = "single_choice",
+        [1] = "multiple_choice",
+        [2] = "approval"
+    };
+
     private readonly IScyllaSessionProvider _sessionProvider;
-    private readonly IRegionContext _regionContext;
+    private readonly IScyllaKeyspaceResolver _keyspaceResolver;
     private readonly PersistenceRegistrationOptions _options;
 
     public ScyllaPollRepository(
         IScyllaSessionProvider sessionProvider,
-        IRegionContext regionContext,
+        IScyllaKeyspaceResolver keyspaceResolver,
         PersistenceRegistrationOptions options)
     {
         _sessionProvider = sessionProvider;
-        _regionContext = regionContext;
+        _keyspaceResolver = keyspaceResolver;
         _options = options;
     }
 
@@ -26,11 +39,12 @@ public sealed class ScyllaPollRepository : IPollRepository
         return await DatabaseTransientRetry.ExecuteScyllaAsync(async () =>
         {
             var session = await _sessionProvider.GetSessionAsync(cancellationToken);
-            var scopedSystemId = GetScopedSystemId(systemId);
+            var normalizedSystemId = _keyspaceResolver.NormalizeSystemId(systemId);
+            var keyspace = _keyspaceResolver.ResolveRegionalKeyspace(systemId);
 
             var query = new SimpleStatement(
-                "SELECT poll_id, title, description, poll_type, data_json, time_end FROM polls_by_system WHERE system_id = ?",
-                scopedSystemId
+                $"SELECT id, title, description, type, data, time_end FROM {keyspace}.polls WHERE user_id = ?",
+                normalizedSystemId
             );
 
             var rows = await session.ExecuteAsync(query);
@@ -43,12 +57,14 @@ public sealed class ScyllaPollRepository : IPollRepository
         return await DatabaseTransientRetry.ExecuteScyllaAsync(async () =>
         {
             var session = await _sessionProvider.GetSessionAsync(cancellationToken);
-            var scopedSystemId = GetScopedSystemId(systemId);
+            var normalizedSystemId = _keyspaceResolver.NormalizeSystemId(systemId);
+            var keyspace = _keyspaceResolver.ResolveRegionalKeyspace(systemId);
+            if (!TryParseUuid(pollId, out var pollGuid)) return null;
 
             var query = new SimpleStatement(
-                "SELECT poll_id, title, description, poll_type, data_json, time_end FROM polls_by_system WHERE system_id = ? AND poll_id = ? LIMIT 1",
-                scopedSystemId,
-                pollId
+                $"SELECT id, title, description, type, data, time_end FROM {keyspace}.polls WHERE user_id = ? AND id = ? LIMIT 1",
+                normalizedSystemId,
+                pollGuid
             );
 
             var row = (await session.ExecuteAsync(query)).FirstOrDefault();
@@ -61,22 +77,23 @@ public sealed class ScyllaPollRepository : IPollRepository
         return await DatabaseTransientRetry.ExecuteScyllaAsync(async () =>
         {
             var session = await _sessionProvider.GetSessionAsync(cancellationToken);
-            var scopedSystemId = GetScopedSystemId(systemId);
-            var pollId = Guid.NewGuid().ToString("N");
+            var normalizedSystemId = _keyspaceResolver.NormalizeSystemId(systemId);
+            var keyspace = _keyspaceResolver.ResolveRegionalKeyspace(systemId);
+            var pollGuid = Guid.NewGuid();
 
             var insert = new SimpleStatement(
-                "INSERT INTO polls_by_system (system_id, poll_id, title, description, poll_type, data_json, time_end) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                scopedSystemId,
-                pollId,
+                $"INSERT INTO {keyspace}.polls (user_id, id, title, description, type, data, time_end, inserted_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, toTimestamp(now()), toTimestamp(now()))",
+                normalizedSystemId,
+                pollGuid,
                 command.Title,
                 command.Description,
-                command.Type,
+                ToPollCode(command.Type),
                 "{}",
                 ParseTime(command.TimeEndIso)
             );
 
             await session.ExecuteAsync(insert);
-            return pollId;
+            return pollGuid.ToString("N");
         }, _options, cancellationToken);
     }
 
@@ -84,13 +101,19 @@ public sealed class ScyllaPollRepository : IPollRepository
     {
         return await DatabaseTransientRetry.ExecuteScyllaAsync(async () =>
         {
+            if (!TryParseUuid(pollId, out var pollGuid))
+            {
+                return false;
+            }
+
             var session = await _sessionProvider.GetSessionAsync(cancellationToken);
-            var scopedSystemId = GetScopedSystemId(systemId);
+            var normalizedSystemId = _keyspaceResolver.NormalizeSystemId(systemId);
+            var keyspace = _keyspaceResolver.ResolveRegionalKeyspace(systemId);
 
             var query = new SimpleStatement(
-                "SELECT poll_id FROM polls_by_system WHERE system_id = ? AND poll_id = ? LIMIT 1",
-                scopedSystemId,
-                pollId
+                $"SELECT id FROM {keyspace}.polls WHERE user_id = ? AND id = ? LIMIT 1",
+                normalizedSystemId,
+                pollGuid
             );
 
             var rows = await session.ExecuteAsync(query);
@@ -102,8 +125,14 @@ public sealed class ScyllaPollRepository : IPollRepository
     {
         return await DatabaseTransientRetry.ExecuteScyllaAsync(async () =>
         {
+            if (!TryParseUuid(command.PollId, out var pollGuid))
+            {
+                return false;
+            }
+
             var session = await _sessionProvider.GetSessionAsync(cancellationToken);
-            var scopedSystemId = GetScopedSystemId(systemId);
+            var normalizedSystemId = _keyspaceResolver.NormalizeSystemId(systemId);
+            var keyspace = _keyspaceResolver.ResolveRegionalKeyspace(systemId);
 
             var exists = await ExistsAsync(systemId, command.PollId, cancellationToken);
             if (!exists)
@@ -111,46 +140,38 @@ public sealed class ScyllaPollRepository : IPollRepository
 
             if (command.Title is not null)
             {
-                var q = new SimpleStatement(
-                    "UPDATE polls_by_system SET title = ? WHERE system_id = ? AND poll_id = ?",
+                await session.ExecuteAsync(new SimpleStatement(
+                    $"UPDATE {keyspace}.polls SET title = ?, updated_at = toTimestamp(now()) WHERE user_id = ? AND id = ?",
                     command.Title,
-                    scopedSystemId,
-                    command.PollId
-                );
-                await session.ExecuteAsync(q);
+                    normalizedSystemId,
+                    pollGuid));
             }
 
             if (command.Description is not null)
             {
-                var q = new SimpleStatement(
-                    "UPDATE polls_by_system SET description = ? WHERE system_id = ? AND poll_id = ?",
+                await session.ExecuteAsync(new SimpleStatement(
+                    $"UPDATE {keyspace}.polls SET description = ?, updated_at = toTimestamp(now()) WHERE user_id = ? AND id = ?",
                     command.Description,
-                    scopedSystemId,
-                    command.PollId
-                );
-                await session.ExecuteAsync(q);
+                    normalizedSystemId,
+                    pollGuid));
             }
 
             if (command.TimeEndIso is not null)
             {
-                var q = new SimpleStatement(
-                    "UPDATE polls_by_system SET time_end = ? WHERE system_id = ? AND poll_id = ?",
+                await session.ExecuteAsync(new SimpleStatement(
+                    $"UPDATE {keyspace}.polls SET time_end = ?, updated_at = toTimestamp(now()) WHERE user_id = ? AND id = ?",
                     ParseTime(command.TimeEndIso),
-                    scopedSystemId,
-                    command.PollId
-                );
-                await session.ExecuteAsync(q);
+                    normalizedSystemId,
+                    pollGuid));
             }
 
             if (command.DataJson is not null)
             {
-                var q = new SimpleStatement(
-                    "UPDATE polls_by_system SET data_json = ? WHERE system_id = ? AND poll_id = ?",
+                await session.ExecuteAsync(new SimpleStatement(
+                    $"UPDATE {keyspace}.polls SET data = ?, updated_at = toTimestamp(now()) WHERE user_id = ? AND id = ?",
                     command.DataJson,
-                    scopedSystemId,
-                    command.PollId
-                );
-                await session.ExecuteAsync(q);
+                    normalizedSystemId,
+                    pollGuid));
             }
 
             return true;
@@ -161,28 +182,40 @@ public sealed class ScyllaPollRepository : IPollRepository
     {
         return await DatabaseTransientRetry.ExecuteScyllaAsync(async () =>
         {
+            if (!TryParseUuid(pollId, out var pollGuid))
+            {
+                return false;
+            }
+
             var session = await _sessionProvider.GetSessionAsync(cancellationToken);
-            var scopedSystemId = GetScopedSystemId(systemId);
+            var normalizedSystemId = _keyspaceResolver.NormalizeSystemId(systemId);
+            var keyspace = _keyspaceResolver.ResolveRegionalKeyspace(systemId);
 
             var exists = await ExistsAsync(systemId, pollId, cancellationToken);
             if (!exists)
                 return false;
 
             var delete = new SimpleStatement(
-                "DELETE FROM polls_by_system WHERE system_id = ? AND poll_id = ?",
-                scopedSystemId,
-                pollId
+                $"DELETE FROM {keyspace}.polls WHERE user_id = ? AND id = ?",
+                normalizedSystemId,
+                pollGuid
             );
             await session.ExecuteAsync(delete);
             return true;
         }, _options, cancellationToken);
     }
 
-    private string GetScopedSystemId(string systemId)
+    internal static bool TryParseUuid(string value, out Guid guid)
     {
-        var region = _regionContext.ResolveUserRegion(systemId);
-        return $"{region}:{systemId}";
+        if (Guid.TryParseExact(value, "N", out guid)) return true;
+        return Guid.TryParse(value, out guid);
     }
+
+    internal static short ToPollCode(string type)
+        => PollTypeToCode.TryGetValue(type, out var code) ? code : (short)0;
+
+    internal static string ToPollType(short code)
+        => PollCodeToType.TryGetValue(code, out var type) ? type : "single_choice";
 
     private static DateTimeOffset? ParseTime(string? iso)
     {
@@ -192,11 +225,11 @@ public sealed class ScyllaPollRepository : IPollRepository
 
     private static PollReadModel ToReadModel(Row row)
         => new(
-            row.GetValue<string>("poll_id"),
+            row.GetValue<Guid>("id").ToString("N"),
             row.GetValue<string>("title"),
             row.GetValue<string?>("description"),
-            row.GetValue<string>("poll_type"),
-            row.GetValue<string?>("data_json") ?? "{}",
+            ToPollType(row.GetValue<short>("type")),
+            row.GetValue<string?>("data") ?? "{}",
             row.GetValue<DateTimeOffset?>("time_end")
         );
 }

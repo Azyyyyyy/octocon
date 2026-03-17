@@ -7,16 +7,19 @@ namespace Octocon.Infrastructure.Persistence.Scylla;
 public sealed class ScyllaAggregateVersionStore : IAggregateVersionStore
 {
     private readonly IScyllaSessionProvider _sessionProvider;
+    private readonly IScyllaKeyspaceResolver _keyspaceResolver;
     private readonly IRegionContext _regionContext;
     private readonly PersistenceRegistrationOptions _options;
 
     public ScyllaAggregateVersionStore(
         IScyllaSessionProvider sessionProvider,
+        IScyllaKeyspaceResolver keyspaceResolver,
         IRegionContext regionContext,
         PersistenceRegistrationOptions options
     )
     {
         _sessionProvider = sessionProvider;
+        _keyspaceResolver = keyspaceResolver;
         _regionContext = regionContext;
         _options = options;
     }
@@ -30,13 +33,14 @@ public sealed class ScyllaAggregateVersionStore : IAggregateVersionStore
         return await DatabaseTransientRetry.ExecuteScyllaAsync<long?>(async () =>
         {
             var session = await _sessionProvider.GetSessionAsync(cancellationToken);
-            var (scope, type) = ResolveScope(aggregateType, aggregateId);
+            var (scope, type, normalizedAggregateId) = ResolveScope(aggregateType, aggregateId);
+            var globalKeyspace = _keyspaceResolver.ResolveGlobalKeyspace();
 
             var query = new SimpleStatement(
-                "SELECT version FROM aggregate_versions_by_region WHERE region_scope = ? AND aggregate_type = ? AND aggregate_id = ? LIMIT 1",
+                $"SELECT version FROM {globalKeyspace}.aggregate_versions_by_region WHERE region_scope = ? AND aggregate_type = ? AND aggregate_id = ? LIMIT 1",
                 scope,
                 type,
-                aggregateId
+                normalizedAggregateId
             );
 
             var rows = await session.ExecuteAsync(query);
@@ -55,7 +59,8 @@ public sealed class ScyllaAggregateVersionStore : IAggregateVersionStore
         return await DatabaseTransientRetry.ExecuteScyllaAsync(async () =>
         {
             var session = await _sessionProvider.GetSessionAsync(cancellationToken);
-            var (scope, type) = ResolveScope(aggregateType, aggregateId);
+            var (scope, type, normalizedAggregateId) = ResolveScope(aggregateType, aggregateId);
+            var globalKeyspace = _keyspaceResolver.ResolveGlobalKeyspace();
 
             var current = await GetVersionAsync(aggregateType, aggregateId, cancellationToken);
 
@@ -67,10 +72,10 @@ public sealed class ScyllaAggregateVersionStore : IAggregateVersionStore
                 }
 
                 var create = new SimpleStatement(
-                    "INSERT INTO aggregate_versions_by_region (region_scope, aggregate_type, aggregate_id, version) VALUES (?, ?, ?, ?) IF NOT EXISTS",
+                    $"INSERT INTO {globalKeyspace}.aggregate_versions_by_region (region_scope, aggregate_type, aggregate_id, version) VALUES (?, ?, ?, ?) IF NOT EXISTS",
                     scope,
                     type,
-                    aggregateId,
+                    normalizedAggregateId,
                     1L
                 );
 
@@ -85,11 +90,11 @@ public sealed class ScyllaAggregateVersionStore : IAggregateVersionStore
 
             var next = current.Value + 1;
             var update = new SimpleStatement(
-                "UPDATE aggregate_versions_by_region SET version = ? WHERE region_scope = ? AND aggregate_type = ? AND aggregate_id = ? IF version = ?",
+                $"UPDATE {globalKeyspace}.aggregate_versions_by_region SET version = ? WHERE region_scope = ? AND aggregate_type = ? AND aggregate_id = ? IF version = ?",
                 next,
                 scope,
                 type,
-                aggregateId,
+                normalizedAggregateId,
                 current.Value
             );
 
@@ -98,14 +103,15 @@ public sealed class ScyllaAggregateVersionStore : IAggregateVersionStore
         }, _options, cancellationToken);
     }
 
-    private (string Scope, string AggregateType) ResolveScope(string aggregateType, string aggregateId)
+    private (string Scope, string AggregateType, string AggregateId) ResolveScope(string aggregateType, string aggregateId)
     {
-        var targetRegion = _regionContext.ResolveUserRegion(aggregateId);
+        var normalizedAggregateId = _keyspaceResolver.NormalizeSystemId(aggregateId);
+        var targetRegion = _keyspaceResolver.ResolveRegionalKeyspace(aggregateId);
         var consistency = _regionContext.ResolveConsistency(targetRegion);
         var scope = string.Equals(consistency, "local", StringComparison.OrdinalIgnoreCase)
             ? targetRegion
             : "global";
 
-        return (scope, aggregateType);
+        return (scope, aggregateType, normalizedAggregateId);
     }
 }

@@ -4,7 +4,7 @@ using Octocon.Domain.Journals;
 
 namespace Octocon.Api.Controllers;
 
-[Route("api/journals")]
+[Route("api/systems/me/journals")]
 public sealed class JournalsController : OctoconControllerBase
 {
     private readonly IJournalRepository _journalRepository;

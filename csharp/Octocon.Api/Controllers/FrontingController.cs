@@ -153,8 +153,7 @@ public sealed class FrontingController : OctoconControllerBase
         }
 
         var start = end.AddDays(-30);
-        var active = await _repository.ListActiveAsync(principal, ct);
-        var fronts = active.Where(x => x.StartedAt >= start && x.StartedAt <= end).ToArray();
+        var fronts = await _repository.ListHistoryBetweenAsync(principal, start, end, ct);
         return Ok(fronts);
     }
 
@@ -182,8 +181,7 @@ public sealed class FrontingController : OctoconControllerBase
             return BadRequest(new { code = "invalid_anchor" });
         }
 
-        var active = await _repository.ListActiveAsync(principal, ct);
-        var fronts = active.Where(x => x.StartedAt >= start && x.StartedAt <= end).ToArray();
+        var fronts = await _repository.ListHistoryBetweenAsync(principal, start, end, ct);
         return Ok(fronts);
     }
 

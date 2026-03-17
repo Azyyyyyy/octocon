@@ -1,5 +1,4 @@
 using Cassandra;
-using Octocon.Domain.Abstractions;
 using Octocon.Domain.Settings;
 using Octocon.Infrastructure.Persistence.Transient;
 
@@ -8,16 +7,16 @@ namespace Octocon.Infrastructure.Persistence.Scylla;
 public sealed class ScyllaEncryptionStateRepository : IEncryptionStateRepository
 {
     private readonly IScyllaSessionProvider _sessionProvider;
-    private readonly IRegionContext _regionContext;
+    private readonly IScyllaKeyspaceResolver _keyspaceResolver;
     private readonly PersistenceRegistrationOptions _options;
 
     public ScyllaEncryptionStateRepository(
         IScyllaSessionProvider sessionProvider,
-        IRegionContext regionContext,
+        IScyllaKeyspaceResolver keyspaceResolver,
         PersistenceRegistrationOptions options)
     {
         _sessionProvider = sessionProvider;
-        _regionContext = regionContext;
+        _keyspaceResolver = keyspaceResolver;
         _options = options;
     }
 
@@ -26,11 +25,11 @@ public sealed class ScyllaEncryptionStateRepository : IEncryptionStateRepository
         return await DatabaseTransientRetry.ExecuteScyllaAsync(async () =>
         {
             var session = await _sessionProvider.GetSessionAsync(cancellationToken);
-            var scopedSystemId = GetScopedSystemId(systemId);
+            var normalizedSystemId = _keyspaceResolver.NormalizeSystemId(systemId);
 
             var query = new SimpleStatement(
-                "SELECT encryption_initialized, encryption_key_checksum FROM account_encryption_by_system WHERE system_id = ? LIMIT 1",
-                scopedSystemId
+                "SELECT encryption_initialized, encryption_key_checksum FROM global.users WHERE id = ? LIMIT 1",
+                normalizedSystemId
             );
 
             var row = (await session.ExecuteAsync(query)).FirstOrDefault();
@@ -47,23 +46,17 @@ public sealed class ScyllaEncryptionStateRepository : IEncryptionStateRepository
         return await DatabaseTransientRetry.ExecuteScyllaAsync(async () =>
         {
             var session = await _sessionProvider.GetSessionAsync(cancellationToken);
-            var scopedSystemId = GetScopedSystemId(systemId);
+            var normalizedSystemId = _keyspaceResolver.NormalizeSystemId(systemId);
 
             var statement = new SimpleStatement(
-                "UPDATE account_encryption_by_system SET encryption_initialized = ?, encryption_key_checksum = ?, updated_at = toTimestamp(now()) WHERE system_id = ?",
+                "UPDATE global.users SET encryption_initialized = ?, encryption_key_checksum = ?, updated_at = toTimestamp(now()) WHERE id = ?",
                 initialized,
                 keyChecksum,
-                scopedSystemId
+                normalizedSystemId
             );
 
             await session.ExecuteAsync(statement);
             return true;
         }, _options, cancellationToken);
-    }
-
-    private string GetScopedSystemId(string systemId)
-    {
-        var region = _regionContext.ResolveUserRegion(systemId);
-        return $"{region}:{systemId}";
     }
 }

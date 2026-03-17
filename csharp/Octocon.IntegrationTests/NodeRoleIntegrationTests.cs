@@ -149,6 +149,7 @@ public sealed class NodeRoleIntegrationTests
         string? nodeGroup,
         string? flyProcessGroup)
     {
+        var gateLease = await ApiProcessGate.AcquireAsync();
         var process = StartApiProcess(workspaceRoot, port, nodeGroup, flyProcessGroup);
 
         using var http = new HttpClient { BaseAddress = new Uri($"http://127.0.0.1:{port}") };
@@ -159,12 +160,13 @@ public sealed class NodeRoleIntegrationTests
             var stderr = await process.StandardError.ReadToEndAsync();
             var stdout = await process.StandardOutput.ReadToEndAsync();
             process.Kill(entireProcessTree: true);
+            await gateLease.DisposeAsync();
 
             throw new InvalidOperationException(
                 $"API did not become ready in time. stdout: {stdout} stderr: {stderr}");
         }
 
-        return new RunningApi(process);
+        return new RunningApi(process, gateLease);
     }
 
     private static Process StartApiProcess(
@@ -178,7 +180,7 @@ public sealed class NodeRoleIntegrationTests
         var psi = new ProcessStartInfo
         {
             FileName = "dotnet",
-            Arguments = $"run --project \"{apiProjectPath}\"",
+            Arguments = $"run --no-build --project \"{apiProjectPath}\"",
             WorkingDirectory = workspaceRoot,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
@@ -303,9 +305,9 @@ public sealed class NodeRoleIntegrationTests
             throw new InvalidOperationException(message);
     }
 
-    private sealed class RunningApi(Process process) : IAsyncDisposable
+    private sealed class RunningApi(Process process, IAsyncDisposable gateLease) : IAsyncDisposable
     {
-        public ValueTask DisposeAsync()
+        public async ValueTask DisposeAsync()
         {
             try
             {
@@ -318,7 +320,7 @@ public sealed class NodeRoleIntegrationTests
             }
 
             process.Dispose();
-            return ValueTask.CompletedTask;
+            await gateLease.DisposeAsync();
         }
     }
 }

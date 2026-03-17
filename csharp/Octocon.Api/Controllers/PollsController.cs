@@ -4,7 +4,7 @@ using Octocon.Domain.Polls;
 
 namespace Octocon.Api.Controllers;
 
-[Route("api/polls")]
+[Route("api/systems/me/polls")]
 public sealed class PollsController : OctoconControllerBase
 {
     private readonly IPollRepository _pollRepository;

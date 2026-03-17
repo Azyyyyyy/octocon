@@ -4,10 +4,10 @@ services:
     ports:
       - "9042:9042"
     restart: always
-    command: --seeds=172.18.1.1,172.18.1.2 --smp 1 --memory 750M --overprovisioned 1 --developer-mode 1 --api-address 0.0.0.0 --broadcast-address scylla-nam
+    command: --seeds=172.18.1.1 --smp 1 --memory 750M --overprovisioned 1 --developer-mode 1 --api-address 0.0.0.0 --broadcast-address scylla-nam
     volumes:
       - ./dev/scylla/cassandra-rackdc.nam.properties:/etc/scylla/cassandra-rackdc.properties
-      - ./dev/scylla/data/nam:/var/lib/scylla
+      - scylla_nam_data:/var/lib/scylla
       - ./dev/scylla/scylla.yaml:/etc/scylla/scylla.yaml
     networks:
       octo_network:
@@ -158,3 +158,4 @@ networks:
 volumes:
   app_build:
   app_deps:
+  scylla_nam_data:

@@ -13,7 +13,17 @@ public sealed class InMemoryFrontingRepository : IFrontingRepository
         public required DateTimeOffset StartedAt { get; init; }
     }
 
+    private sealed class FrontHistoryState
+    {
+        public required string FrontId { get; init; }
+        public required int AlterId { get; init; }
+        public string? Comment { get; set; }
+        public required DateTimeOffset StartedAt { get; init; }
+        public DateTimeOffset? EndedAt { get; set; }
+    }
+
     private readonly ConcurrentDictionary<string, ConcurrentDictionary<int, FrontState>> _activeBySystem = new();
+    private readonly ConcurrentDictionary<string, List<FrontHistoryState>> _historyBySystem = new();
     private readonly ConcurrentDictionary<string, int?> _primaryBySystem = new();
     private readonly object _sync = new();
 
@@ -50,6 +60,16 @@ public sealed class InMemoryFrontingRepository : IFrontingRepository
                 StartedAt = DateTimeOffset.UtcNow
             };
 
+            var history = _historyBySystem.GetOrAdd(systemId, _ => new List<FrontHistoryState>());
+            history.Add(new FrontHistoryState
+            {
+                FrontId = frontId,
+                AlterId = alterId,
+                Comment = comment,
+                StartedAt = set[alterId].StartedAt,
+                EndedAt = null
+            });
+
             return Task.FromResult<string?>(frontId);
         }
     }
@@ -63,10 +83,21 @@ public sealed class InMemoryFrontingRepository : IFrontingRepository
                 return Task.FromResult(false);
             }
 
-            var removed = set.TryRemove(alterId, out _);
+            var removed = set.TryRemove(alterId, out var removedFront);
             if (removed && _primaryBySystem.TryGetValue(systemId, out var currentPrimary) && currentPrimary == alterId)
             {
                 _primaryBySystem[systemId] = null;
+            }
+
+            if (removed && removedFront is not null && _historyBySystem.TryGetValue(systemId, out var history))
+            {
+                var historical = history.LastOrDefault(
+                    x => string.Equals(x.FrontId, removedFront.FrontId, StringComparison.Ordinal) &&
+                         x.EndedAt is null);
+                if (historical is not null)
+                {
+                    historical.EndedAt = DateTimeOffset.UtcNow;
+                }
             }
 
             return Task.FromResult(removed);
@@ -113,6 +144,29 @@ public sealed class InMemoryFrontingRepository : IFrontingRepository
         }
     }
 
+    public Task<IReadOnlyList<FrontHistoryReadModel>> ListHistoryBetweenAsync(
+        string systemId,
+        DateTimeOffset startInclusive,
+        DateTimeOffset endInclusive,
+        CancellationToken cancellationToken = default)
+    {
+        lock (_sync)
+        {
+            if (!_historyBySystem.TryGetValue(systemId, out var history))
+            {
+                return Task.FromResult<IReadOnlyList<FrontHistoryReadModel>>(Array.Empty<FrontHistoryReadModel>());
+            }
+
+            var results = history
+                .Where(x => x.StartedAt >= startInclusive && x.StartedAt <= endInclusive)
+                .OrderByDescending(x => x.StartedAt)
+                .Select(x => new FrontHistoryReadModel(x.FrontId, x.AlterId, x.Comment, x.StartedAt, x.EndedAt))
+                .ToArray();
+
+            return Task.FromResult<IReadOnlyList<FrontHistoryReadModel>>(results);
+        }
+    }
+
     public Task<FrontActiveReadModel?> GetActiveByFrontIdAsync(string systemId, string frontId, CancellationToken cancellationToken = default)
     {
         lock (_sync)
@@ -156,6 +210,17 @@ public sealed class InMemoryFrontingRepository : IFrontingRepository
                 return Task.FromResult(false);
 
             found.Comment = comment;
+
+            if (_historyBySystem.TryGetValue(systemId, out var history))
+            {
+                var historical = history.LastOrDefault(
+                    x => string.Equals(x.FrontId, frontId, StringComparison.Ordinal) && x.EndedAt is null);
+                if (historical is not null)
+                {
+                    historical.Comment = comment;
+                }
+            }
+
             return Task.FromResult(true);
         }
     }

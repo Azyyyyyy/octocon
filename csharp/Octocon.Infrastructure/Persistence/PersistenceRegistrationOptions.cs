@@ -9,7 +9,8 @@ public sealed class PersistenceRegistrationOptions
 
     public string[] ScyllaContactPoints { get; set; } = ["127.0.0.1"];
     public string ScyllaLocalDatacenter { get; set; } = "datacenter1";
-    public string ScyllaKeyspace { get; set; } = "octocon";
+    // Canonical strategy is keyspace-per-region, so default to the default region keyspace.
+    public string ScyllaKeyspace { get; set; } = "nam";
     public string? ScyllaUsername { get; set; }
     public string? ScyllaPassword { get; set; }
 

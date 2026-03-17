@@ -7,3 +7,11 @@ public sealed record FrontActiveReadModel(
     DateTimeOffset StartedAt,
     bool IsPrimary
 );
+
+public sealed record FrontHistoryReadModel(
+    string FrontId,
+    int AlterId,
+    string? Comment,
+    DateTimeOffset StartedAt,
+    DateTimeOffset? EndedAt
+);
