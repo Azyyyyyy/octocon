@@ -21,6 +21,26 @@ public sealed class InMemoryFriendshipRepository : IFriendshipRepository
     private readonly ConcurrentDictionary<string, ConcurrentDictionary<string, FriendshipState>> _friendships = new();
     private readonly ConcurrentDictionary<string, ConcurrentDictionary<string, RequestState>> _outgoingRequests = new();
 
+    public Task<string?> GetFriendshipLevelAsync(string systemId, string? viewerSystemId, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(viewerSystemId))
+        {
+            return Task.FromResult<string?>(null);
+        }
+
+        if (string.Equals(systemId, viewerSystemId, StringComparison.Ordinal))
+        {
+            return Task.FromResult<string?>("trusted_friend");
+        }
+
+        if (!_friendships.TryGetValue(systemId, out var store) || !store.TryGetValue(viewerSystemId, out var state))
+        {
+            return Task.FromResult<string?>(null);
+        }
+
+        return Task.FromResult<string?>(state.Level);
+    }
+
     public Task<IReadOnlyList<FriendshipReadModel>> ListFriendshipsAsync(string systemId, CancellationToken cancellationToken = default)
     {
         if (!_friendships.TryGetValue(systemId, out var store))

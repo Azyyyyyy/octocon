@@ -7,6 +7,23 @@ public sealed class InMemorySettingsFieldRepository : ISettingsFieldRepository
 {
     private readonly ConcurrentDictionary<string, List<SettingsFieldReadModel>> _bySystem = new(StringComparer.Ordinal);
 
+    public Task<IReadOnlyList<SettingsFieldReadModel>> ListAsync(string systemId, CancellationToken cancellationToken = default)
+    {
+        if (!_bySystem.TryGetValue(systemId, out var store))
+        {
+            return Task.FromResult<IReadOnlyList<SettingsFieldReadModel>>(Array.Empty<SettingsFieldReadModel>());
+        }
+
+        lock (store)
+        {
+            var result = store
+                .OrderBy(x => x.Index)
+                .Select(x => x)
+                .ToArray();
+            return Task.FromResult<IReadOnlyList<SettingsFieldReadModel>>(result);
+        }
+    }
+
     public Task<string?> CreateAsync(
         string systemId,
         string name,

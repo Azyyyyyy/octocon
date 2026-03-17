@@ -37,5 +37,18 @@ public interface ITagRepository
 
     Task<IReadOnlyList<TagPublicReadModel>> ListAsync(string systemId, CancellationToken cancellationToken = default);
 
+    Task<IReadOnlyList<TagPublicReadModel>> ListGuardedAsync(
+        string systemId,
+        string? viewerSystemId,
+        CancellationToken cancellationToken = default
+    );
+
     Task<TagPublicReadModel?> GetAsync(string systemId, string tagId, CancellationToken cancellationToken = default);
+
+    Task<TagPublicReadModel?> GetGuardedAsync(
+        string systemId,
+        string tagId,
+        string? viewerSystemId,
+        CancellationToken cancellationToken = default
+    );
 }

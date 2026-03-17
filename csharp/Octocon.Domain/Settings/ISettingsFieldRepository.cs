@@ -10,6 +10,8 @@ public sealed record SettingsFieldReadModel(
 
 public interface ISettingsFieldRepository
 {
+    Task<IReadOnlyList<SettingsFieldReadModel>> ListAsync(string systemId, CancellationToken cancellationToken = default);
+
     Task<string?> CreateAsync(
         string systemId,
         string name,

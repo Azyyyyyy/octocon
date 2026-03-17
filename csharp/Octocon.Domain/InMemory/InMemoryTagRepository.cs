@@ -1,5 +1,7 @@
 using System.Collections.Concurrent;
 using Octocon.Domain.Abstractions;
+using Octocon.Domain.Alters;
+using Octocon.Domain.Friendships;
 using Octocon.Domain.Tags;
 
 namespace Octocon.Domain.InMemory;
@@ -16,6 +18,7 @@ public sealed class InMemoryTagRepository : ITagRepository
    );
 
     private readonly IRegionContext _regionContext;
+    private readonly IFriendshipRepository? _friendships;
     private readonly ConcurrentDictionary<string, ConcurrentDictionary<string, TagState>> _bySystem = new();
    // Key: "{systemKey}:{tagId}"  Value: set of alter IDs (dict used as concurrent set)
    private readonly ConcurrentDictionary<string, ConcurrentDictionary<int, bool>> _alterMemberships = new();
@@ -23,6 +26,12 @@ public sealed class InMemoryTagRepository : ITagRepository
     public InMemoryTagRepository(IRegionContext regionContext)
     {
         _regionContext = regionContext;
+    }
+
+    public InMemoryTagRepository(IRegionContext regionContext, IFriendshipRepository friendships)
+    {
+        _regionContext = regionContext;
+        _friendships = friendships;
     }
 
     public Task<string?> CreateAsync(
@@ -149,6 +158,29 @@ public sealed class InMemoryTagRepository : ITagRepository
            return Task.FromResult<IReadOnlyList<TagPublicReadModel>>(rows);
        }
 
+       public async Task<IReadOnlyList<TagPublicReadModel>> ListGuardedAsync(
+           string systemId,
+           string? viewerSystemId,
+           CancellationToken cancellationToken = default)
+       {
+           var friendshipLevel = await ResolveFriendshipLevelAsync(systemId, viewerSystemId, cancellationToken);
+           var systemKey = GetSystemKey(systemId);
+           if (!_bySystem.TryGetValue(systemKey, out var store))
+               return Array.Empty<TagPublicReadModel>();
+
+           var rows = store.Values
+               .Where(x => CanView(friendshipLevel, ParseVisibilityLevel(x.SecurityLevel)))
+               .OrderBy(x => x.TagId)
+               .Select(x => new TagPublicReadModel(
+                   x.TagId,
+                   x.Name,
+                   x.ParentTagId,
+                   GetAlterIds(systemKey, x.TagId)))
+               .ToArray();
+
+           return rows;
+       }
+
        public Task<TagPublicReadModel?> GetAsync(string systemId, string tagId, CancellationToken cancellationToken = default)
        {
            var systemKey = GetSystemKey(systemId);
@@ -160,6 +192,31 @@ public sealed class InMemoryTagRepository : ITagRepository
                tag.Name,
                tag.ParentTagId,
                GetAlterIds(systemKey, tag.TagId)));
+       }
+
+       public async Task<TagPublicReadModel?> GetGuardedAsync(
+           string systemId,
+           string tagId,
+           string? viewerSystemId,
+           CancellationToken cancellationToken = default)
+       {
+           var friendshipLevel = await ResolveFriendshipLevelAsync(systemId, viewerSystemId, cancellationToken);
+           var systemKey = GetSystemKey(systemId);
+           if (!_bySystem.TryGetValue(systemKey, out var store) || !store.TryGetValue(tagId, out var tag))
+           {
+               return null;
+           }
+
+           if (!CanView(friendshipLevel, ParseVisibilityLevel(tag.SecurityLevel)))
+           {
+               return null;
+           }
+
+           return new TagPublicReadModel(
+               tag.TagId,
+               tag.Name,
+               tag.ParentTagId,
+               GetAlterIds(systemKey, tag.TagId));
        }
 
     private IReadOnlyList<int> GetAlterIds(string systemKey, string tagId)
@@ -175,5 +232,47 @@ public sealed class InMemoryTagRepository : ITagRepository
     {
         var region = _regionContext.ResolveUserRegion(systemId);
         return $"{region}:{systemId}";
+    }
+
+    private async Task<string?> ResolveFriendshipLevelAsync(string systemId, string? viewerSystemId, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(viewerSystemId))
+        {
+            return null;
+        }
+
+        if (string.Equals(systemId, viewerSystemId, StringComparison.Ordinal))
+        {
+            return "trusted_friend";
+        }
+
+        if (_friendships is null)
+        {
+            return null;
+        }
+
+        return await _friendships.GetFriendshipLevelAsync(systemId, viewerSystemId, cancellationToken);
+    }
+
+    private static bool CanView(string? friendshipLevel, VisibilityLevel visibilityLevel)
+    {
+        return visibilityLevel switch
+        {
+            VisibilityLevel.Public => true,
+            VisibilityLevel.FriendsOnly => friendshipLevel is "friend" or "trusted_friend",
+            VisibilityLevel.TrustedOnly => friendshipLevel is "trusted_friend",
+            _ => false
+        };
+    }
+
+    private static VisibilityLevel ParseVisibilityLevel(string? value)
+    {
+        return value?.Trim().ToLowerInvariant() switch
+        {
+            "friends_only" => VisibilityLevel.FriendsOnly,
+            "trusted_only" => VisibilityLevel.TrustedOnly,
+            "private" => VisibilityLevel.Private,
+            _ => VisibilityLevel.Public
+        };
     }
 }

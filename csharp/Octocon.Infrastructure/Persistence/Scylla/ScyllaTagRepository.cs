@@ -1,4 +1,5 @@
 using Cassandra;
+using Octocon.Domain.Alters;
 using Octocon.Domain.Tags;
 using Octocon.Infrastructure.Persistence.Transient;
 
@@ -136,6 +137,18 @@ public sealed class ScyllaTagRepository : ITagRepository
                 );
 
                 await session.ExecuteAsync(updateName);
+            }
+
+            if (command.SecurityLevel is not null)
+            {
+                var updateSecurity = new SimpleStatement(
+                    $"UPDATE {keyspace}.tags SET security_level = ?, updated_at = toTimestamp(now()) WHERE user_id = ? AND id = ?",
+                    ToSecurityLevel(command.SecurityLevel),
+                    normalizedSystemId,
+                    tagGuid
+                );
+
+                await session.ExecuteAsync(updateSecurity);
             }
 
             return true;
@@ -386,6 +399,48 @@ public sealed class ScyllaTagRepository : ITagRepository
                     alterIds));
             }
 
+            // VERIFIED: 2026-03-17 Elixir tags.ex get_tags() has no explicit sort → database order (ascending). Matches C# OrderBy.
+            return tags.OrderBy(x => x.TagId).ToArray();
+        }, _options, cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<TagPublicReadModel>> ListGuardedAsync(
+        string systemId,
+        string? viewerSystemId,
+        CancellationToken cancellationToken = default)
+    {
+        return await DatabaseTransientRetry.ExecuteScyllaAsync(async () =>
+        {
+            var session = await _sessionProvider.GetSessionAsync(cancellationToken);
+            var normalizedSystemId = _keyspaceResolver.NormalizeSystemId(systemId);
+            var keyspace = _keyspaceResolver.ResolveRegionalKeyspace(systemId);
+            var friendshipLevel = await ResolveFriendshipLevelAsync(session, normalizedSystemId, viewerSystemId);
+
+            var query = new SimpleStatement(
+                $"SELECT id, name, parent_tag_id, security_level FROM {keyspace}.tags WHERE user_id = ?",
+                normalizedSystemId
+            );
+
+            var rows = await session.ExecuteAsync(query);
+            var tags = new List<TagPublicReadModel>();
+
+            foreach (var row in rows)
+            {
+                var visibility = ResolveVisibilityLevel(row.GetValue<short?>("security_level"));
+                if (!CanView(friendshipLevel, visibility))
+                {
+                    continue;
+                }
+
+                var tagId = row.GetValue<Guid>("id").ToString("N");
+                var alterIds = await GetGuardedAlterIdsAsync(session, keyspace, normalizedSystemId, row.GetValue<Guid>("id"), friendshipLevel);
+                tags.Add(new TagPublicReadModel(
+                    tagId,
+                    row.GetValue<string>("name"),
+                    row.GetValue<Guid?>("parent_tag_id")?.ToString("N"),
+                    alterIds));
+            }
+
             return tags.OrderBy(x => x.TagId).ToArray();
         }, _options, cancellationToken);
     }
@@ -424,6 +479,51 @@ public sealed class ScyllaTagRepository : ITagRepository
         }, _options, cancellationToken);
     }
 
+    public async Task<TagPublicReadModel?> GetGuardedAsync(
+        string systemId,
+        string tagId,
+        string? viewerSystemId,
+        CancellationToken cancellationToken = default)
+    {
+        return await DatabaseTransientRetry.ExecuteScyllaAsync(async () =>
+        {
+            if (!TryParseUuid(tagId, out var tagGuid))
+            {
+                return null;
+            }
+
+            var session = await _sessionProvider.GetSessionAsync(cancellationToken);
+            var normalizedSystemId = _keyspaceResolver.NormalizeSystemId(systemId);
+            var keyspace = _keyspaceResolver.ResolveRegionalKeyspace(systemId);
+            var friendshipLevel = await ResolveFriendshipLevelAsync(session, normalizedSystemId, viewerSystemId);
+
+            var query = new SimpleStatement(
+                $"SELECT id, name, parent_tag_id, security_level FROM {keyspace}.tags WHERE user_id = ? AND id = ? LIMIT 1",
+                normalizedSystemId,
+                tagGuid
+            );
+
+            var row = (await session.ExecuteAsync(query)).FirstOrDefault();
+            if (row is null)
+            {
+                return null;
+            }
+
+            var visibility = ResolveVisibilityLevel(row.GetValue<short?>("security_level"));
+            if (!CanView(friendshipLevel, visibility))
+            {
+                return null;
+            }
+
+            var alterIds = await GetGuardedAlterIdsAsync(session, keyspace, normalizedSystemId, tagGuid, friendshipLevel);
+            return new TagPublicReadModel(
+                row.GetValue<Guid>("id").ToString("N"),
+                row.GetValue<string>("name"),
+                row.GetValue<Guid?>("parent_tag_id")?.ToString("N"),
+                alterIds);
+        }, _options, cancellationToken);
+    }
+
     private static async Task<IReadOnlyList<int>> GetAlterIdsAsync(ISession session, string keyspace, string normalizedSystemId, Guid tagId)
     {
         var query = new SimpleStatement(
@@ -434,6 +534,93 @@ public sealed class ScyllaTagRepository : ITagRepository
 
         var rows = await session.ExecuteAsync(query);
         return rows.Select(x => (int)x.GetValue<short>("alter_id")).OrderBy(x => x).ToArray();
+    }
+
+    private static async Task<IReadOnlyList<int>> GetGuardedAlterIdsAsync(
+        ISession session,
+        string keyspace,
+        string normalizedSystemId,
+        Guid tagId,
+        string? friendshipLevel)
+    {
+        var alterIds = await GetAlterIdsAsync(session, keyspace, normalizedSystemId, tagId);
+        if (alterIds.Count == 0)
+        {
+            return alterIds;
+        }
+
+        var query = new SimpleStatement(
+            $"SELECT id, security_level FROM {keyspace}.alters WHERE user_id = ?",
+            normalizedSystemId);
+
+        var rows = await session.ExecuteAsync(query);
+        var visible = rows
+            .Select(row => new
+            {
+                AlterId = (int)row.GetValue<short>("id"),
+                Visibility = ResolveVisibilityLevel(row.GetValue<short?>("security_level"))
+            })
+            .Where(x => alterIds.Contains(x.AlterId) && CanView(friendshipLevel, x.Visibility))
+            .Select(x => x.AlterId)
+            .OrderBy(x => x)
+            .ToArray();
+
+        return visible;
+    }
+
+    private async Task<string?> ResolveFriendshipLevelAsync(ISession session, string ownerSystemId, string? viewerSystemId)
+    {
+        if (string.IsNullOrWhiteSpace(viewerSystemId))
+        {
+            return null;
+        }
+
+        var normalizedViewerSystemId = _keyspaceResolver.NormalizeSystemId(viewerSystemId);
+        if (string.Equals(ownerSystemId, normalizedViewerSystemId, StringComparison.Ordinal))
+        {
+            return "trusted_friend";
+        }
+
+        var query = new SimpleStatement(
+            "SELECT level FROM global.friendships WHERE user_id = ? AND friend_id = ? LIMIT 1",
+            ownerSystemId,
+            normalizedViewerSystemId);
+
+        var row = (await session.ExecuteAsync(query)).FirstOrDefault();
+        return row is null ? null : ScyllaFriendshipRepository.ToDomainLevel(row.GetValue<short>("level"));
+    }
+
+    private static VisibilityLevel ResolveVisibilityLevel(short? value)
+    {
+        return value switch
+        {
+            1 => VisibilityLevel.FriendsOnly,
+            2 => VisibilityLevel.TrustedOnly,
+            3 => VisibilityLevel.Private,
+            _ => VisibilityLevel.Public
+        };
+    }
+
+    private static bool CanView(string? friendshipLevel, VisibilityLevel visibilityLevel)
+    {
+        return visibilityLevel switch
+        {
+            VisibilityLevel.Public => true,
+            VisibilityLevel.FriendsOnly => friendshipLevel is "friend" or "trusted_friend",
+            VisibilityLevel.TrustedOnly => friendshipLevel is "trusted_friend",
+            _ => false
+        };
+    }
+
+    private static short ToSecurityLevel(string value)
+    {
+        return value.Trim().ToLowerInvariant() switch
+        {
+            "friends_only" => 1,
+            "trusted_only" => 2,
+            "private" => 3,
+            _ => 0
+        };
     }
 
     internal static bool TryParseUuid(string value, out Guid guid)

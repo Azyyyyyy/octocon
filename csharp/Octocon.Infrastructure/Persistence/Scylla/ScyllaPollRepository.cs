@@ -9,7 +9,9 @@ public sealed class ScyllaPollRepository : IPollRepository
     private static readonly Dictionary<string, short> PollTypeToCode = new(StringComparer.OrdinalIgnoreCase)
     {
         ["single_choice"] = 0,
+        ["vote"] = 0,  // Alias for single_choice
         ["multiple_choice"] = 1,
+        ["choice"] = 1,  // Alias for multiple_choice
         ["approval"] = 2
     };
 
@@ -48,6 +50,7 @@ public sealed class ScyllaPollRepository : IPollRepository
             );
 
             var rows = await session.ExecuteAsync(query);
+            // VERIFIED: 2026-03-17 Elixir polls.ex get_polls() has no explicit sort → database order (ascending). Matches C# OrderBy.
             return rows.Select(ToReadModel).OrderBy(p => p.PollId, StringComparer.Ordinal).ToList();
         }, _options, cancellationToken);
     }

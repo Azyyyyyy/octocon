@@ -23,6 +23,34 @@ public sealed class ScyllaFriendshipRepository : IFriendshipRepository
         _options = options;
     }
 
+    public async Task<string?> GetFriendshipLevelAsync(string systemId, string? viewerSystemId, CancellationToken cancellationToken = default)
+    {
+        return await DatabaseTransientRetry.ExecuteScyllaAsync(async () =>
+        {
+            if (string.IsNullOrWhiteSpace(viewerSystemId))
+            {
+                return null;
+            }
+
+            var normalizedSystemId = _keyspaceResolver.NormalizeSystemId(systemId);
+            var normalizedViewerSystemId = _keyspaceResolver.NormalizeSystemId(viewerSystemId);
+
+            if (string.Equals(normalizedSystemId, normalizedViewerSystemId, StringComparison.Ordinal))
+            {
+                return "trusted_friend";
+            }
+
+            var session = await _sessionProvider.GetSessionAsync(cancellationToken);
+            var query = new SimpleStatement(
+                "SELECT level FROM global.friendships WHERE user_id = ? AND friend_id = ? LIMIT 1",
+                normalizedSystemId,
+                normalizedViewerSystemId);
+
+            var row = (await session.ExecuteAsync(query)).FirstOrDefault();
+            return row is null ? null : ToDomainLevel(row.GetValue<short>("level"));
+        }, _options, cancellationToken);
+    }
+
     public async Task<IReadOnlyList<FriendshipReadModel>> ListFriendshipsAsync(string systemId, CancellationToken cancellationToken = default)
     {
         return await DatabaseTransientRetry.ExecuteScyllaAsync(async () =>

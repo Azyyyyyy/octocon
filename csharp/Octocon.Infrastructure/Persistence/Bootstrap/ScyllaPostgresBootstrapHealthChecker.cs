@@ -1,12 +1,13 @@
 using Cassandra;
 using Npgsql;
+using Octocon.Domain.Alters;
 using Octocon.Infrastructure.Persistence.Postgres;
 using Octocon.Infrastructure.Persistence.Scylla;
 using Octocon.Infrastructure.Persistence.Transient;
 
 namespace Octocon.Infrastructure.Persistence.Bootstrap;
 
-public sealed class ScyllaPostgresBootstrapHealthChecker : IDatabaseBootstrapHealthChecker
+public sealed class ScyllaPostgresBootstrapHealthChecker : IDatabaseBootstrapHealthChecker, IOperationalHealthChecker
 {
     private const string GlobalKeyspace = "global";
 
@@ -35,16 +36,19 @@ public sealed class ScyllaPostgresBootstrapHealthChecker : IDatabaseBootstrapHea
 
     private readonly IPostgresConnectionFactory _postgresConnectionFactory;
     private readonly IScyllaSessionProvider _scyllaSessionProvider;
+    private readonly IAlterRepository _alterRepository;
     private readonly PersistenceRegistrationOptions _options;
 
     public ScyllaPostgresBootstrapHealthChecker(
         IPostgresConnectionFactory postgresConnectionFactory,
         IScyllaSessionProvider scyllaSessionProvider,
+        IAlterRepository alterRepository,
         PersistenceRegistrationOptions options
     )
     {
         _postgresConnectionFactory = postgresConnectionFactory;
         _scyllaSessionProvider = scyllaSessionProvider;
+        _alterRepository = alterRepository;
         _options = options;
     }
 
@@ -156,5 +160,61 @@ public sealed class ScyllaPostgresBootstrapHealthChecker : IDatabaseBootstrapHea
         }
 
         return missingTables;
+    }
+
+    /// <summary>
+    /// Validates that guarded visibility query paths work end-to-end with Scylla backend.
+    /// </summary>
+    public async Task<OperationalHealthResult> CheckGuardedPathsAsync(CancellationToken cancellationToken = default)
+    {
+        var paths = new List<GuardedPathHealth>();
+
+        // Test 1: ListGuardedAsync returns results
+        try
+        {
+            var testSystemId = "test-system";
+            var testCallerId = "test-caller";
+
+            // Note: Expected to return empty list since no test data, but verifies path works
+            var alters = await _alterRepository.ListGuardedAsync(testSystemId, testCallerId, cancellationToken);
+
+            paths.Add(new GuardedPathHealth(
+                "ListGuardedAsync",
+                true,
+                $"Guarded list query executed successfully (returned {alters.Count} alters)"));
+        }
+        catch (Exception ex)
+        {
+            paths.Add(new GuardedPathHealth(
+                "ListGuardedAsync",
+                false,
+                $"Guarded list query failed: {ex.Message}"));
+        }
+
+        // Test 2: GetGuardedAsync handles missing entity gracefully
+        try
+        {
+            var testSystemId = "test-system";
+            const int testAlterId = 999;
+            var testCallerId = "test-caller";
+
+            // Note: Expected to return null, but verifies path works without exception
+            var alter = await _alterRepository.GetGuardedAsync(testSystemId, testAlterId, testCallerId, cancellationToken);
+
+            paths.Add(new GuardedPathHealth(
+                "GetGuardedAsync",
+                true,
+                alter == null ? "Guarded get query executed successfully (entity not found, as expected)" : "Guarded get query executed successfully"));
+        }
+        catch (Exception ex)
+        {
+            paths.Add(new GuardedPathHealth(
+                "GetGuardedAsync",
+                false,
+                $"Guarded get query failed: {ex.Message}"));
+        }
+
+        var healthy = paths.All(p => p.Healthy);
+        return new OperationalHealthResult(healthy, paths);
     }
 }

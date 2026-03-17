@@ -31,6 +31,35 @@ public sealed class ScyllaSettingsFieldRepository : ISettingsFieldRepository
         _options = options;
     }
 
+    public async Task<IReadOnlyList<SettingsFieldReadModel>> ListAsync(string systemId, CancellationToken cancellationToken = default)
+    {
+        return await DatabaseTransientRetry.ExecuteScyllaAsync(async () =>
+        {
+            var session = await _sessionProvider.GetSessionAsync(cancellationToken);
+            var normalizedSystemId = _keyspaceResolver.NormalizeSystemId(systemId);
+            var keyspace = _keyspaceResolver.ResolveRegionalKeyspace(systemId);
+            EnsureFieldUdtMapping(session, keyspace);
+
+            var fields = await LoadFieldsAsync(session, keyspace, normalizedSystemId);
+            if (fields is null)
+            {
+                return Array.Empty<SettingsFieldReadModel>();
+            }
+
+            var result = fields
+                .Select((field, index) => new SettingsFieldReadModel(
+                    field.Id.ToString("N"),
+                    field.Name,
+                    ToDomainType(field.Type),
+                    ToDomainSecurityLevel(field.SecurityLevel),
+                    field.Locked,
+                    index))
+                .ToArray();
+
+            return (IReadOnlyList<SettingsFieldReadModel>)result;
+        }, _options, cancellationToken);
+    }
+
     public async Task<string?> CreateAsync(
         string systemId,
         string name,
@@ -280,6 +309,27 @@ public sealed class ScyllaSettingsFieldRepository : ISettingsFieldRepository
             "friends_only" => SecurityFriendsOnly,
             "trusted_only" => SecurityTrustedOnly,
             _ => SecurityPrivate
+        };
+    }
+
+    private static string ToDomainType(short type)
+    {
+        return type switch
+        {
+            TypeNumber => "number",
+            TypeBoolean => "boolean",
+            _ => "text"
+        };
+    }
+
+    private static string ToDomainSecurityLevel(short securityLevel)
+    {
+        return securityLevel switch
+        {
+            SecurityPublic => "public",
+            SecurityFriendsOnly => "friends_only",
+            SecurityTrustedOnly => "trusted_only",
+            _ => "private"
         };
     }
 

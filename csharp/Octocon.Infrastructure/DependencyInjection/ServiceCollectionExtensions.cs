@@ -45,7 +45,10 @@ public static partial class ServiceCollectionExtensions
                 .AddSingleton<IPollRepository, InMemoryPollRepository>()
                 .AddSingleton<IAggregateVersionStore, InMemoryRegionalAggregateVersionStore>()
                 .AddSingleton<IIdempotencyStore, InMemoryIdempotencyStore>()
-                .AddSingleton<IDatabaseBootstrapHealthChecker, InMemoryBootstrapHealthChecker>(),
+                .AddSingleton<IDatabaseBootstrapHealthChecker>(sp => 
+                    new InMemoryBootstrapHealthChecker(sp.GetRequiredService<IAlterRepository>()))
+                .AddSingleton<IOperationalHealthChecker>(sp =>
+                    sp.GetRequiredService<IDatabaseBootstrapHealthChecker>() as IOperationalHealthChecker ?? throw new InvalidOperationException()),
 
             PersistenceMode.ScyllaPostgres => services
                 .AddSingleton<IPostgresConnectionFactory>(_ => new PostgresConnectionFactory(options.PostgresConnectionString, options))
@@ -64,7 +67,14 @@ public static partial class ServiceCollectionExtensions
                 .AddSingleton<IPollRepository, ScyllaPollRepository>()
                 .AddSingleton<IAggregateVersionStore, ScyllaAggregateVersionStore>()
                 .AddSingleton<IIdempotencyStore, PostgresIdempotencyStore>()
-                .AddSingleton<IDatabaseBootstrapHealthChecker, ScyllaPostgresBootstrapHealthChecker>(),
+                .AddSingleton<IDatabaseBootstrapHealthChecker>(sp =>
+                    new ScyllaPostgresBootstrapHealthChecker(
+                        sp.GetRequiredService<IPostgresConnectionFactory>(),
+                        sp.GetRequiredService<IScyllaSessionProvider>(),
+                        sp.GetRequiredService<IAlterRepository>(),
+                        options))
+                .AddSingleton<IOperationalHealthChecker>(sp =>
+                    sp.GetRequiredService<IDatabaseBootstrapHealthChecker>() as IOperationalHealthChecker ?? throw new InvalidOperationException()),
 
             _ => throw new InvalidOperationException($"Unsupported persistence mode: {mode}")
         };

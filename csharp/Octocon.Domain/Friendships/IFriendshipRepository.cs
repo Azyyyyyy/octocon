@@ -2,6 +2,8 @@ namespace Octocon.Domain.Friendships;
 
 public interface IFriendshipRepository
 {
+    Task<string?> GetFriendshipLevelAsync(string systemId, string? viewerSystemId, CancellationToken cancellationToken = default);
+
     Task<IReadOnlyList<FriendshipReadModel>> ListFriendshipsAsync(string systemId, CancellationToken cancellationToken = default);
 
     Task<FriendshipReadModel?> GetFriendshipAsync(string systemId, string friendSystemId, CancellationToken cancellationToken = default);

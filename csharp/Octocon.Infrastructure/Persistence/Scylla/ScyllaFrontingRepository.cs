@@ -1,5 +1,6 @@
 using Cassandra;
 using Microsoft.Extensions.Logging;
+using Octocon.Domain.Alters;
 using Octocon.Domain.Fronting;
 using Octocon.Infrastructure.Persistence.Transient;
 
@@ -194,6 +195,40 @@ public sealed class ScyllaFrontingRepository : IFrontingRepository
         }, _options, cancellationToken, _logger);
     }
 
+    public async Task<IReadOnlyList<FrontActiveReadModel>> ListActiveGuardedAsync(
+        string systemId,
+        string? viewerSystemId,
+        CancellationToken cancellationToken = default)
+    {
+        return await DatabaseTransientRetry.ExecuteScyllaAsync(async () =>
+        {
+            var session = await _sessionProvider.GetSessionAsync(cancellationToken);
+            var normalizedSystemId = _keyspaceResolver.NormalizeSystemId(systemId);
+            var keyspace = _keyspaceResolver.ResolveRegionalKeyspace(systemId);
+            var friendshipLevel = await ResolveFriendshipLevelAsync(session, normalizedSystemId, viewerSystemId);
+
+            var all = await ListActiveAsync(systemId, cancellationToken);
+            if (all.Count == 0)
+            {
+                return all;
+            }
+
+            var securityRows = await session.ExecuteAsync(new SimpleStatement(
+                $"SELECT id, security_level FROM {keyspace}.alters WHERE user_id = ?",
+                normalizedSystemId));
+
+            var visibilityByAlterId = securityRows.ToDictionary(
+                row => (int)row.GetValue<short>("id"),
+                row => ResolveVisibilityLevel(row.GetValue<short?>("security_level")));
+
+            var filtered = all
+                .Where(front => visibilityByAlterId.TryGetValue(front.AlterId, out var level) && CanView(friendshipLevel, level))
+                .ToArray();
+
+            return (IReadOnlyList<FrontActiveReadModel>)filtered;
+        }, _options, cancellationToken, _logger);
+    }
+
     public async Task<IReadOnlyList<FrontHistoryReadModel>> ListHistoryBetweenAsync(
         string systemId,
         DateTimeOffset startInclusive,
@@ -305,5 +340,49 @@ public sealed class ScyllaFrontingRepository : IFrontingRepository
             row.GetValue<Guid>("id"),
             row.GetValue<short>("alter_id"),
             row.GetValue<DateTimeOffset?>("time_start") ?? DateTimeOffset.UtcNow);
+    }
+
+    private async Task<string?> ResolveFriendshipLevelAsync(ISession session, string ownerSystemId, string? viewerSystemId)
+    {
+        if (string.IsNullOrWhiteSpace(viewerSystemId))
+        {
+            return null;
+        }
+
+        var normalizedViewerSystemId = _keyspaceResolver.NormalizeSystemId(viewerSystemId);
+        if (string.Equals(ownerSystemId, normalizedViewerSystemId, StringComparison.Ordinal))
+        {
+            return "trusted_friend";
+        }
+
+        var query = new SimpleStatement(
+            "SELECT level FROM global.friendships WHERE user_id = ? AND friend_id = ? LIMIT 1",
+            ownerSystemId,
+            normalizedViewerSystemId);
+
+        var row = (await session.ExecuteAsync(query)).FirstOrDefault();
+        return row is null ? null : ScyllaFriendshipRepository.ToDomainLevel(row.GetValue<short>("level"));
+    }
+
+    private static VisibilityLevel ResolveVisibilityLevel(short? value)
+    {
+        return value switch
+        {
+            1 => VisibilityLevel.FriendsOnly,
+            2 => VisibilityLevel.TrustedOnly,
+            3 => VisibilityLevel.Private,
+            _ => VisibilityLevel.Public
+        };
+    }
+
+    private static bool CanView(string? friendshipLevel, VisibilityLevel visibilityLevel)
+    {
+        return visibilityLevel switch
+        {
+            VisibilityLevel.Public => true,
+            VisibilityLevel.FriendsOnly => friendshipLevel is "friend" or "trusted_friend",
+            VisibilityLevel.TrustedOnly => friendshipLevel is "trusted_friend",
+            _ => false
+        };
     }
 }

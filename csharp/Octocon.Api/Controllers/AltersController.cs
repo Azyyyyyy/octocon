@@ -66,6 +66,7 @@ public sealed class AltersController : OctoconControllerBase
         if (!TryParseAlterId(id, out var alterId))
             return BadRequest(new { error = "Invalid alter ID.", code = "invalid_alter_id" });
 
+        var fields = req.Fields?.Select(f => new AlterFieldCommand(f.Id, f.Value)).ToList();
         var payload = new UpdateAlterCommand(
             AlterId: alterId,
             Name: req.Name,
@@ -74,7 +75,7 @@ public sealed class AltersController : OctoconControllerBase
             Color: req.Color,
             Pronouns: req.Pronouns,
             SecurityLevel: req.SecurityLevel,
-            Fields: null,
+            Fields: fields,
             ProxyName: req.ProxyName,
             Alias: req.Alias,
             Untracked: req.Untracked,
@@ -267,8 +268,14 @@ public sealed record UpdateAlterRequest(
     bool? Untracked = null,
     bool? Archived = null,
     bool? Pinned = null,
+    IReadOnlyList<UpdateAlterFieldRequest>? Fields = null,
     string? IdempotencyKey = null,
     long? ExpectedVersion = null
+);
+
+public sealed record UpdateAlterFieldRequest(
+    string Id,
+    string? Value
 );
 
 public sealed record DeleteAlterRequest(

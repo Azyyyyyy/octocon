@@ -12,6 +12,12 @@ public interface IFrontingRepository
 
     Task<IReadOnlyList<FrontActiveReadModel>> ListActiveAsync(string systemId, CancellationToken cancellationToken = default);
 
+    Task<IReadOnlyList<FrontActiveReadModel>> ListActiveGuardedAsync(
+        string systemId,
+        string? viewerSystemId,
+        CancellationToken cancellationToken = default
+    );
+
     Task<IReadOnlyList<FrontHistoryReadModel>> ListHistoryBetweenAsync(
         string systemId,
         DateTimeOffset startInclusive,

@@ -62,7 +62,8 @@ public sealed class PublicSystemsController : OctoconControllerBase
             return NotFound(new { error = "System not found.", code = "system_not_found" });
         }
 
-        var alters = await _alters.ListAsync(systemId, ct);
+        var callerId = GetPrincipalId();
+        var alters = await _alters.ListGuardedAsync(systemId, callerId, ct);
         return Ok(new { data = alters });
     }
 
@@ -79,7 +80,8 @@ public sealed class PublicSystemsController : OctoconControllerBase
             return NotFound(new { error = "System not found.", code = "system_not_found" });
         }
 
-        var alter = await _alters.GetAsync(systemId, alterId, ct);
+        var callerId = GetPrincipalId();
+        var alter = await _alters.GetGuardedAsync(systemId, alterId, callerId, ct);
         return alter is null
             ? NotFound(new { error = "Alter not found.", code = "alter_not_found" })
             : Ok(new { data = alter });
@@ -93,7 +95,8 @@ public sealed class PublicSystemsController : OctoconControllerBase
             return NotFound(new { error = "System not found.", code = "system_not_found" });
         }
 
-        var tags = await _tags.ListAsync(systemId, ct);
+        var callerId = GetPrincipalId();
+        var tags = await _tags.ListGuardedAsync(systemId, callerId, ct);
         return Ok(new { data = tags });
     }
 
@@ -105,7 +108,8 @@ public sealed class PublicSystemsController : OctoconControllerBase
             return NotFound(new { error = "System not found.", code = "system_not_found" });
         }
 
-        var tag = await _tags.GetAsync(systemId, id, ct);
+        var callerId = GetPrincipalId();
+        var tag = await _tags.GetGuardedAsync(systemId, id, callerId, ct);
         return tag is null
             ? NotFound(new { error = "Tag not found.", code = "tag_not_found" })
             : Ok(new { data = tag });
@@ -119,7 +123,8 @@ public sealed class PublicSystemsController : OctoconControllerBase
             return NotFound(new { error = "System not found.", code = "system_not_found" });
         }
 
-        var fronts = await _fronting.ListActiveAsync(systemId, ct);
+        var callerId = GetPrincipalId();
+        var fronts = await _fronting.ListActiveGuardedAsync(systemId, callerId, ct);
         return Ok(new { data = fronts });
     }
 
@@ -141,8 +146,8 @@ public sealed class PublicSystemsController : OctoconControllerBase
             });
         }
 
-        var altersTask = _alters.ListAsync(systemId, ct);
-        var tagsTask = _tags.ListAsync(systemId, ct);
+        var altersTask = _alters.ListGuardedAsync(systemId, callerId, ct);
+        var tagsTask = _tags.ListGuardedAsync(systemId, callerId, ct);
         var friendshipTask = callerId is null
             ? Task.FromResult<Octocon.Domain.Friendships.FriendshipReadModel?>(null)
             : _friendships.GetFriendshipAsync(callerId, systemId, ct);

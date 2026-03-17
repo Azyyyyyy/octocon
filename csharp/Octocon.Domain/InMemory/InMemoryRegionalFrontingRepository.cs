@@ -1,5 +1,7 @@
 using System.Collections.Concurrent;
 using Octocon.Domain.Abstractions;
+using Octocon.Domain.Alters;
+using Octocon.Domain.Friendships;
 using Octocon.Domain.Fronting;
 
 namespace Octocon.Domain.InMemory;
@@ -24,6 +26,7 @@ public sealed class InMemoryRegionalFrontingRepository : IFrontingRepository
     }
 
     private readonly IRegionContext _regionContext;
+    private readonly IFriendshipRepository? _friendships;
     private readonly ConcurrentDictionary<string, ConcurrentDictionary<int, FrontState>> _activeBySystem = new();
     private readonly ConcurrentDictionary<string, List<FrontHistoryState>> _historyBySystem = new();
     private readonly ConcurrentDictionary<string, int?> _primaryBySystem = new();
@@ -32,6 +35,12 @@ public sealed class InMemoryRegionalFrontingRepository : IFrontingRepository
     public InMemoryRegionalFrontingRepository(IRegionContext regionContext)
     {
         _regionContext = regionContext;
+    }
+
+    public InMemoryRegionalFrontingRepository(IRegionContext regionContext, IFriendshipRepository friendships)
+    {
+        _regionContext = regionContext;
+        _friendships = friendships;
     }
 
     public Task<bool> IsFrontingAsync(string systemId, int alterId, CancellationToken cancellationToken = default)
@@ -161,6 +170,20 @@ public sealed class InMemoryRegionalFrontingRepository : IFrontingRepository
         }
     }
 
+    public async Task<IReadOnlyList<FrontActiveReadModel>> ListActiveGuardedAsync(
+        string systemId,
+        string? viewerSystemId,
+        CancellationToken cancellationToken = default)
+    {
+        var friendshipLevel = await ResolveFriendshipLevelAsync(systemId, viewerSystemId, cancellationToken);
+        if (!CanView(friendshipLevel, VisibilityLevel.Public))
+        {
+            return Array.Empty<FrontActiveReadModel>();
+        }
+
+        return await ListActiveAsync(systemId, cancellationToken);
+    }
+
     public Task<IReadOnlyList<FrontHistoryReadModel>> ListHistoryBetweenAsync(
         string systemId,
         DateTimeOffset startInclusive,
@@ -252,5 +275,36 @@ public sealed class InMemoryRegionalFrontingRepository : IFrontingRepository
     {
         var region = _regionContext.ResolveUserRegion(systemId);
         return $"{region}:{systemId}";
+    }
+
+    private async Task<string?> ResolveFriendshipLevelAsync(string systemId, string? viewerSystemId, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(viewerSystemId))
+        {
+            return null;
+        }
+
+        if (string.Equals(systemId, viewerSystemId, StringComparison.Ordinal))
+        {
+            return "trusted_friend";
+        }
+
+        if (_friendships is null)
+        {
+            return null;
+        }
+
+        return await _friendships.GetFriendshipLevelAsync(systemId, viewerSystemId, cancellationToken);
+    }
+
+    private static bool CanView(string? friendshipLevel, VisibilityLevel visibilityLevel)
+    {
+        return visibilityLevel switch
+        {
+            VisibilityLevel.Public => true,
+            VisibilityLevel.FriendsOnly => friendshipLevel is "friend" or "trusted_friend",
+            VisibilityLevel.TrustedOnly => friendshipLevel is "trusted_friend",
+            _ => false
+        };
     }
 }
