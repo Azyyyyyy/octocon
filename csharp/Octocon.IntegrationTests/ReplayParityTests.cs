@@ -56,6 +56,21 @@ public sealed class ReplayParityTests
     }
 
     // -----------------------------------------------------------------------
+        [Test]
+        public async Task Replay_JournalLifecycle_PassesAllSteps()
+        {
+            if (!ShouldRun()) return;
+            await RunTraceAsync("journal-lifecycle.trace.json");
+        }
+
+        [Test]
+        public async Task Replay_FriendshipLifecycle_PassesAllSteps()
+        {
+            if (!ShouldRun()) return;
+            await RunTraceAsync("friendship-lifecycle.trace.json");
+        }
+
+        // -----------------------------------------------------------------------
     // Core runner
     // -----------------------------------------------------------------------
 

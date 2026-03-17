@@ -26,9 +26,10 @@ public sealed class ScyllaEncryptionStateRepository : IEncryptionStateRepository
         {
             var session = await _sessionProvider.GetSessionAsync(cancellationToken);
             var normalizedSystemId = _keyspaceResolver.NormalizeSystemId(systemId);
+            var keyspace = _keyspaceResolver.ResolveRegionalKeyspace(systemId);
 
             var query = new SimpleStatement(
-                "SELECT encryption_initialized, encryption_key_checksum FROM global.users WHERE id = ? LIMIT 1",
+                $"SELECT encryption_initialized, encryption_key_checksum FROM {keyspace}.users WHERE id = ? LIMIT 1",
                 normalizedSystemId
             );
 
@@ -47,9 +48,10 @@ public sealed class ScyllaEncryptionStateRepository : IEncryptionStateRepository
         {
             var session = await _sessionProvider.GetSessionAsync(cancellationToken);
             var normalizedSystemId = _keyspaceResolver.NormalizeSystemId(systemId);
+            var keyspace = _keyspaceResolver.ResolveRegionalKeyspace(systemId);
 
             var statement = new SimpleStatement(
-                "UPDATE global.users SET encryption_initialized = ?, encryption_key_checksum = ?, updated_at = toTimestamp(now()) WHERE id = ?",
+                $"UPDATE {keyspace}.users SET encryption_initialized = ?, encryption_key_checksum = ?, updated_at = toTimestamp(now()) WHERE id = ?",
                 initialized,
                 keyChecksum,
                 normalizedSystemId

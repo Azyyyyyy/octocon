@@ -1,4 +1,5 @@
 using Cassandra;
+using Microsoft.Extensions.Logging.Abstractions;
 using Octocon.Infrastructure.Persistence;
 using Octocon.Infrastructure.Persistence.Scylla;
 using TUnit.Core;
@@ -83,7 +84,8 @@ public sealed class RegionContextCachingTests
     }
 
     private static ScyllaUserRegistryRegionContext BuildContext(string defaultRegion = "nam") =>
-        new(new ThrowingSessionProvider(), new PersistenceRegistrationOptions { DefaultRegion = defaultRegion });
+        new(new ThrowingSessionProvider(), new PersistenceRegistrationOptions { DefaultRegion = defaultRegion },
+            NullLogger<ScyllaUserRegistryRegionContext>.Instance);
 
     [Test]
     public void ResolveUserRegion_FallsBackToDefault_WhenSessionThrowsAndCacheEmpty()

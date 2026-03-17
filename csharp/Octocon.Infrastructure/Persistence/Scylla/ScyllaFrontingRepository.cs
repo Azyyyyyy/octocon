@@ -1,4 +1,5 @@
 using Cassandra;
+using Microsoft.Extensions.Logging;
 using Octocon.Domain.Fronting;
 using Octocon.Infrastructure.Persistence.Transient;
 
@@ -11,16 +12,19 @@ public sealed class ScyllaFrontingRepository : IFrontingRepository
     private readonly IScyllaSessionProvider _sessionProvider;
     private readonly IScyllaKeyspaceResolver _keyspaceResolver;
     private readonly PersistenceRegistrationOptions _options;
+    private readonly ILogger<ScyllaFrontingRepository> _logger;
 
     public ScyllaFrontingRepository(
         IScyllaSessionProvider sessionProvider,
         IScyllaKeyspaceResolver keyspaceResolver,
-        PersistenceRegistrationOptions options
+        PersistenceRegistrationOptions options,
+        ILogger<ScyllaFrontingRepository> logger
     )
     {
         _sessionProvider = sessionProvider;
         _keyspaceResolver = keyspaceResolver;
         _options = options;
+        _logger = logger;
     }
 
     public async Task<bool> IsFrontingAsync(string systemId, int alterId, CancellationToken cancellationToken = default)
@@ -39,7 +43,7 @@ public sealed class ScyllaFrontingRepository : IFrontingRepository
 
             var rows = await session.ExecuteAsync(query);
             return rows.Any();
-        }, _options, cancellationToken);
+        }, _options, cancellationToken, _logger);
     }
 
     public async Task<string?> StartAsync(
@@ -83,7 +87,7 @@ public sealed class ScyllaFrontingRepository : IFrontingRepository
 
             await session.ExecuteAsync(insertHistory);
             return frontGuid.ToString("N");
-        }, _options, cancellationToken);
+        }, _options, cancellationToken, _logger);
     }
 
     public async Task<bool> EndAsync(string systemId, int alterId, CancellationToken cancellationToken = default)
@@ -116,12 +120,12 @@ public sealed class ScyllaFrontingRepository : IFrontingRepository
                 (short)alterId));
 
             await session.ExecuteAsync(new SimpleStatement(
-                "UPDATE global.users SET primary_front = null WHERE id = ? IF primary_front = ?",
+                $"UPDATE {keyspace}.users SET primary_front = null WHERE id = ? IF primary_front = ?",
                 normalizedSystemId,
                 alterId));
 
             return true;
-        }, _options, cancellationToken);
+        }, _options, cancellationToken, _logger);
     }
 
     public async Task<bool> SetPrimaryAsync(string systemId, int? alterId, CancellationToken cancellationToken = default)
@@ -130,6 +134,7 @@ public sealed class ScyllaFrontingRepository : IFrontingRepository
         {
             var session = await _sessionProvider.GetSessionAsync(cancellationToken);
             var normalizedSystemId = _keyspaceResolver.NormalizeSystemId(systemId);
+            var keyspace = _keyspaceResolver.ResolveRegionalKeyspace(systemId);
 
             if (alterId is int value)
             {
@@ -140,7 +145,7 @@ public sealed class ScyllaFrontingRepository : IFrontingRepository
                 }
 
                 await session.ExecuteAsync(new SimpleStatement(
-                    "UPDATE global.users SET primary_front = ?, updated_at = toTimestamp(now()) WHERE id = ?",
+                    $"UPDATE {keyspace}.users SET primary_front = ?, updated_at = toTimestamp(now()) WHERE id = ?",
                     value,
                     normalizedSystemId));
 
@@ -148,11 +153,11 @@ public sealed class ScyllaFrontingRepository : IFrontingRepository
             }
 
             await session.ExecuteAsync(new SimpleStatement(
-                "UPDATE global.users SET primary_front = null, updated_at = toTimestamp(now()) WHERE id = ?",
+                $"UPDATE {keyspace}.users SET primary_front = null, updated_at = toTimestamp(now()) WHERE id = ?",
                 normalizedSystemId));
 
             return true;
-        }, _options, cancellationToken);
+        }, _options, cancellationToken, _logger);
     }
 
     public async Task<IReadOnlyList<FrontActiveReadModel>> ListActiveAsync(string systemId, CancellationToken cancellationToken = default)
@@ -164,7 +169,7 @@ public sealed class ScyllaFrontingRepository : IFrontingRepository
             var keyspace = _keyspaceResolver.ResolveRegionalKeyspace(systemId);
 
             var primaryQuery = new SimpleStatement(
-                "SELECT primary_front FROM global.users WHERE id = ? LIMIT 1",
+                $"SELECT primary_front FROM {keyspace}.users WHERE id = ? LIMIT 1",
                 normalizedSystemId
             );
 
@@ -186,7 +191,7 @@ public sealed class ScyllaFrontingRepository : IFrontingRepository
                     primaryAlterId == row.GetValue<short>("alter_id")))
                 .OrderByDescending(x => x.StartedAt)
                 .ToArray();
-        }, _options, cancellationToken);
+        }, _options, cancellationToken, _logger);
     }
 
     public async Task<IReadOnlyList<FrontHistoryReadModel>> ListHistoryBetweenAsync(
@@ -228,7 +233,7 @@ public sealed class ScyllaFrontingRepository : IFrontingRepository
                 .DistinctBy(x => x.FrontId)
                 .OrderByDescending(x => x.StartedAt)
                 .ToArray();
-        }, _options, cancellationToken);
+        }, _options, cancellationToken, _logger);
     }
 
     public async Task<FrontActiveReadModel?> GetActiveByFrontIdAsync(string systemId, string frontId, CancellationToken cancellationToken = default)
@@ -276,7 +281,7 @@ public sealed class ScyllaFrontingRepository : IFrontingRepository
 
             await session.ExecuteAsync(updateHistory);
             return true;
-        }, _options, cancellationToken);
+        }, _options, cancellationToken, _logger);
     }
 
     private static async Task<CurrentFrontRow?> GetCurrentFrontRowAsync(

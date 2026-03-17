@@ -29,9 +29,10 @@ public sealed class ScyllaAccountRepository : IAccountRepository
         {
             var session = await _sessionProvider.GetSessionAsync(cancellationToken);
             var normalizedSystemId = _keyspaceResolver.NormalizeSystemId(systemId);
+            var keyspace = _keyspaceResolver.ResolveRegionalKeyspace(systemId);
 
             var statement = new SimpleStatement(
-                "UPDATE global.users SET username = ?, updated_at = toTimestamp(now()) WHERE id = ?",
+                $"UPDATE {keyspace}.users SET username = ?, updated_at = toTimestamp(now()) WHERE id = ?",
                 username,
                 normalizedSystemId
             );
@@ -47,9 +48,10 @@ public sealed class ScyllaAccountRepository : IAccountRepository
         {
             var session = await _sessionProvider.GetSessionAsync(cancellationToken);
             var normalizedSystemId = _keyspaceResolver.NormalizeSystemId(systemId);
+            var keyspace = _keyspaceResolver.ResolveRegionalKeyspace(systemId);
 
             var statement = new SimpleStatement(
-                "UPDATE global.users SET description = ?, updated_at = toTimestamp(now()) WHERE id = ?",
+                $"UPDATE {keyspace}.users SET description = ?, updated_at = toTimestamp(now()) WHERE id = ?",
                 description,
                 normalizedSystemId
             );
@@ -65,9 +67,10 @@ public sealed class ScyllaAccountRepository : IAccountRepository
         {
             var session = await _sessionProvider.GetSessionAsync(cancellationToken);
             var normalizedSystemId = _keyspaceResolver.NormalizeSystemId(systemId);
+            var keyspace = _keyspaceResolver.ResolveRegionalKeyspace(systemId);
 
             var statement = new SimpleStatement(
-                "UPDATE global.users SET avatar_url = ?, updated_at = toTimestamp(now()) WHERE id = ?",
+                $"UPDATE {keyspace}.users SET avatar_url = ?, updated_at = toTimestamp(now()) WHERE id = ?",
                 avatarUrl,
                 normalizedSystemId
             );
@@ -83,9 +86,10 @@ public sealed class ScyllaAccountRepository : IAccountRepository
         {
             var session = await _sessionProvider.GetSessionAsync(cancellationToken);
             var normalizedSystemId = _keyspaceResolver.NormalizeSystemId(systemId);
+            var keyspace = _keyspaceResolver.ResolveRegionalKeyspace(systemId);
 
             var statement = new SimpleStatement(
-                "UPDATE global.users SET avatar_url = ?, updated_at = toTimestamp(now()) WHERE id = ?",
+                $"UPDATE {keyspace}.users SET avatar_url = ?, updated_at = toTimestamp(now()) WHERE id = ?",
                 null,
                 normalizedSystemId
             );
@@ -99,29 +103,8 @@ public sealed class ScyllaAccountRepository : IAccountRepository
     {
         return await DatabaseTransientRetry.ExecuteScyllaAsync(async () =>
         {
-            var session = await _sessionProvider.GetSessionAsync(cancellationToken);
             var normalizedSystemId = _keyspaceResolver.NormalizeSystemId(systemId);
-
-            var read = new SimpleStatement(
-                "SELECT link_token FROM global.users WHERE id = ? LIMIT 1",
-                normalizedSystemId
-            );
-
-            var existing = (await session.ExecuteAsync(read)).FirstOrDefault()?.GetValue<string?>("link_token");
-            if (!string.IsNullOrWhiteSpace(existing))
-                return existing;
-
-            var hash = SHA256.HashData(Encoding.UTF8.GetBytes(normalizedSystemId));
-            var token = Convert.ToHexString(hash)[..32].ToLowerInvariant();
-
-            var write = new SimpleStatement(
-                "UPDATE global.users SET link_token = ?, updated_at = toTimestamp(now()) WHERE id = ?",
-                token,
-                normalizedSystemId
-            );
-
-            await session.ExecuteAsync(write);
-            return token;
+            return BuildDeterministicLinkToken(normalizedSystemId);
         }, _options, cancellationToken);
     }
 
@@ -131,14 +114,15 @@ public sealed class ScyllaAccountRepository : IAccountRepository
         {
             var session = await _sessionProvider.GetSessionAsync(cancellationToken);
             var normalizedSystemId = _keyspaceResolver.NormalizeSystemId(systemId);
+            var keyspace = _keyspaceResolver.ResolveRegionalKeyspace(systemId);
 
-            var read = new SimpleStatement(
-                "SELECT link_token FROM global.users WHERE id = ? LIMIT 1",
+            var existsQuery = new SimpleStatement(
+                $"SELECT id FROM {keyspace}.users WHERE id = ? LIMIT 1",
                 normalizedSystemId
             );
 
-            var existing = (await session.ExecuteAsync(read)).FirstOrDefault()?.GetValue<string?>("link_token");
-            return string.IsNullOrWhiteSpace(existing) ? null : existing;
+            var exists = (await session.ExecuteAsync(existsQuery)).Any();
+            return exists ? BuildDeterministicLinkToken(normalizedSystemId) : null;
         }, _options, cancellationToken);
     }
 
@@ -148,9 +132,10 @@ public sealed class ScyllaAccountRepository : IAccountRepository
         {
             var session = await _sessionProvider.GetSessionAsync(cancellationToken);
             var normalizedSystemId = _keyspaceResolver.NormalizeSystemId(systemId);
+            var keyspace = _keyspaceResolver.ResolveRegionalKeyspace(systemId);
 
             var profileQuery = new SimpleStatement(
-                "SELECT username, avatar_url, description FROM global.users WHERE id = ? LIMIT 1",
+                $"SELECT username, avatar_url, description FROM {keyspace}.users WHERE id = ? LIMIT 1",
                 normalizedSystemId
             );
 
@@ -166,5 +151,11 @@ public sealed class ScyllaAccountRepository : IAccountRepository
                 profile.GetValue<string?>("description"),
                 profile.GetValue<string?>("avatar_url"));
         }, _options, cancellationToken);
+    }
+
+    private static string BuildDeterministicLinkToken(string normalizedSystemId)
+    {
+        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(normalizedSystemId));
+        return Convert.ToHexString(hash)[..32].ToLowerInvariant();
     }
 }

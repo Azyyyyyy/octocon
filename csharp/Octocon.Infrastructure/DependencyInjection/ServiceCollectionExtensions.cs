@@ -51,10 +51,7 @@ public static partial class ServiceCollectionExtensions
                 .AddSingleton<IPostgresConnectionFactory>(_ => new PostgresConnectionFactory(options.PostgresConnectionString, options))
                 .AddSingleton<IScyllaSessionProvider, ScyllaSessionProvider>()
                 .AddSingleton<IScyllaKeyspaceResolver, ScyllaKeyspaceResolver>()
-                .AddSingleton<IRegionContext>(sp =>
-                    new ScyllaUserRegistryRegionContext(
-                        sp.GetRequiredService<IScyllaSessionProvider>(),
-                        options))
+                .AddSingleton<IRegionContext, ScyllaUserRegistryRegionContext>()
                 .AddSingleton<IAccountRepository, ScyllaAccountRepository>()
                 .AddSingleton<INotificationTokenRepository, ScyllaNotificationTokenRepository>()
                 .AddSingleton<IEncryptionStateRepository, ScyllaEncryptionStateRepository>()

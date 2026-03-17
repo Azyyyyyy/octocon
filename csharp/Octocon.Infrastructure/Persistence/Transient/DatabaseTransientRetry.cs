@@ -1,4 +1,5 @@
 using Cassandra;
+using Microsoft.Extensions.Logging;
 using Npgsql;
 
 namespace Octocon.Infrastructure.Persistence.Transient;
@@ -10,46 +11,52 @@ internal static class DatabaseTransientRetry
     public static Task ExecuteScyllaAsync(
         Func<Task> operation,
         PersistenceRegistrationOptions options,
-        CancellationToken cancellationToken = default
-    ) => ExecuteAsync(operation, options, IsScyllaTransient, cancellationToken);
+        CancellationToken cancellationToken = default,
+        ILogger? logger = null
+    ) => ExecuteAsync(operation, options, IsScyllaTransient, cancellationToken, logger);
 
     public static Task<T> ExecuteScyllaAsync<T>(
         Func<Task<T>> operation,
         PersistenceRegistrationOptions options,
-        CancellationToken cancellationToken = default
-    ) => ExecuteAsync(operation, options, IsScyllaTransient, cancellationToken);
+        CancellationToken cancellationToken = default,
+        ILogger? logger = null
+    ) => ExecuteAsync(operation, options, IsScyllaTransient, cancellationToken, logger);
 
     public static Task ExecutePostgresAsync(
         Func<Task> operation,
         PersistenceRegistrationOptions options,
-        CancellationToken cancellationToken = default
-    ) => ExecuteAsync(operation, options, IsPostgresTransient, cancellationToken);
+        CancellationToken cancellationToken = default,
+        ILogger? logger = null
+    ) => ExecuteAsync(operation, options, IsPostgresTransient, cancellationToken, logger);
 
     public static Task<T> ExecutePostgresAsync<T>(
         Func<Task<T>> operation,
         PersistenceRegistrationOptions options,
-        CancellationToken cancellationToken = default
-    ) => ExecuteAsync(operation, options, IsPostgresTransient, cancellationToken);
+        CancellationToken cancellationToken = default,
+        ILogger? logger = null
+    ) => ExecuteAsync(operation, options, IsPostgresTransient, cancellationToken, logger);
 
     private static async Task ExecuteAsync(
         Func<Task> operation,
         PersistenceRegistrationOptions options,
         Func<Exception, bool> isTransient,
-        CancellationToken cancellationToken
+        CancellationToken cancellationToken,
+        ILogger? logger
     )
     {
         await ExecuteAsync(async () =>
         {
             await operation();
             return true;
-        }, options, isTransient, cancellationToken);
+        }, options, isTransient, cancellationToken, logger);
     }
 
     private static async Task<T> ExecuteAsync<T>(
         Func<Task<T>> operation,
         PersistenceRegistrationOptions options,
         Func<Exception, bool> isTransient,
-        CancellationToken cancellationToken
+        CancellationToken cancellationToken,
+        ILogger? logger
     )
     {
         var attempts = Math.Max(1, options.DbRetryAttempts);
@@ -67,7 +74,17 @@ internal static class DatabaseTransientRetry
             catch (Exception ex) when (attempt < attempts && isTransient(ex))
             {
                 var delay = ComputeBackoff(attempt, initialDelayMs, maxDelayMs);
+                logger?.LogWarning(ex,
+                    "Transient database error on attempt {Attempt}/{MaxAttempts}; retrying in {DelayMs} ms.",
+                    attempt, attempts, delay.TotalMilliseconds);
                 await Task.Delay(delay, cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                logger?.LogError(ex,
+                    "Database operation failed on attempt {Attempt}/{MaxAttempts}.",
+                    attempt, attempts);
+                throw;
             }
         }
     }

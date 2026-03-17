@@ -22,6 +22,9 @@ public static partial class ServiceCollectionExtensions
         // Cluster event bus — in-process for single-node and integration tests.
         services.AddSingleton<IClusterEventBus, InProcessEventBus>();
 
+            // FCM push notification service — NullFCMService until real Firebase integration is configured.
+            services.AddSingleton<IFCMService, NullFCMService>();
+
         // Singleton task owner — primary owns tasks, auxiliary/sidecar do not.
         ISingletonTaskOwner taskOwner = role == NodeGroup.Primary
             ? new PrimaryOnlySingletonTaskOwner()

@@ -476,7 +476,7 @@ public sealed class ScyllaJournalRepository : IJournalRepository
             var keyspace = _keyspaceResolver.ResolveRegionalKeyspace(systemId);
 
             var query = new SimpleStatement(
-                $"SELECT id, alter_id, title, content, color, pinned, locked FROM {keyspace}.alter_journals_by_alter WHERE user_id = ? AND alter_id = ?",
+                $"SELECT id, alter_id, title, content, color, pinned, locked FROM {keyspace}.alter_journals WHERE user_id = ? AND alter_id = ?",
                 normalizedSystemId,
                 (short)alterId
             );

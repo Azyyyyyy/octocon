@@ -11,17 +11,19 @@ namespace Octocon.Infrastructure.Coordination;
 /// them every 5 seconds, mirroring <c>Octocon.Global.FrontNotifier</c> from the legacy
 /// Elixir runtime.
 /// <para>
-/// Subscribes to <see cref="FrontingStateChangedEvent"/> via <see cref="IClusterEventBus"/>.
-/// Phase N will inject <c>IFrontingRepository</c> and <c>IFCMService</c> to read current
-/// fronting alters and push notifications to friends.
+/// Subscribes to <see cref="FrontingStateChangedEvent"/> via <see cref="IClusterEventBus"/>,
+/// reads the current active alters via <see cref="IFrontingRepository"/>, and dispatches
+/// push notifications via <see cref="IFCMService"/>.
 /// </para>
 /// </summary>
 public sealed class FrontNotifierBackgroundService(
     IClusterEventBus eventBus,
+    IFrontingRepository frontingRepository,
+    IFCMService fcmService,
     ILogger<FrontNotifierBackgroundService> logger)
     : BackgroundService
 {
-    // system_id → last-change timestamp (ms since epoch)
+    // system_id -> last-change timestamp (ms since epoch)
     private readonly ConcurrentDictionary<string, long> _pending = new();
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -58,11 +60,27 @@ public sealed class FrontNotifierBackgroundService(
                 if (_pending.TryGetValue(systemId, out var ts) && ts < cutoff &&
                     _pending.TryRemove(systemId, out _))
                 {
-                    // TODO Phase N: query IFrontingRepository for current alters, then call IFCMService.
-                    logger.LogDebug(
-                        "FrontNotifier flush: system={SystemId}", systemId);
+                    await FlushSystemAsync(systemId, ct).ConfigureAwait(false);
                 }
             }
+        }
+    }
+
+    private async Task FlushSystemAsync(string systemId, CancellationToken ct)
+    {
+        try
+        {
+            var active = await frontingRepository.ListActiveAsync(systemId, ct).ConfigureAwait(false);
+            var alterIds = active.Select(f => f.AlterId).ToList();
+
+            await fcmService.NotifyFrontingChangedAsync(systemId, alterIds, ct).ConfigureAwait(false);
+
+            logger.LogDebug(
+                "FrontNotifier flushed: system={SystemId}, alters={AlterCount}", systemId, alterIds.Count);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogError(ex, "FrontNotifier flush failed for system={SystemId}", systemId);
         }
     }
 }

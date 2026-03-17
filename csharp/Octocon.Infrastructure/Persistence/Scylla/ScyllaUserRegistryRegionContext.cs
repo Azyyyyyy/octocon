@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using Cassandra;
+using Microsoft.Extensions.Logging;
 using Octocon.Domain.Abstractions;
 using Octocon.Infrastructure.Persistence.Transient;
 
@@ -18,16 +19,19 @@ public sealed class ScyllaUserRegistryRegionContext : IRegionContext
 
     private readonly IScyllaSessionProvider _sessionProvider;
     private readonly PersistenceRegistrationOptions _options;
+    private readonly ILogger<ScyllaUserRegistryRegionContext> _logger;
     private readonly ConcurrentDictionary<string, string> _cache = new(StringComparer.Ordinal);
 
     public string CurrentRegion { get; }
 
     public ScyllaUserRegistryRegionContext(
         IScyllaSessionProvider sessionProvider,
-        PersistenceRegistrationOptions options)
+        PersistenceRegistrationOptions options,
+        ILogger<ScyllaUserRegistryRegionContext> logger)
     {
         _sessionProvider = sessionProvider;
         _options = options;
+        _logger = logger;
         CurrentRegion = options.DefaultRegion;
     }
 
@@ -56,9 +60,10 @@ public sealed class ScyllaUserRegistryRegionContext : IRegionContext
                 return region;
             }
         }
-        catch
+        catch (Exception ex)
         {
             // Any exception (session not yet ready, network error) falls through to default.
+            _logger.LogWarning(ex, "Region lookup for system {SystemId} failed; falling back to default region.", raw);
         }
 
         return CurrentRegion;
@@ -123,7 +128,7 @@ public sealed class ScyllaUserRegistryRegionContext : IRegionContext
 
             var row = (await session.ExecuteAsync(query)).FirstOrDefault();
             return row?.GetValue<string>("region");
-        }, _options, cancellationToken);
+        }, _options, cancellationToken, _logger);
     }
 
     private void StoreInCache(string key, string region)

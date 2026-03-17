@@ -1,0 +1,70 @@
+{
+  "version": 1,
+  "description": "Friendship lifecycle: send request, accept, trust, remove — with idempotency replay for each op.",
+  "steps": [
+    {
+      "name": "send friend request (A -> B)",
+      "method": "PUT",
+      "path": "/api/friend-requests/replay-sys-friend-b",
+      "principalId": "replay-sys-friend-a",
+      "idempotencyKey": "replay-friend-send-001",
+      "expectedStatus": 204
+    },
+    {
+      "name": "send friend request (replay)",
+      "method": "PUT",
+      "path": "/api/friend-requests/replay-sys-friend-b",
+      "principalId": "replay-sys-friend-a",
+      "idempotencyKey": "replay-friend-send-001",
+      "expectedStatus": 204
+    },
+    {
+      "name": "accept friend request (B accepts A)",
+      "method": "POST",
+      "path": "/api/friend-requests/replay-sys-friend-a/accept",
+      "principalId": "replay-sys-friend-b",
+      "idempotencyKey": "replay-friend-accept-001",
+      "expectedStatus": 204
+    },
+    {
+      "name": "accept friend request (replay)",
+      "method": "POST",
+      "path": "/api/friend-requests/replay-sys-friend-a/accept",
+      "principalId": "replay-sys-friend-b",
+      "idempotencyKey": "replay-friend-accept-001",
+      "expectedStatus": 204
+    },
+    {
+      "name": "trust friend (A trusts B)",
+      "method": "POST",
+      "path": "/api/friends/replay-sys-friend-b/trust",
+      "principalId": "replay-sys-friend-a",
+      "idempotencyKey": "replay-friend-trust-001",
+      "expectedStatus": 204
+    },
+    {
+      "name": "trust friend (replay)",
+      "method": "POST",
+      "path": "/api/friends/replay-sys-friend-b/trust",
+      "principalId": "replay-sys-friend-a",
+      "idempotencyKey": "replay-friend-trust-001",
+      "expectedStatus": 204
+    },
+    {
+      "name": "remove friend (A removes B)",
+      "method": "DELETE",
+      "path": "/api/friends/replay-sys-friend-b",
+      "principalId": "replay-sys-friend-a",
+      "idempotencyKey": "replay-friend-remove-001",
+      "expectedStatus": 204
+    },
+    {
+      "name": "remove friend (replay)",
+      "method": "DELETE",
+      "path": "/api/friends/replay-sys-friend-b",
+      "principalId": "replay-sys-friend-a",
+      "idempotencyKey": "replay-friend-remove-001",
+      "expectedStatus": 204
+    }
+  ]
+}

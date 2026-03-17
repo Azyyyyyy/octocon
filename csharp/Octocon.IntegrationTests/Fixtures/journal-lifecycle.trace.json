@@ -1,0 +1,101 @@
+{
+  "version": 1,
+  "description": "Journal lifecycle: create, update, lock, pin, unpin, delete — with idempotency replay for each mutating op.",
+  "steps": [
+    {
+      "name": "create journal",
+      "method": "POST",
+      "path": "/api/systems/me/journals",
+      "principalId": "replay-sys-journal",
+      "idempotencyKey": "replay-journal-create-001",
+      "body": { "title": "ReplayJournal" },
+      "expectedStatus": 200,
+      "expectedReplay": false,
+      "captureAs": { "entryId": "entryId" }
+    },
+    {
+      "name": "create journal (replay)",
+      "method": "POST",
+      "path": "/api/systems/me/journals",
+      "principalId": "replay-sys-journal",
+      "idempotencyKey": "replay-journal-create-001",
+      "body": { "title": "ReplayJournal" },
+      "expectedStatus": 200,
+      "expectedReplay": true
+    },
+    {
+      "name": "update journal",
+      "method": "PATCH",
+      "path": "/api/systems/me/journals/{entryId}",
+      "principalId": "replay-sys-journal",
+      "idempotencyKey": "replay-journal-update-001",
+      "body": { "title": "ReplayJournalRenamed", "content": "Updated content." },
+      "expectedStatus": 200,
+      "expectedReplay": false
+    },
+    {
+      "name": "update journal (replay)",
+      "method": "PATCH",
+      "path": "/api/systems/me/journals/{entryId}",
+      "principalId": "replay-sys-journal",
+      "idempotencyKey": "replay-journal-update-001",
+      "body": { "title": "ReplayJournalRenamed", "content": "Updated content." },
+      "expectedStatus": 200,
+      "expectedReplay": true
+    },
+    {
+      "name": "lock journal",
+      "method": "POST",
+      "path": "/api/systems/me/journals/{entryId}/lock",
+      "principalId": "replay-sys-journal",
+      "idempotencyKey": "replay-journal-lock-001",
+      "expectedStatus": 200,
+      "expectedReplay": false
+    },
+    {
+      "name": "lock journal (replay)",
+      "method": "POST",
+      "path": "/api/systems/me/journals/{entryId}/lock",
+      "principalId": "replay-sys-journal",
+      "idempotencyKey": "replay-journal-lock-001",
+      "expectedStatus": 200,
+      "expectedReplay": true
+    },
+    {
+      "name": "pin journal",
+      "method": "POST",
+      "path": "/api/systems/me/journals/{entryId}/pin",
+      "principalId": "replay-sys-journal",
+      "idempotencyKey": "replay-journal-pin-001",
+      "expectedStatus": 200,
+      "expectedReplay": false
+    },
+    {
+      "name": "unpin journal",
+      "method": "POST",
+      "path": "/api/systems/me/journals/{entryId}/unpin",
+      "principalId": "replay-sys-journal",
+      "idempotencyKey": "replay-journal-unpin-001",
+      "expectedStatus": 200,
+      "expectedReplay": false
+    },
+    {
+      "name": "delete journal",
+      "method": "DELETE",
+      "path": "/api/systems/me/journals/{entryId}",
+      "principalId": "replay-sys-journal",
+      "idempotencyKey": "replay-journal-delete-001",
+      "expectedStatus": 200,
+      "expectedReplay": false
+    },
+    {
+      "name": "delete journal (replay)",
+      "method": "DELETE",
+      "path": "/api/systems/me/journals/{entryId}",
+      "principalId": "replay-sys-journal",
+      "idempotencyKey": "replay-journal-delete-001",
+      "expectedStatus": 200,
+      "expectedReplay": true
+    }
+  ]
+}

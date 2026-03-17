@@ -1,4 +1,5 @@
 using Cassandra;
+using Microsoft.Extensions.Logging;
 using Octocon.Domain.Alters;
 using Octocon.Infrastructure.Persistence.Transient;
 
@@ -9,16 +10,19 @@ public sealed class ScyllaAlterRepository : IAlterRepository
     private readonly IScyllaSessionProvider _sessionProvider;
     private readonly IScyllaKeyspaceResolver _keyspaceResolver;
     private readonly PersistenceRegistrationOptions _options;
+    private readonly ILogger<ScyllaAlterRepository> _logger;
 
     public ScyllaAlterRepository(
         IScyllaSessionProvider sessionProvider,
         IScyllaKeyspaceResolver keyspaceResolver,
-        PersistenceRegistrationOptions options
+        PersistenceRegistrationOptions options,
+        ILogger<ScyllaAlterRepository> logger
     )
     {
         _sessionProvider = sessionProvider;
         _keyspaceResolver = keyspaceResolver;
         _options = options;
+        _logger = logger;
     }
 
     public async Task<int?> CreateAsync(string systemId, CreateAlterCommand command, CancellationToken cancellationToken = default)
@@ -48,7 +52,7 @@ public sealed class ScyllaAlterRepository : IAlterRepository
 
             await session.ExecuteAsync(insert);
             return (int?)next;
-        }, _options, cancellationToken);
+        }, _options, cancellationToken, _logger);
     }
 
     public async Task<bool> ExistsAsync(string systemId, int alterId, CancellationToken cancellationToken = default)
@@ -67,7 +71,7 @@ public sealed class ScyllaAlterRepository : IAlterRepository
 
             var rows = await session.ExecuteAsync(query);
             return rows.Any();
-        }, _options, cancellationToken);
+        }, _options, cancellationToken, _logger);
     }
 
     public async Task<bool> UpdateAsync(string systemId, UpdateAlterCommand command, CancellationToken cancellationToken = default)
@@ -109,7 +113,7 @@ public sealed class ScyllaAlterRepository : IAlterRepository
             }
 
             return true;
-        }, _options, cancellationToken);
+        }, _options, cancellationToken, _logger);
     }
 
     public async Task<bool> DeleteAsync(string systemId, int alterId, CancellationToken cancellationToken = default)
@@ -138,7 +142,7 @@ public sealed class ScyllaAlterRepository : IAlterRepository
                 alterIdShort));
 
             await session.ExecuteAsync(new SimpleStatement(
-                "UPDATE global.users SET primary_front = null WHERE id = ? IF primary_front = ?",
+                $"UPDATE {keyspace}.users SET primary_front = null WHERE id = ? IF primary_front = ?",
                 normalizedSystemId,
                 alterId));
 
@@ -158,7 +162,7 @@ public sealed class ScyllaAlterRepository : IAlterRepository
             }
 
             return true;
-        }, _options, cancellationToken);
+        }, _options, cancellationToken, _logger);
     }
 
     public async Task<IReadOnlyList<AlterPublicReadModel>> ListAsync(string systemId, CancellationToken cancellationToken = default)
@@ -182,7 +186,7 @@ public sealed class ScyllaAlterRepository : IAlterRepository
                     row.GetValue<string?>("alias")))
                 .OrderBy(x => x.AlterId)
                 .ToArray();
-        }, _options, cancellationToken);
+        }, _options, cancellationToken, _logger);
     }
 
     public async Task<AlterPublicReadModel?> GetAsync(string systemId, int alterId, CancellationToken cancellationToken = default)
@@ -206,7 +210,7 @@ public sealed class ScyllaAlterRepository : IAlterRepository
                     row.GetValue<short>("id"),
                     row.GetValue<string>("name"),
                     row.GetValue<string?>("alias"));
-        }, _options, cancellationToken);
+        }, _options, cancellationToken, _logger);
     }
 
     public async Task<bool> AliasTakenByOtherAsync(
@@ -230,6 +234,6 @@ public sealed class ScyllaAlterRepository : IAlterRepository
 
             var rows = await session.ExecuteAsync(query);
             return rows.Any(row => row.GetValue<short>("id") != (short)alterId);
-        }, _options, cancellationToken);
+        }, _options, cancellationToken, _logger);
     }
 }

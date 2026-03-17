@@ -5,26 +5,54 @@ namespace Octocon.Domain.InMemory;
 
 public sealed class InMemorySettingsFieldRepository : ISettingsFieldRepository
 {
-    private readonly ConcurrentDictionary<string, ConcurrentDictionary<string, SettingsFieldReadModel>> _bySystem = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, List<SettingsFieldReadModel>> _bySystem = new(StringComparer.Ordinal);
 
-    public Task<string?> CreateAsync(string systemId, string name, string? value, int position, CancellationToken cancellationToken = default)
+    public Task<string?> CreateAsync(
+        string systemId,
+        string name,
+        string type,
+        string securityLevel,
+        bool locked,
+        CancellationToken cancellationToken = default)
     {
-        var store = _bySystem.GetOrAdd(systemId, _ => new(StringComparer.Ordinal));
+        var store = _bySystem.GetOrAdd(systemId, _ => []);
         var fieldId = Guid.NewGuid().ToString("N");
-        store[fieldId] = new SettingsFieldReadModel(fieldId, name, value, position);
+
+        lock (store)
+        {
+            store.Add(new SettingsFieldReadModel(fieldId, name, type, securityLevel, locked, store.Count));
+        }
+
         return Task.FromResult<string?>(fieldId);
     }
 
-    public Task<bool> UpdateAsync(string systemId, string fieldId, string? name, string? value, CancellationToken cancellationToken = default)
+    public Task<bool> UpdateAsync(
+        string systemId,
+        string fieldId,
+        string? name,
+        string? securityLevel,
+        bool? locked,
+        CancellationToken cancellationToken = default)
     {
-        if (!_bySystem.TryGetValue(systemId, out var store) || !store.TryGetValue(fieldId, out var existing))
+        if (!_bySystem.TryGetValue(systemId, out var store))
             return Task.FromResult(false);
 
-        store[fieldId] = existing with
+        lock (store)
         {
-            Name = name ?? existing.Name,
-            Value = value ?? existing.Value
-        };
+            var index = store.FindIndex(x => string.Equals(x.FieldId, fieldId, StringComparison.Ordinal));
+            if (index < 0)
+            {
+                return Task.FromResult(false);
+            }
+
+            var existing = store[index];
+            store[index] = existing with
+            {
+                Name = name ?? existing.Name,
+                SecurityLevel = securityLevel ?? existing.SecurityLevel,
+                Locked = locked ?? existing.Locked
+            };
+        }
 
         return Task.FromResult(true);
     }
@@ -34,15 +62,48 @@ public sealed class InMemorySettingsFieldRepository : ISettingsFieldRepository
         if (!_bySystem.TryGetValue(systemId, out var store))
             return Task.FromResult(false);
 
-        return Task.FromResult(store.TryRemove(fieldId, out _));
+        lock (store)
+        {
+            var index = store.FindIndex(x => string.Equals(x.FieldId, fieldId, StringComparison.Ordinal));
+            if (index < 0)
+            {
+                return Task.FromResult(false);
+            }
+
+            store.RemoveAt(index);
+            Reindex(store);
+            return Task.FromResult(true);
+        }
     }
 
-    public Task<bool> RelocateAsync(string systemId, string fieldId, int position, CancellationToken cancellationToken = default)
+    public Task<bool> RelocateAsync(string systemId, string fieldId, int index, CancellationToken cancellationToken = default)
     {
-        if (!_bySystem.TryGetValue(systemId, out var store) || !store.TryGetValue(fieldId, out var existing))
+        if (!_bySystem.TryGetValue(systemId, out var store))
             return Task.FromResult(false);
 
-        store[fieldId] = existing with { Position = position };
-        return Task.FromResult(true);
+        lock (store)
+        {
+            var oldIndex = store.FindIndex(x => string.Equals(x.FieldId, fieldId, StringComparison.Ordinal));
+            if (oldIndex < 0)
+            {
+                return Task.FromResult(false);
+            }
+
+            var field = store[oldIndex];
+            store.RemoveAt(oldIndex);
+
+            var boundedIndex = Math.Max(0, Math.Min(index, store.Count));
+            store.Insert(boundedIndex, field);
+            Reindex(store);
+            return Task.FromResult(true);
+        }
+    }
+
+    private static void Reindex(List<SettingsFieldReadModel> fields)
+    {
+        for (var i = 0; i < fields.Count; i++)
+        {
+            fields[i] = fields[i] with { Index = i };
+        }
     }
 }

@@ -444,7 +444,7 @@ public sealed class SettingsController : OctoconControllerBase
             IdempotencyKey: GetIdempotencyKey(req.IdempotencyKey),
             ExpectedVersion: req.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
-            Payload: new CreateFieldCommand(req.Name, req.Value, req.Position)
+            Payload: new CreateFieldCommand(req.Name, req.Type, req.SecurityLevel ?? "private", req.Locked ?? false)
         );
 
         var result = ToHttpResult(await _createFieldHandler.HandleAsync(envelope, ct));
@@ -464,7 +464,7 @@ public sealed class SettingsController : OctoconControllerBase
             IdempotencyKey: GetIdempotencyKey(req.IdempotencyKey),
             ExpectedVersion: req.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
-            Payload: new UpdateFieldCommand(id, req.Name, req.Value)
+            Payload: new UpdateFieldCommand(id, req.Name, req.SecurityLevel, req.Locked)
         );
 
         var result = ToHttpResult(await _updateFieldHandler.HandleAsync(envelope, ct));
@@ -504,7 +504,7 @@ public sealed class SettingsController : OctoconControllerBase
             IdempotencyKey: GetIdempotencyKey(req.IdempotencyKey),
             ExpectedVersion: req.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
-            Payload: new RelocateFieldCommand(id, req.Position)
+            Payload: new RelocateFieldCommand(id, req.Index)
         );
 
         var result = ToHttpResult(await _relocateFieldHandler.HandleAsync(envelope, ct));
@@ -555,21 +555,23 @@ public sealed record SettingsImportRequest(
 
 public sealed record SettingsCreateFieldRequest(
     string Name,
-    string? Value,
-    int Position,
+    string Type,
+    string? SecurityLevel,
+    bool? Locked,
     string? IdempotencyKey = null,
     long? ExpectedVersion = null
 );
 
 public sealed record SettingsUpdateFieldRequest(
     string? Name,
-    string? Value,
+    string? SecurityLevel,
+    bool? Locked,
     string? IdempotencyKey = null,
     long? ExpectedVersion = null
 );
 
 public sealed record SettingsRelocateFieldRequest(
-    int Position,
+    int Index,
     string? IdempotencyKey = null,
     long? ExpectedVersion = null
 );

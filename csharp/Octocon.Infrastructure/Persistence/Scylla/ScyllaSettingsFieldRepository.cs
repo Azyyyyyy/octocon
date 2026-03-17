@@ -1,14 +1,25 @@
 using Cassandra;
 using Octocon.Domain.Settings;
 using Octocon.Infrastructure.Persistence.Transient;
+using System.Collections.Concurrent;
 
 namespace Octocon.Infrastructure.Persistence.Scylla;
 
 public sealed class ScyllaSettingsFieldRepository : ISettingsFieldRepository
 {
+    private const short TypeText = 0;
+    private const short TypeNumber = 1;
+    private const short TypeBoolean = 2;
+
+    private const short SecurityPublic = 0;
+    private const short SecurityFriendsOnly = 1;
+    private const short SecurityTrustedOnly = 2;
+    private const short SecurityPrivate = 3;
+
     private readonly IScyllaSessionProvider _sessionProvider;
     private readonly IScyllaKeyspaceResolver _keyspaceResolver;
     private readonly PersistenceRegistrationOptions _options;
+    private static readonly ConcurrentDictionary<string, byte> UdtMappings = new(StringComparer.OrdinalIgnoreCase);
 
     public ScyllaSettingsFieldRepository(
         IScyllaSessionProvider sessionProvider,
@@ -20,30 +31,46 @@ public sealed class ScyllaSettingsFieldRepository : ISettingsFieldRepository
         _options = options;
     }
 
-    public async Task<string?> CreateAsync(string systemId, string name, string? value, int position, CancellationToken cancellationToken = default)
+    public async Task<string?> CreateAsync(
+        string systemId,
+        string name,
+        string type,
+        string securityLevel,
+        bool locked,
+        CancellationToken cancellationToken = default)
     {
         return await DatabaseTransientRetry.ExecuteScyllaAsync(async () =>
         {
             var session = await _sessionProvider.GetSessionAsync(cancellationToken);
             var normalizedSystemId = _keyspaceResolver.NormalizeSystemId(systemId);
             var keyspace = _keyspaceResolver.ResolveRegionalKeyspace(systemId);
+            EnsureFieldUdtMapping(session, keyspace);
+
+            var fields = await LoadFieldsAsync(session, keyspace, normalizedSystemId);
+            if (fields is null)
+            {
+                return null;
+            }
+
             var fieldId = Guid.NewGuid();
+            fields.Add(CreateFieldUdt(session, keyspace, fieldId, name, type, securityLevel, locked));
 
-            var statement = new SimpleStatement(
-                $"INSERT INTO {keyspace}.settings_fields (user_id, id, position, name, value, updated_at) VALUES (?, ?, ?, ?, ?, toTimestamp(now()))",
-                normalizedSystemId,
-                fieldId,
-                position,
-                name,
-                value
-            );
+            await session.ExecuteAsync(new SimpleStatement(
+                $"UPDATE {keyspace}.users SET fields = ?, updated_at = toTimestamp(now()) WHERE id = ?",
+                fields,
+                normalizedSystemId));
 
-            await session.ExecuteAsync(statement);
             return fieldId.ToString("N");
         }, _options, cancellationToken);
     }
 
-    public async Task<bool> UpdateAsync(string systemId, string fieldId, string? name, string? value, CancellationToken cancellationToken = default)
+    public async Task<bool> UpdateAsync(
+        string systemId,
+        string fieldId,
+        string? name,
+        string? securityLevel,
+        bool? locked,
+        CancellationToken cancellationToken = default)
     {
         return await DatabaseTransientRetry.ExecuteScyllaAsync(async () =>
         {
@@ -55,30 +82,50 @@ public sealed class ScyllaSettingsFieldRepository : ISettingsFieldRepository
             var session = await _sessionProvider.GetSessionAsync(cancellationToken);
             var normalizedSystemId = _keyspaceResolver.NormalizeSystemId(systemId);
             var keyspace = _keyspaceResolver.ResolveRegionalKeyspace(systemId);
+            EnsureFieldUdtMapping(session, keyspace);
 
-            var exists = await ExistsAsync(session, keyspace, normalizedSystemId, fieldGuid);
-            if (!exists)
+            var fields = await LoadFieldsAsync(session, keyspace, normalizedSystemId);
+            if (fields is null)
             {
                 return false;
             }
 
-            if (name is not null)
+            var updated = false;
+            for (var i = 0; i < fields.Count; i++)
             {
-                await session.ExecuteAsync(new SimpleStatement(
-                    $"UPDATE {keyspace}.settings_fields SET name = ?, updated_at = toTimestamp(now()) WHERE user_id = ? AND id = ?",
-                    name,
-                    normalizedSystemId,
-                    fieldGuid));
+                if (fields[i].Id != fieldGuid)
+                {
+                    continue;
+                }
+
+                if (name is not null)
+                {
+                    fields[i].Name = name;
+                }
+
+                if (securityLevel is not null)
+                {
+                    fields[i].SecurityLevel = ParseSecurityLevel(securityLevel);
+                }
+
+                if (locked is not null)
+                {
+                    fields[i].Locked = locked.Value;
+                }
+
+                updated = true;
+                break;
             }
 
-            if (value is not null)
+            if (!updated)
             {
-                await session.ExecuteAsync(new SimpleStatement(
-                    $"UPDATE {keyspace}.settings_fields SET value = ?, updated_at = toTimestamp(now()) WHERE user_id = ? AND id = ?",
-                    value,
-                    normalizedSystemId,
-                    fieldGuid));
+                return false;
             }
+
+            await session.ExecuteAsync(new SimpleStatement(
+                $"UPDATE {keyspace}.users SET fields = ?, updated_at = toTimestamp(now()) WHERE id = ?",
+                fields,
+                normalizedSystemId));
 
             return true;
         }, _options, cancellationToken);
@@ -96,23 +143,30 @@ public sealed class ScyllaSettingsFieldRepository : ISettingsFieldRepository
             var session = await _sessionProvider.GetSessionAsync(cancellationToken);
             var normalizedSystemId = _keyspaceResolver.NormalizeSystemId(systemId);
             var keyspace = _keyspaceResolver.ResolveRegionalKeyspace(systemId);
+            EnsureFieldUdtMapping(session, keyspace);
 
-            var exists = await ExistsAsync(session, keyspace, normalizedSystemId, fieldGuid);
-            if (!exists)
+            var fields = await LoadFieldsAsync(session, keyspace, normalizedSystemId);
+            if (fields is null)
+            {
+                return false;
+            }
+
+            var removed = fields.RemoveAll(f => f.Id == fieldGuid) > 0;
+            if (!removed)
             {
                 return false;
             }
 
             await session.ExecuteAsync(new SimpleStatement(
-                $"DELETE FROM {keyspace}.settings_fields WHERE user_id = ? AND id = ?",
-                normalizedSystemId,
-                fieldGuid));
+                $"UPDATE {keyspace}.users SET fields = ?, updated_at = toTimestamp(now()) WHERE id = ?",
+                fields,
+                normalizedSystemId));
 
             return true;
         }, _options, cancellationToken);
     }
 
-    public async Task<bool> RelocateAsync(string systemId, string fieldId, int position, CancellationToken cancellationToken = default)
+    public async Task<bool> RelocateAsync(string systemId, string fieldId, int index, CancellationToken cancellationToken = default)
     {
         return await DatabaseTransientRetry.ExecuteScyllaAsync(async () =>
         {
@@ -124,31 +178,109 @@ public sealed class ScyllaSettingsFieldRepository : ISettingsFieldRepository
             var session = await _sessionProvider.GetSessionAsync(cancellationToken);
             var normalizedSystemId = _keyspaceResolver.NormalizeSystemId(systemId);
             var keyspace = _keyspaceResolver.ResolveRegionalKeyspace(systemId);
+            EnsureFieldUdtMapping(session, keyspace);
 
-            var exists = await ExistsAsync(session, keyspace, normalizedSystemId, fieldGuid);
-            if (!exists)
+            var fields = await LoadFieldsAsync(session, keyspace, normalizedSystemId);
+            if (fields is null)
             {
                 return false;
             }
 
+            var currentIndex = fields.FindIndex(f => f.Id == fieldGuid);
+            if (currentIndex < 0)
+            {
+                return false;
+            }
+
+            var field = fields[currentIndex];
+            fields.RemoveAt(currentIndex);
+
+            var boundedIndex = Math.Max(0, Math.Min(index, fields.Count));
+            fields.Insert(boundedIndex, field);
+
             await session.ExecuteAsync(new SimpleStatement(
-                $"UPDATE {keyspace}.settings_fields SET position = ?, updated_at = toTimestamp(now()) WHERE user_id = ? AND id = ?",
-                position,
-                normalizedSystemId,
-                fieldGuid));
+                $"UPDATE {keyspace}.users SET fields = ?, updated_at = toTimestamp(now()) WHERE id = ?",
+                fields,
+                normalizedSystemId));
 
             return true;
         }, _options, cancellationToken);
     }
 
-    private static async Task<bool> ExistsAsync(ISession session, string keyspace, string normalizedSystemId, Guid fieldId)
+    private static async Task<List<UserFieldUdt>?> LoadFieldsAsync(ISession session, string keyspace, string normalizedSystemId)
     {
         var query = new SimpleStatement(
-            $"SELECT id FROM {keyspace}.settings_fields WHERE user_id = ? AND id = ? LIMIT 1",
-            normalizedSystemId,
-            fieldId);
+            $"SELECT fields FROM {keyspace}.users WHERE id = ? LIMIT 1",
+            normalizedSystemId);
 
-        return (await session.ExecuteAsync(query)).Any();
+        var row = (await session.ExecuteAsync(query)).FirstOrDefault();
+        if (row is null)
+        {
+            return null;
+        }
+
+        return row.GetValue<IEnumerable<UserFieldUdt>?>("fields")?.ToList() ?? [];
+    }
+
+    private static UserFieldUdt CreateFieldUdt(
+        ISession session,
+        string keyspace,
+        Guid id,
+        string name,
+        string type,
+        string securityLevel,
+        bool locked)
+    {
+        EnsureFieldUdtMapping(session, keyspace);
+        return new UserFieldUdt
+        {
+            Id = id,
+            Name = name,
+            Type = ParseType(type),
+            Locked = locked,
+            SecurityLevel = ParseSecurityLevel(securityLevel)
+        };
+    }
+
+    private static void EnsureFieldUdtMapping(ISession session, string keyspace)
+    {
+        if (UdtMappings.ContainsKey(keyspace))
+        {
+            return;
+        }
+
+        session.UserDefinedTypes.Define(
+            UdtMap
+                .For<UserFieldUdt>(keyspace, "field")
+                .Map(f => f.Id, "id")
+                .Map(f => f.Name, "name")
+                .Map(f => f.Type, "type")
+                .Map(f => f.Locked, "locked")
+                .Map(f => f.SecurityLevel, "security_level"));
+
+        UdtMappings.TryAdd(keyspace, 0);
+    }
+
+    private static short ParseType(string type)
+    {
+        return type switch
+        {
+            "text" => TypeText,
+            "number" => TypeNumber,
+            "boolean" => TypeBoolean,
+            _ => TypeText
+        };
+    }
+
+    private static short ParseSecurityLevel(string securityLevel)
+    {
+        return securityLevel switch
+        {
+            "public" => SecurityPublic,
+            "friends_only" => SecurityFriendsOnly,
+            "trusted_only" => SecurityTrustedOnly,
+            _ => SecurityPrivate
+        };
     }
 
     internal static bool TryParseUuid(string value, out Guid guid)
@@ -159,5 +291,14 @@ public sealed class ScyllaSettingsFieldRepository : ISettingsFieldRepository
         }
 
         return Guid.TryParse(value, out guid);
+    }
+
+    private sealed class UserFieldUdt
+    {
+        public Guid Id { get; set; }
+        public string Name { get; set; } = string.Empty;
+        public short Type { get; set; }
+        public bool Locked { get; set; }
+        public short SecurityLevel { get; set; }
     }
 }

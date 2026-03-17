@@ -12,7 +12,6 @@ public sealed class ScyllaPostgresBootstrapHealthChecker : IDatabaseBootstrapHea
 
     private static readonly string[] RequiredGlobalScyllaTables =
     [
-        "users",
         "user_registry",
         "notification_tokens",
         "friendships",
@@ -22,6 +21,7 @@ public sealed class ScyllaPostgresBootstrapHealthChecker : IDatabaseBootstrapHea
 
     private static readonly string[] RequiredRegionalScyllaTables =
     [
+        "users",
         "alters",
         "tags",
         "alter_tags",
@@ -30,8 +30,7 @@ public sealed class ScyllaPostgresBootstrapHealthChecker : IDatabaseBootstrapHea
         "current_fronts",
         "global_journals",
         "global_journal_alters",
-        "alter_journals",
-        "settings_fields"
+        "alter_journals"
     ];
 
     private readonly IPostgresConnectionFactory _postgresConnectionFactory;

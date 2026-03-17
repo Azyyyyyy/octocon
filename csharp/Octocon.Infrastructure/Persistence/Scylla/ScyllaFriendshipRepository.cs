@@ -310,7 +310,7 @@ public sealed class ScyllaFriendshipRepository : IFriendshipRepository
     private static async Task<bool> SystemExistsAsync(ISession session, string userId)
     {
         var query = new SimpleStatement(
-            "SELECT id FROM global.users WHERE id = ? LIMIT 1",
+            "SELECT user_id FROM global.user_registry WHERE user_id = ? LIMIT 1",
             userId);
 
         return (await session.ExecuteAsync(query)).Any();
@@ -359,8 +359,14 @@ public sealed class ScyllaFriendshipRepository : IFriendshipRepository
 
     private async Task<FriendProfileReadModel> GetFriendProfileAsync(ISession session, string friendSystemId)
     {
+        var region = await ResolveUserRegionAsync(session, friendSystemId);
+        if (string.IsNullOrWhiteSpace(region))
+        {
+            return new FriendProfileReadModel(friendSystemId, null, null, null, null);
+        }
+
         var profileQuery = new SimpleStatement(
-            "SELECT username, avatar_url, description, discord_id FROM global.users WHERE id = ? LIMIT 1",
+            $"SELECT username, avatar_url, description, discord_id FROM {region}.users WHERE id = ? LIMIT 1",
             friendSystemId);
 
         var profileRow = (await session.ExecuteAsync(profileQuery)).FirstOrDefault();
@@ -375,14 +381,18 @@ public sealed class ScyllaFriendshipRepository : IFriendshipRepository
 
     private async Task<IReadOnlyList<FriendFrontingReadModel>> GetFrontingAsync(ISession session, string friendSystemId)
     {
-        var regionalKeyspace = _keyspaceResolver.ResolveRegionalKeyspace(friendSystemId);
+        var regionalKeyspace = await ResolveUserRegionAsync(session, friendSystemId);
+        if (string.IsNullOrWhiteSpace(regionalKeyspace))
+        {
+            return [];
+        }
 
         var activeRows = await session.ExecuteAsync(new SimpleStatement(
             $"SELECT alter_id, comment FROM {regionalKeyspace}.current_fronts WHERE user_id = ?",
             friendSystemId));
 
         var primaryRow = (await session.ExecuteAsync(new SimpleStatement(
-            "SELECT primary_front FROM global.users WHERE id = ? LIMIT 1",
+            $"SELECT primary_front FROM {regionalKeyspace}.users WHERE id = ? LIMIT 1",
             friendSystemId))).FirstOrDefault();
 
         var primaryAlterId = primaryRow?.GetValue<int?>("primary_front");
@@ -409,5 +419,15 @@ public sealed class ScyllaFriendshipRepository : IFriendshipRepository
             })
             .OrderBy(x => x.AlterId)
             .ToList();
+    }
+
+    private static async Task<string?> ResolveUserRegionAsync(ISession session, string userId)
+    {
+        var regionQuery = new SimpleStatement(
+            "SELECT region FROM global.user_registry WHERE user_id = ? LIMIT 1",
+            userId);
+
+        var row = (await session.ExecuteAsync(regionQuery)).FirstOrDefault();
+        return row?.GetValue<string>("region")?.ToLowerInvariant();
     }
 }

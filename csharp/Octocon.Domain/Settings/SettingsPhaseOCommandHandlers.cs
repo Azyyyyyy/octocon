@@ -281,6 +281,8 @@ public sealed class WipeAltersCommandHandler : ICommandHandler<WipeAltersCommand
 public sealed class CreateFieldCommandHandler : ICommandHandler<CreateFieldCommand, SettingsCommandResult>
 {
     private const string AggregateType = "settings";
+    private static readonly HashSet<string> AllowedTypes = ["text", "number", "boolean"];
+    private static readonly HashSet<string> AllowedSecurityLevels = ["public", "friends_only", "trusted_only", "private"];
     private readonly ISettingsFieldRepository _fieldRepository;
     private readonly IIdempotencyStore _idempotencyStore;
     private readonly IAggregateVersionStore _versionStore;
@@ -300,6 +302,18 @@ public sealed class CreateFieldCommandHandler : ICommandHandler<CreateFieldComma
                 new ConflictResult(ConflictCode.ConflictInvariant, command.OperationId, "settings:field_name_required", null, "manual_merge_required", null)));
         }
 
+        if (!AllowedTypes.Contains(command.Payload.Type))
+        {
+            return Task.FromResult(CommandExecutionResult<SettingsCommandResult>.Rejected(
+                new ConflictResult(ConflictCode.ConflictInvariant, command.OperationId, "settings:field_type_invalid", null, "manual_merge_required", null)));
+        }
+
+        if (!AllowedSecurityLevels.Contains(command.Payload.SecurityLevel))
+        {
+            return Task.FromResult(CommandExecutionResult<SettingsCommandResult>.Rejected(
+                new ConflictResult(ConflictCode.ConflictInvariant, command.OperationId, "settings:field_security_level_invalid", null, "manual_merge_required", null)));
+        }
+
         return SettingsPhaseOCommandHelper.ExecuteAsync(
             command,
             AggregateType,
@@ -307,7 +321,13 @@ public sealed class CreateFieldCommandHandler : ICommandHandler<CreateFieldComma
             "settings:field:create",
             _idempotencyStore,
             _versionStore,
-            async ct => (await _fieldRepository.CreateAsync(command.PrincipalId, command.Payload.Name, command.Payload.Value, command.Payload.Position, ct)) is not null,
+            async ct => (await _fieldRepository.CreateAsync(
+                command.PrincipalId,
+                command.Payload.Name,
+                command.Payload.Type,
+                command.Payload.SecurityLevel,
+                command.Payload.Locked,
+                ct)) is not null,
             cancellationToken);
     }
 }
@@ -334,7 +354,7 @@ public sealed class UpdateFieldCommandHandler : ICommandHandler<UpdateFieldComma
             "settings:field:update",
             _idempotencyStore,
             _versionStore,
-            ct => _fieldRepository.UpdateAsync(command.PrincipalId, command.Payload.FieldId, command.Payload.Name, command.Payload.Value, ct),
+            ct => _fieldRepository.UpdateAsync(command.PrincipalId, command.Payload.FieldId, command.Payload.Name, command.Payload.SecurityLevel, command.Payload.Locked, ct),
             cancellationToken);
 }
 
@@ -386,6 +406,6 @@ public sealed class RelocateFieldCommandHandler : ICommandHandler<RelocateFieldC
             "settings:field:relocate",
             _idempotencyStore,
             _versionStore,
-            ct => _fieldRepository.RelocateAsync(command.PrincipalId, command.Payload.FieldId, command.Payload.Position, ct),
+            ct => _fieldRepository.RelocateAsync(command.PrincipalId, command.Payload.FieldId, command.Payload.Index, ct),
             cancellationToken);
 }
