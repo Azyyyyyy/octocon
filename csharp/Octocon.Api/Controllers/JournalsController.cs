@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
+using System.Text.Json.Serialization;
 using Octocon.Contracts.Operations;
 using Octocon.Domain.Journals;
 
@@ -149,6 +150,10 @@ public sealed class JournalsController : OctoconControllerBase
         var principal = GetPrincipalId();
         if (principal is null) return Unauthorized();
 
+        var alterId = req.ResolveAlterId();
+        if (alterId <= 0)
+            return BadRequest(new { error = "Invalid alter ID.", code = "invalid_alter_id" });
+
         var envelope = new CommandEnvelope<AttachAlterToGlobalJournalCommand>(
             OperationIds.JournalGlobalAttachAlter,
             Guid.NewGuid(),
@@ -156,7 +161,7 @@ public sealed class JournalsController : OctoconControllerBase
             IdempotencyKey: GetIdempotencyKey(req.IdempotencyKey),
             ExpectedVersion: req.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
-            Payload: new AttachAlterToGlobalJournalCommand(id, req.AlterId)
+            Payload: new AttachAlterToGlobalJournalCommand(id, alterId)
         );
 
         var result = ToHttpResult(await _attachAlter.HandleAsync(envelope, ct));
@@ -169,6 +174,10 @@ public sealed class JournalsController : OctoconControllerBase
         var principal = GetPrincipalId();
         if (principal is null) return Unauthorized();
 
+        var alterId = req.ResolveAlterId();
+        if (alterId <= 0)
+            return BadRequest(new { error = "Invalid alter ID.", code = "invalid_alter_id" });
+
         var envelope = new CommandEnvelope<DetachAlterFromGlobalJournalCommand>(
             OperationIds.JournalGlobalDetachAlter,
             Guid.NewGuid(),
@@ -176,7 +185,7 @@ public sealed class JournalsController : OctoconControllerBase
             IdempotencyKey: GetIdempotencyKey(req.IdempotencyKey),
             ExpectedVersion: req.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
-            Payload: new DetachAlterFromGlobalJournalCommand(id, req.AlterId)
+            Payload: new DetachAlterFromGlobalJournalCommand(id, alterId)
         );
 
         var result = ToHttpResult(await _detachAlter.HandleAsync(envelope, ct));
@@ -247,7 +256,11 @@ public sealed record JournalActionRequest(
 );
 
 public sealed record JournalAlterRequest(
-    int AlterId,
+    int? AlterId,
+    [property: JsonPropertyName("alter_id")] int? AlterIdSnake = null,
     string? IdempotencyKey = null,
     long? ExpectedVersion = null
-);
+)
+{
+    public int ResolveAlterId() => AlterId ?? AlterIdSnake ?? 0;
+}

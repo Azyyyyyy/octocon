@@ -7,7 +7,7 @@ namespace Octocon.Domain.Abstractions;
 public enum NodeGroup
 {
     /// <summary>
-    /// Runs the HTTP API, background jobs, Discord bot, and owns cluster singletons.
+    /// Runs the HTTP API, background jobs, and owns cluster singletons.
     /// Legacy: <c>primary</c>.
     /// </summary>
     Primary,

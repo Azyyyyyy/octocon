@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
+using System.Text.Json.Serialization;
 using Octocon.Api.Services;
 using Octocon.Contracts.Operations;
 using Octocon.Domain.Abstractions;
@@ -155,6 +156,10 @@ public sealed class SettingsController : OctoconControllerBase
         var principal = GetPrincipalId();
         if (principal is null) return Unauthorized();
 
+        var pushToken = req.ResolvePushToken();
+        if (string.IsNullOrWhiteSpace(pushToken))
+            return BadRequest(new { error = "Invalid push token.", code = "invalid_push_token" });
+
         var envelope = new CommandEnvelope<AddPushTokenCommand>(
             OperationIds.SettingsPushTokenAdd,
             Guid.NewGuid(),
@@ -162,7 +167,7 @@ public sealed class SettingsController : OctoconControllerBase
             IdempotencyKey: GetIdempotencyKey(req.IdempotencyKey),
             ExpectedVersion: req.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
-            Payload: new AddPushTokenCommand(req.PushToken)
+            Payload: new AddPushTokenCommand(pushToken)
         );
 
         var result = ToHttpResult(await _addPushTokenHandler.HandleAsync(envelope, ct));
@@ -175,6 +180,10 @@ public sealed class SettingsController : OctoconControllerBase
         var principal = GetPrincipalId();
         if (principal is null) return Unauthorized();
 
+        var pushToken = req.ResolvePushToken();
+        if (string.IsNullOrWhiteSpace(pushToken))
+            return BadRequest(new { error = "Invalid push token.", code = "invalid_push_token" });
+
         var envelope = new CommandEnvelope<RemovePushTokenCommand>(
             OperationIds.SettingsPushTokenRemove,
             Guid.NewGuid(),
@@ -182,7 +191,7 @@ public sealed class SettingsController : OctoconControllerBase
             IdempotencyKey: GetIdempotencyKey(req.IdempotencyKey),
             ExpectedVersion: req.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
-            Payload: new RemovePushTokenCommand(req.PushToken)
+            Payload: new RemovePushTokenCommand(pushToken)
         );
 
         var result = ToHttpResult(await _removePushTokenHandler.HandleAsync(envelope, ct));
@@ -565,10 +574,14 @@ public sealed record SettingsDescriptionRequest(
 );
 
 public sealed record SettingsPushTokenRequest(
-    string PushToken,
+    string? PushToken,
+    [property: JsonPropertyName("token")] string? Token = null,
     string? IdempotencyKey = null,
     long? ExpectedVersion = null
-);
+)
+{
+    public string? ResolvePushToken() => PushToken ?? Token;
+}
 
 public sealed record SettingsEncryptionRequest(
     string RecoveryCode,

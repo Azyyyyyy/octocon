@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
+using System.Text.Json.Serialization;
 using Octocon.Contracts.Operations;
 using Octocon.Domain.Polls;
 
@@ -60,7 +61,7 @@ public sealed class PollsController : OctoconControllerBase
             IdempotencyKey: GetIdempotencyKey(req.IdempotencyKey),
             ExpectedVersion: req.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
-            Payload: new CreatePollCommand(req.Title, req.Description, req.Type ?? "vote", req.TimeEndIso)
+            Payload: new CreatePollCommand(req.Title, req.Description, req.Type ?? "vote", req.ResolveTimeEndIso())
         );
 
         var execution = await _create.HandleAsync(envelope, ct);
@@ -87,7 +88,7 @@ public sealed class PollsController : OctoconControllerBase
             IdempotencyKey: GetIdempotencyKey(req.IdempotencyKey),
             ExpectedVersion: req.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
-            Payload: new UpdatePollCommand(id, req.Title, req.Description, req.TimeEndIso, req.DataJson)
+            Payload: new UpdatePollCommand(id, req.Title, req.Description, req.ResolveTimeEndIso(), req.ResolveDataJson())
         );
 
         var result = ToHttpResult(await _update.HandleAsync(envelope, ct));
@@ -120,18 +121,28 @@ public sealed record CreatePollRequest(
     string? Description = null,
     string? Type = null,
     string? TimeEndIso = null,
+    [property: JsonPropertyName("time_end")] string? TimeEnd = null,
     string? IdempotencyKey = null,
     long? ExpectedVersion = null
-);
+)
+{
+    public string? ResolveTimeEndIso() => TimeEndIso ?? TimeEnd;
+}
 
 public sealed record UpdatePollRequest(
     string? Title = null,
     string? Description = null,
     string? TimeEndIso = null,
     string? DataJson = null,
+    [property: JsonPropertyName("time_end")] string? TimeEnd = null,
+    [property: JsonPropertyName("data")] string? Data = null,
     string? IdempotencyKey = null,
     long? ExpectedVersion = null
-);
+)
+{
+    public string? ResolveTimeEndIso() => TimeEndIso ?? TimeEnd;
+    public string? ResolveDataJson() => DataJson ?? Data;
+}
 
 public sealed record DeletePollRequest(
     string? IdempotencyKey = null,

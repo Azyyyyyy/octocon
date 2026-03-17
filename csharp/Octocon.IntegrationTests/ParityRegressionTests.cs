@@ -258,6 +258,102 @@ public sealed class ParityRegressionTests
     }
 
     // -----------------------------------------------------------------------
+    // 4. Tag parent mutation parity
+    // -----------------------------------------------------------------------
+
+    [Test]
+    public async Task TagParent_SetAndRemove_Returns204()
+    {
+        if (!ShouldRun()) return;
+
+        var workspaceRoot = FindWorkspaceRoot();
+        var port = GetFreePort();
+        await using var api = await StartApiAsync(workspaceRoot, port);
+        using var client = new HttpClient { BaseAddress = new Uri($"http://127.0.0.1:{port}") };
+
+        var principal = "parity-tag-parent";
+        var parentTagId = await CreateTagAsync(client, principal, "ParentTag");
+        var childTagId = await CreateTagAsync(client, principal, "ChildTag");
+
+        using var setReq = new HttpRequestMessage(HttpMethod.Post, $"/api/systems/me/tags/{childTagId}/parent")
+        {
+            Content = JsonContent.Create(new { parentTagId })
+        };
+        setReq.Headers.Add("X-Octocon-Dev-Principal", principal);
+        var setRes = await client.SendAsync(setReq);
+
+        Ensure(setRes.StatusCode == HttpStatusCode.NoContent,
+            $"Expected set-parent to return 204, got {(int)setRes.StatusCode}. Body: {await setRes.Content.ReadAsStringAsync()}");
+
+        using var removeReq = new HttpRequestMessage(HttpMethod.Delete, $"/api/systems/me/tags/{childTagId}/parent")
+        {
+            Content = JsonContent.Create(new { })
+        };
+        removeReq.Headers.Add("X-Octocon-Dev-Principal", principal);
+        var removeRes = await client.SendAsync(removeReq);
+
+        Ensure(removeRes.StatusCode == HttpStatusCode.NoContent,
+            $"Expected remove-parent to return 204, got {(int)removeRes.StatusCode}. Body: {await removeRes.Content.ReadAsStringAsync()}");
+    }
+
+    // -----------------------------------------------------------------------
+    // 5. Public batch parity
+    // -----------------------------------------------------------------------
+
+    [Test]
+    public async Task PublicBatch_SelfLookup_Returns403InvalidEndpoint()
+    {
+        if (!ShouldRun()) return;
+
+        var workspaceRoot = FindWorkspaceRoot();
+        var port = GetFreePort();
+        await using var api = await StartApiAsync(workspaceRoot, port);
+        using var client = new HttpClient { BaseAddress = new Uri($"http://127.0.0.1:{port}") };
+
+        var principal = "parity-public-batch-self";
+        _ = await CreateAlterAsync(client, principal, "BatchSelfSeed");
+
+        using var req = new HttpRequestMessage(HttpMethod.Get, $"/api/systems/{principal}/batch");
+        req.Headers.Add("X-Octocon-Dev-Principal", principal);
+        var res = await client.SendAsync(req);
+        var body = await res.Content.ReadAsStringAsync();
+
+        Ensure(res.StatusCode == HttpStatusCode.Forbidden,
+            $"Expected self batch lookup to return 403, got {(int)res.StatusCode}. Body: {body}");
+        Ensure(body.Contains("invalid_endpoint", StringComparison.OrdinalIgnoreCase),
+            $"Expected invalid_endpoint code in body. Body: {body}");
+    }
+
+    // -----------------------------------------------------------------------
+    // 6. Legacy key compatibility parity
+    // -----------------------------------------------------------------------
+
+    [Test]
+    public async Task FrontStart_LegacyIdField_Returns201()
+    {
+        if (!ShouldRun()) return;
+
+        var workspaceRoot = FindWorkspaceRoot();
+        var port = GetFreePort();
+        await using var api = await StartApiAsync(workspaceRoot, port);
+        using var client = new HttpClient { BaseAddress = new Uri($"http://127.0.0.1:{port}") };
+
+        var principal = "parity-front-legacy-id";
+        var alterId = await CreateAlterAsync(client, principal, "LegacyFrontAlter");
+
+        using var req = new HttpRequestMessage(HttpMethod.Post, "/api/systems/me/front/start")
+        {
+            Content = JsonContent.Create(new { id = alterId })
+        };
+        req.Headers.Add("X-Octocon-Dev-Principal", principal);
+        var res = await client.SendAsync(req);
+        var body = await res.Content.ReadAsStringAsync();
+
+        Ensure(res.StatusCode == HttpStatusCode.Created,
+            $"Expected front start with legacy id field to return 201, got {(int)res.StatusCode}. Body: {body}");
+    }
+
+    // -----------------------------------------------------------------------
     // Helpers
     // -----------------------------------------------------------------------
 
@@ -289,6 +385,29 @@ public sealed class ParityRegressionTests
         }
 
         throw new InvalidOperationException($"Could not parse alterId from create response. Body: {body}");
+    }
+
+    private static async Task<string> CreateTagAsync(HttpClient client, string principal, string name)
+    {
+        using var req = new HttpRequestMessage(HttpMethod.Post, "/api/systems/me/tags")
+        {
+            Content = JsonContent.Create(new { name })
+        };
+        req.Headers.Add("X-Octocon-Dev-Principal", principal);
+        var res = await client.SendAsync(req);
+        var body = await res.Content.ReadAsStringAsync();
+
+        Ensure(res.StatusCode == HttpStatusCode.Created,
+            $"Helper CreateTagAsync: expected 201, got {(int)res.StatusCode}. Body: {body}");
+
+        var id = ReadNestedString(body, "data", "tagId");
+        if (string.IsNullOrWhiteSpace(id))
+            id = ReadNestedString(body, "data", "id");
+
+        if (string.IsNullOrWhiteSpace(id))
+            throw new InvalidOperationException($"Could not parse tag ID from create response. Body: {body}");
+
+        return id;
     }
 
     private static string ReadNestedString(string json, string parentKey, string childKey)

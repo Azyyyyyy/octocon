@@ -35,6 +35,13 @@ public sealed class ApiAuthSmokeTests
             contractValues.Contains("2026-03-v1", StringComparer.Ordinal),
             "Expected X-Octocon-Contract response header on heartbeat response.");
 
+        var nodeRole = await client.GetAsync("/health/node-role");
+        var nodeRoleBody = await nodeRole.Content.ReadAsStringAsync();
+        Ensure(nodeRole.StatusCode == HttpStatusCode.OK,
+            $"Expected node-role health endpoint 200, got {(int)nodeRole.StatusCode}. Body: {nodeRoleBody}");
+        Ensure(!string.IsNullOrWhiteSpace(ReadStringField(nodeRoleBody, "role")),
+            $"Expected node-role response to include role. Body: {nodeRoleBody}");
+
         var unauthorized = await client.PostAsJsonAsync("/api/systems/me/alters", new { name = "NoPrincipal" });
         Ensure(unauthorized.StatusCode == HttpStatusCode.Unauthorized,
             $"Expected unauthenticated alter-create to return 401, got {(int)unauthorized.StatusCode}. Body: {await unauthorized.Content.ReadAsStringAsync()}");

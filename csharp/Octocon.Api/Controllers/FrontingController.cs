@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
+using System.Text.Json.Serialization;
 using Octocon.Contracts.Operations;
 using Octocon.Domain.Fronting;
 
@@ -68,13 +69,17 @@ public sealed class FrontingController : OctoconControllerBase
         var principal = GetPrincipalId();
         if (principal is null) return Unauthorized();
 
+        var alterId = req.ResolveAlterId();
+        if (alterId <= 0)
+            return BadRequest(new { error = "Invalid alter ID.", code = "invalid_alter_id" });
+
         var envelope = new CommandEnvelope<StartFrontCommand>(
             OperationIds.FrontStart, Guid.NewGuid(),
             PrincipalId: principal,
             IdempotencyKey: GetIdempotencyKey(req.IdempotencyKey),
             ExpectedVersion: req.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
-            Payload: new StartFrontCommand(req.AlterId, req.Comment)
+            Payload: new StartFrontCommand(alterId, req.Comment)
         );
 
         var execution = await _startHandler.HandleAsync(envelope, ct);
@@ -97,13 +102,17 @@ public sealed class FrontingController : OctoconControllerBase
         var principal = GetPrincipalId();
         if (principal is null) return Unauthorized();
 
+        var alterId = req.ResolveAlterId();
+        if (alterId <= 0)
+            return BadRequest(new { error = "Invalid alter ID.", code = "invalid_alter_id" });
+
         var envelope = new CommandEnvelope<EndFrontCommand>(
             OperationIds.FrontEnd, Guid.NewGuid(),
             PrincipalId: principal,
             IdempotencyKey: GetIdempotencyKey(req.IdempotencyKey),
             ExpectedVersion: req.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
-            Payload: new EndFrontCommand(req.AlterId)
+            Payload: new EndFrontCommand(alterId)
         );
         var result = ToHttpResult(await _endHandler.HandleAsync(envelope, ct));
         return result is OkObjectResult ? NoContent() : result;
@@ -115,6 +124,10 @@ public sealed class FrontingController : OctoconControllerBase
         var principal = GetPrincipalId();
         if (principal is null) return Unauthorized();
 
+        var alterId = req.ResolveAlterId();
+        if (alterId <= 0)
+            return BadRequest(new { error = "Invalid alter ID.", code = "invalid_alter_id" });
+
         var envelope = new CommandEnvelope<SetFrontCommand>(
             OperationIds.FrontSet,
             Guid.NewGuid(),
@@ -122,7 +135,7 @@ public sealed class FrontingController : OctoconControllerBase
             IdempotencyKey: GetIdempotencyKey(req.IdempotencyKey),
             ExpectedVersion: req.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
-            Payload: new SetFrontCommand(req.AlterId, req.Comment)
+            Payload: new SetFrontCommand(alterId, req.Comment)
         );
 
         var result = ToHttpResult(await _setHandler.HandleAsync(envelope, ct));
@@ -135,13 +148,15 @@ public sealed class FrontingController : OctoconControllerBase
         var principal = GetPrincipalId();
         if (principal is null) return Unauthorized();
 
+        var alterId = req.ResolveAlterId();
+
         var envelope = new CommandEnvelope<SetPrimaryFrontCommand>(
             OperationIds.FrontPrimary, Guid.NewGuid(),
             PrincipalId: principal,
             IdempotencyKey: GetIdempotencyKey(req.IdempotencyKey),
             ExpectedVersion: req.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
-            Payload: new SetPrimaryFrontCommand(req.AlterId)
+            Payload: new SetPrimaryFrontCommand(alterId)
         );
         var result = ToHttpResult(await _primaryHandler.HandleAsync(envelope, ct));
         return result is OkObjectResult ? NoContent() : result;
@@ -262,30 +277,46 @@ public sealed record FrontBulkUpdateRequest(
 public sealed record FrontStartEntry(int AlterId, string? Comment = null);
 
 public sealed record FrontStartRequest(
-    int AlterId,
+    int? AlterId,
+    [property: JsonPropertyName("id")] int? Id = null,
     string? Comment = null,
     string? IdempotencyKey = null,
     long? ExpectedVersion = null
-);
+)
+{
+    public int ResolveAlterId() => AlterId ?? Id ?? 0;
+}
 
 public sealed record FrontEndRequest(
-    int AlterId,
+    int? AlterId,
+    [property: JsonPropertyName("id")] int? Id = null,
     string? IdempotencyKey = null,
     long? ExpectedVersion = null
-);
+)
+{
+    public int ResolveAlterId() => AlterId ?? Id ?? 0;
+}
 
 public sealed record FrontPrimaryRequest(
     int? AlterId = null,
+    [property: JsonPropertyName("id")] int? Id = null,
     string? IdempotencyKey = null,
     long? ExpectedVersion = null
-);
+)
+{
+    public int? ResolveAlterId() => AlterId ?? Id;
+}
 
 public sealed record FrontSetRequest(
-    int AlterId,
+    int? AlterId,
+    [property: JsonPropertyName("id")] int? Id = null,
     string? Comment = null,
     string? IdempotencyKey = null,
     long? ExpectedVersion = null
-);
+)
+{
+    public int ResolveAlterId() => AlterId ?? Id ?? 0;
+}
 
 public sealed record FrontCommentRequest(
     string Comment,

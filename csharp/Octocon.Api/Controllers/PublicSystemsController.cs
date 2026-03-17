@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Octocon.Domain.Accounts;
 using Octocon.Domain.Alters;
+using Octocon.Domain.Friendships;
 using Octocon.Domain.Fronting;
 using Octocon.Domain.Tags;
 
@@ -15,18 +16,21 @@ public sealed class PublicSystemsController : OctoconControllerBase
     private readonly IAlterRepository _alters;
     private readonly ITagRepository _tags;
     private readonly IFrontingRepository _fronting;
+    private readonly IFriendshipRepository _friendships;
 
     public PublicSystemsController(
         ApiSettings settings,
         IAccountRepository accounts,
         IAlterRepository alters,
         ITagRepository tags,
-        IFrontingRepository fronting) : base(settings)
+        IFrontingRepository fronting,
+        IFriendshipRepository friendships) : base(settings)
     {
         _accounts = accounts;
         _alters = alters;
         _tags = tags;
         _fronting = fronting;
+        _friendships = friendships;
     }
 
     [HttpGet("{systemId}")]
@@ -127,15 +131,29 @@ public sealed class PublicSystemsController : OctoconControllerBase
             return NotFound(new { error = "System not found.", code = "system_not_found" });
         }
 
+        var callerId = GetPrincipalId();
+        if (callerId is not null && string.Equals(callerId, systemId, StringComparison.Ordinal))
+        {
+            return StatusCode(StatusCodes.Status403Forbidden, new
+            {
+                error = "You cannot view your own system through this endpoint.",
+                code = "invalid_endpoint"
+            });
+        }
+
         var altersTask = _alters.ListAsync(systemId, ct);
         var tagsTask = _tags.ListAsync(systemId, ct);
-        await Task.WhenAll(altersTask, tagsTask);
+        var friendshipTask = callerId is null
+            ? Task.FromResult<Octocon.Domain.Friendships.FriendshipReadModel?>(null)
+            : _friendships.GetFriendshipAsync(callerId, systemId, ct);
+
+        await Task.WhenAll(altersTask, tagsTask, friendshipTask);
 
         return Ok(new
         {
             data = new
             {
-                friendship = (object?)null,
+                friendship = friendshipTask.Result,
                 tags = tagsTask.Result,
                 alters = altersTask.Result
             }

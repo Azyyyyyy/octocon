@@ -105,6 +105,24 @@ public sealed class AvatarMultipartIntegrationTests
         var staticFileResponse = await client.GetAsync(alterAvatarUrl);
         Ensure(staticFileResponse.StatusCode == HttpStatusCode.OK,
             $"Expected uploaded alter avatar file to be served from static path. Status: {(int)staticFileResponse.StatusCode}");
+
+        using var deleteReq = new HttpRequestMessage(HttpMethod.Delete, $"/api/systems/me/alters/{alterId}/avatar")
+        {
+            Content = JsonContent.Create(new { })
+        };
+        deleteReq.Headers.Add("X-Octocon-Dev-Principal", principalId);
+        var deleteRes = await client.SendAsync(deleteReq);
+        Ensure(deleteRes.StatusCode == HttpStatusCode.NoContent,
+            $"Expected alter avatar delete 204, got {(int)deleteRes.StatusCode}. Body: {await deleteRes.Content.ReadAsStringAsync()}");
+
+        var afterDeleteResponse = await client.GetAsync($"/api/systems/{principalId}/alters/{alterId}");
+        var afterDeleteBody = await afterDeleteResponse.Content.ReadAsStringAsync();
+        Ensure(afterDeleteResponse.StatusCode == HttpStatusCode.OK,
+            $"Expected public alter 200 after avatar delete, got {(int)afterDeleteResponse.StatusCode}. Body: {afterDeleteBody}");
+
+        var staleAvatarUrl = FindStringContaining(afterDeleteBody, expectedPrefix);
+        Ensure(string.IsNullOrWhiteSpace(staleAvatarUrl),
+            $"Expected no avatar URL under '{expectedPrefix}' after delete. Body: {afterDeleteBody}");
     }
 
     private static HttpRequestMessage BuildMultipartUploadRequest(string path, string principalId, string fileName, string contentType)
