@@ -116,6 +116,7 @@ public sealed class AltersController : OctoconControllerBase
     }
 
     [HttpPut("{id}/avatar")]
+    [Consumes("application/json")]
     public async Task<IActionResult> UploadAvatar(string id, [FromBody] AlterAvatarRequest req, CancellationToken ct)
     {
         var principal = GetPrincipalId();

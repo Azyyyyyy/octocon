@@ -265,6 +265,7 @@ public sealed class SettingsController : OctoconControllerBase
     }
 
     [HttpPut("avatar")]
+    [Consumes("application/json")]
     public async Task<IActionResult> UploadAvatar([FromBody] SettingsAvatarRequest req, CancellationToken ct)
     {
         var principal = GetPrincipalId();

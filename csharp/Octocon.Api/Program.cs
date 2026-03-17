@@ -1,12 +1,13 @@
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.OpenApi.Models;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Trace;
 using System.Security.Claims;
 using Microsoft.IdentityModel.Tokens;
 using Octocon.Api;
 using Octocon.Api.Services;
-using Octocon.Domain.Abstractions;
+using Octocon.Api.Swagger;
 using Octocon.Domain.Accounts;
 using Octocon.Domain.Alters;
 using Octocon.Domain.Friendships;
@@ -114,12 +115,11 @@ builder.Services.AddSingleton<RejectFriendRequestCommandHandler>();
 builder.Services.AddSingleton<CancelFriendRequestCommandHandler>();
 
 // --- API settings ---
+bool.TryParse(Env("OCTOCON_DEV_ALLOW_HEADER_PRINCIPAL"), out var devPrincipalAllowed);
 builder.Services.AddSingleton(new ApiSettings
 {
-    DevPrincipalAllowed = "true".Equals(Env("OCTOCON_DEV_ALLOW_HEADER_PRINCIPAL"), StringComparison.OrdinalIgnoreCase)
+    DevPrincipalAllowed = devPrincipalAllowed
 });
-
-var devPrincipalAllowed = "true".Equals(Env("OCTOCON_DEV_ALLOW_HEADER_PRINCIPAL"), StringComparison.OrdinalIgnoreCase);
 
 // --- Auth (Phase F baseline) ---
 var jwtAuthority = Env("OCTOCON_JWT_AUTHORITY");
@@ -182,10 +182,93 @@ builder.Services
 // --- MVC ---
 builder.Services.AddControllers();
 
+// --- Swagger/OpenAPI ---
+builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddSwaggerGen(options =>
+{
+    options.SwaggerDoc("v1", new OpenApiInfo
+    {
+        Title = "Octocon API",
+        Version = "v1",
+        Description = "Octocon API - Contract Version: 2026-03-v1"
+    });
+
+    options.ResolveConflictingActions(apiDescriptions =>
+    {
+        var first = apiDescriptions.First();
+        var route = first.RelativePath?.ToLowerInvariant();
+
+        // Only allow conflicts for avatar upload endpoints
+        var allowedConflicts = new[]
+        {
+            "api/settings/avatar",
+            "api/systems/me/alters/{id}/avatar"
+        };
+
+        if (!allowedConflicts.Any(allowed => route?.Contains(allowed) == true))
+        {
+            var actionNames = string.Join(", ", apiDescriptions.Select(d => $"{d.ActionDescriptor.DisplayName}"));
+            throw new NotSupportedException(
+                $"Conflicting actions detected for route '{route}': {actionNames}. " +
+                "If this is intentional, add the route to the allowedConflicts list in Program.cs.");
+        }
+
+        return first;
+    });
+
+    options.DocumentFilter<MultipleContentTypeOperationFilter>();
+
+    // Add JWT Bearer authentication to Swagger UI
+    options.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
+    {
+        Description = "JWT Authorization header using the Bearer scheme. Enter 'Bearer' [space] and then your token in the text input below.",
+        Name = "Authorization",
+        In = ParameterLocation.Header,
+        Type = SecuritySchemeType.ApiKey,
+        Scheme = "Bearer"
+    });
+
+    options.AddSecurityRequirement(new OpenApiSecurityRequirement
+    {
+        {
+            new OpenApiSecurityScheme
+            {
+                Reference = new OpenApiReference
+                {
+                    Type = ReferenceType.SecurityScheme,
+                    Id = "Bearer"
+                }
+            },
+            Array.Empty<string>()
+        }
+    });
+
+    if (devPrincipalAllowed)
+    {
+        // Add dev principal header for local development
+        options.AddSecurityDefinition("DevPrincipal", new OpenApiSecurityScheme
+        {
+            Description = "Development-only: Set X-Octocon-Dev-Principal header with user ID",
+            Name = "X-Octocon-Dev-Principal",
+            In = ParameterLocation.Header,
+            Type = SecuritySchemeType.ApiKey,
+            Scheme = "DevPrincipal"
+        });
+    }
+});
+
 var app = builder.Build();
 
 // Phase N: correlation ID propagation and structured request logging.
 app.UseMiddleware<RequestCorrelationMiddleware>();
+
+// --- Swagger UI ---
+app.UseSwagger();
+app.UseSwaggerUI(options =>
+{
+    options.SwaggerEndpoint("/swagger/v1/swagger.json", "Octocon API v1");
+    options.RoutePrefix = "swagger";
+});
 
 // X-Octocon-Contract response header on every response
 app.Use(async (ctx, next) =>
