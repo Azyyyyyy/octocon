@@ -6,6 +6,7 @@ using OpenTelemetry.Trace;
 using System.Security.Claims;
 using Microsoft.IdentityModel.Tokens;
 using Octocon.Api;
+using Octocon.Api.Auth;
 using Octocon.Api.Services;
 using Octocon.Api.Swagger;
 using Octocon.Domain.Accounts;
@@ -116,10 +117,27 @@ builder.Services.AddSingleton<CancelFriendRequestCommandHandler>();
 
 // --- API settings ---
 bool.TryParse(Env("OCTOCON_DEV_ALLOW_HEADER_PRINCIPAL"), out var devPrincipalAllowed);
+bool.TryParse(Env("OCTOCON_AUTH_CHALLENGE_ENABLED"), out var authChallengeEnabled);
 builder.Services.AddSingleton(new ApiSettings
 {
-    DevPrincipalAllowed = devPrincipalAllowed
+    DevPrincipalAllowed = devPrincipalAllowed,
+    AuthChallengeEnabled = authChallengeEnabled,
+    AuthChallengeDiscordScheme = Env("OCTOCON_AUTH_CHALLENGE_DISCORD_SCHEME") ?? "oauth-discord",
+    AuthChallengeGoogleScheme = Env("OCTOCON_AUTH_CHALLENGE_GOOGLE_SCHEME") ?? "oauth-google",
+    AuthChallengeAppleScheme = Env("OCTOCON_AUTH_CHALLENGE_APPLE_SCHEME") ?? "oauth-apple",
+    AuthChallengeDiscordParameters = ParseAuthParameters(Env("OCTOCON_AUTH_CHALLENGE_DISCORD_PARAMS")),
+    AuthChallengeGoogleParameters = ParseAuthParameters(Env("OCTOCON_AUTH_CHALLENGE_GOOGLE_PARAMS")),
+    AuthChallengeAppleParameters = ParseAuthParameters(Env("OCTOCON_AUTH_CHALLENGE_APPLE_PARAMS")),
+    AuthCallbackBaseUrl = Env("OCTOCON_AUTH_CALLBACK_BASE_URL"),
+    GoogleOAuthClientId = Env("OCTOCON_GOOGLE_OAUTH_CLIENT_ID"),
+    GoogleOAuthClientSecret = Env("OCTOCON_GOOGLE_OAUTH_CLIENT_SECRET"),
+    FrontendAddress = Env("OCTOCON_FRONTEND"),
+    BetaFrontendAddress = Env("OCTOCON_BETA_FRONTEND"),
+    DeepEndpointAddress = Env("OCTOCON_DEEPLINK_ADDRESS")
 });
+
+// --- HTTP Client Factory (for OAuth token exchange, etc.) ---
+builder.Services.AddHttpClient<GoogleOAuthService>();
 
 // --- Auth (Phase F baseline) ---
 var jwtAuthority = Env("OCTOCON_JWT_AUTHORITY");
@@ -146,6 +164,27 @@ builder.Services
         if (!string.IsNullOrWhiteSpace(jwtAuthority))
             options.Authority = jwtAuthority;
     });
+
+if (authChallengeEnabled)
+{
+    TryAddRedirectChallengeScheme(
+        builder.Services,
+        Env("OCTOCON_AUTH_CHALLENGE_DISCORD_SCHEME") ?? "oauth-discord",
+        Env("OCTOCON_AUTH_CHALLENGE_DISCORD_ENDPOINT"),
+        ParseAuthParameters(Env("OCTOCON_AUTH_CHALLENGE_DISCORD_PARAMS")));
+
+    TryAddRedirectChallengeScheme(
+        builder.Services,
+        Env("OCTOCON_AUTH_CHALLENGE_GOOGLE_SCHEME") ?? "oauth-google",
+        Env("OCTOCON_AUTH_CHALLENGE_GOOGLE_ENDPOINT"),
+        ParseAuthParameters(Env("OCTOCON_AUTH_CHALLENGE_GOOGLE_PARAMS")));
+
+    TryAddRedirectChallengeScheme(
+        builder.Services,
+        Env("OCTOCON_AUTH_CHALLENGE_APPLE_SCHEME") ?? "oauth-apple",
+        Env("OCTOCON_AUTH_CHALLENGE_APPLE_ENDPOINT"),
+        ParseAuthParameters(Env("OCTOCON_AUTH_CHALLENGE_APPLE_PARAMS")));
+}
 
 builder.Services.AddAuthorization(options =>
 {
@@ -313,4 +352,44 @@ app.MapControllers();
 app.Run();
 
 static string? Env(string key) => Environment.GetEnvironmentVariable(key);
+
+static Dictionary<string, string>? ParseAuthParameters(string? paramsString)
+{
+    if (string.IsNullOrWhiteSpace(paramsString))
+        return null;
+
+    var parameters = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+    var pairs = paramsString.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+    
+    foreach (var pair in pairs)
+    {
+        var keyValue = pair.Split('=', 2, StringSplitOptions.TrimEntries);
+        if (keyValue.Length == 2)
+        {
+            parameters[keyValue[0]] = keyValue[1];
+        }
+    }
+
+    return parameters.Count > 0 ? parameters : null;
+}
+
+static void TryAddRedirectChallengeScheme(
+    IServiceCollection services, 
+    string scheme, 
+    string? endpoint,
+    Dictionary<string, string>? additionalParameters = null)
+{
+    if (string.IsNullOrWhiteSpace(scheme) || string.IsNullOrWhiteSpace(endpoint))
+    {
+        return;
+    }
+
+    services
+        .AddAuthentication()
+        .AddScheme<RedirectChallengeOptions, RedirectChallengeAuthenticationHandler>(scheme, options =>
+        {
+            options.AuthorizationEndpoint = endpoint;
+            options.AdditionalParameters = additionalParameters;
+        });
+}
 

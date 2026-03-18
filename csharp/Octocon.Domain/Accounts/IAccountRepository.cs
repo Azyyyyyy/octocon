@@ -7,6 +7,14 @@ public sealed record AccountPublicProfileReadModel(
     string? AvatarUrl
 );
 
+public enum AccountLinkResult
+{
+    Success,
+    AlreadyLinked,
+    UserExists,
+    UserNotFound
+}
+
 public interface IAccountRepository
 {
     Task<bool> UpdateUsernameAsync(string systemId, string username, CancellationToken cancellationToken = default);
@@ -25,6 +33,22 @@ public interface IAccountRepository
     /// Safe to call on non-primary nodes.
     /// </summary>
     Task<string?> GetLinkTokenAsync(string systemId, CancellationToken cancellationToken = default);
+
+    Task<string?> ResolveSystemIdByLinkTokenAsync(string linkToken, CancellationToken cancellationToken = default);
+
+    Task<bool> ClearLinkTokenAsync(string systemId, CancellationToken cancellationToken = default);
+
+    Task<string?> FindSystemIdByDiscordIdAsync(string discordId, CancellationToken cancellationToken = default);
+
+    Task<string?> FindSystemIdByEmailAsync(string email, CancellationToken cancellationToken = default);
+
+    Task<string?> FindSystemIdByAppleIdAsync(string appleId, CancellationToken cancellationToken = default);
+
+    Task<AccountLinkResult> LinkDiscordToUserAsync(string systemId, string discordId, CancellationToken cancellationToken = default);
+
+    Task<AccountLinkResult> LinkEmailToUserAsync(string systemId, string email, CancellationToken cancellationToken = default);
+
+    Task<AccountLinkResult> LinkAppleToUserAsync(string systemId, string appleId, CancellationToken cancellationToken = default);
 
     Task<AccountPublicProfileReadModel?> GetPublicProfileAsync(string systemId, CancellationToken cancellationToken = default);
 }

@@ -35,6 +35,10 @@ public static class OperationIds
     public const string QueryTagPublicGet = "qry.tag.public.get";
     public const string QueryFrontPublicList = "qry.front.public.list";
     public const string QuerySystemPublicBatch = "qry.system.public.batch";
+    public const string QueryAuthOAuthRequest = "qry.auth.oauth.request";
+    public const string AuthOAuthCallback = "cmd.auth.oauth.callback";
+    public const string QueryAuthLinkRequest = "qry.auth.link.request";
+    public const string AuthLinkCallback = "cmd.auth.link.callback";
 
     // Legacy CLI name retained for backward compatibility with idempotency records
     public const string AccountUsernameUpdate = "cmd.account.username.update";

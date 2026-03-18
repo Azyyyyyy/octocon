@@ -10,6 +10,77 @@ namespace Octocon.IntegrationTests;
 public sealed class ApiAuthSmokeTests
 {
     [Test]
+    public async Task Api_AuthRequest_FallsBackTo403_WhenChallengeDisabled()
+    {
+        if (!ShouldRunApiIntegration())
+            return;
+
+        var workspaceRoot = FindWorkspaceRoot();
+        var port = GetFreePort();
+
+        await using var api = await StartApiAsync(
+            workspaceRoot,
+            port,
+            devPrincipalAllowed: true,
+            jwtAuthority: null);
+
+        using var client = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false })
+        {
+            BaseAddress = new Uri($"http://127.0.0.1:{port}")
+        };
+
+        var response = await client.GetAsync("/auth/google");
+        var body = await response.Content.ReadAsStringAsync();
+
+        Ensure(response.StatusCode == HttpStatusCode.Forbidden,
+            $"Expected /auth/google fallback 403 when challenge is disabled, got {(int)response.StatusCode}. Body: {body}");
+    }
+
+    [Test]
+    public async Task Api_AuthRequest_IssuesChallengeRedirect_WhenChallengeEnabledAndSchemeConfigured()
+    {
+        if (!ShouldRunApiIntegration())
+            return;
+
+        var workspaceRoot = FindWorkspaceRoot();
+        var port = GetFreePort();
+
+        await using var api = await StartApiAsync(
+            workspaceRoot,
+            port,
+            devPrincipalAllowed: true,
+            jwtAuthority: null,
+            additionalEnv: new Dictionary<string, string?>
+            {
+                ["OCTOCON_AUTH_CHALLENGE_ENABLED"] = "true",
+                ["OCTOCON_AUTH_CHALLENGE_GOOGLE_SCHEME"] = "oauth-google",
+                ["OCTOCON_AUTH_CHALLENGE_GOOGLE_ENDPOINT"] = "https://accounts.example.test/oauth/authorize"
+            });
+
+        using var client = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false })
+        {
+            BaseAddress = new Uri($"http://127.0.0.1:{port}")
+        };
+
+        var response = await client.GetAsync("/auth/google");
+        var body = await response.Content.ReadAsStringAsync();
+
+        Ensure(response.StatusCode is HttpStatusCode.Redirect or HttpStatusCode.Found,
+            $"Expected /auth/google challenge redirect when enabled, got {(int)response.StatusCode}. Body: {body}");
+
+        var locationHeader = response.Headers.Location;
+        Ensure(locationHeader is not null,
+            "Expected redirect Location header from /auth/google challenge response.");
+
+        var location = locationHeader!.ToString();
+        Ensure(location.StartsWith("https://accounts.example.test/oauth/authorize", StringComparison.Ordinal),
+            $"Expected challenge redirect to configured endpoint. Location: {location}");
+
+        Ensure(location.Contains("redirect_uri=%2Fauth%2Fgoogle%2Fcallback", StringComparison.Ordinal),
+            $"Expected challenge redirect to include encoded callback redirect_uri. Location: {location}");
+    }
+
+    [Test]
     public async Task Api_AuthAndIdempotencyFlow_WorksInDevHeaderMode()
     {
         if (!ShouldRunApiIntegration())
@@ -85,6 +156,103 @@ public sealed class ApiAuthSmokeTests
 
         Ensure(combined.Contains("OCTOCON_JWT_AUTHORITY", StringComparison.Ordinal),
             $"Expected startup guardrail message mentioning OCTOCON_JWT_AUTHORITY. Output: {combined}");
+    }
+
+    [Test]
+    public async Task Api_OAuthCallback_IssuesJwsCompactSerializationToken()
+    {
+        if (!ShouldRunApiIntegration())
+            return;
+
+        var workspaceRoot = FindWorkspaceRoot();
+        var port = GetFreePort();
+
+        await using var api = await StartApiAsync(
+            workspaceRoot,
+            port,
+            devPrincipalAllowed: true,
+            jwtAuthority: "test-authority",
+            additionalEnv: new Dictionary<string, string?>
+            {
+                ["OCTOCON_DEEPLINK_ADDRESS"] = "octocon://app",
+                ["OCTOCON_REGION"] = "nam"
+            });
+
+        using var client = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false })
+        {
+            BaseAddress = new Uri($"http://127.0.0.1:{port}")
+        };
+
+        var discordUid = $"jws-test-{Guid.NewGuid():N}";
+        var response = await client.GetAsync($"/auth/discord/callback?uid={Uri.EscapeDataString(discordUid)}");
+
+        Ensure(
+            response.StatusCode is HttpStatusCode.Redirect or HttpStatusCode.Found
+                or HttpStatusCode.MovedPermanently or HttpStatusCode.TemporaryRedirect
+                or HttpStatusCode.PermanentRedirect,
+            $"Expected a redirect from /auth/discord/callback, got {(int)response.StatusCode}.");
+
+        var location = response.Headers.Location
+            ?? throw new InvalidOperationException("Expected Location header in redirect response.");
+
+        var query = System.Web.HttpUtility.ParseQueryString(location.Query);
+        var token = query["token"];
+
+        Ensure(!string.IsNullOrWhiteSpace(token),
+            $"Expected 'token' query parameter in redirect URL. Location: {location}");
+
+        // JWS Compact Serialization must have exactly 3 dot-separated segments.
+        var segments = token!.Split('.');
+        Ensure(segments.Length == 3,
+            $"Expected exactly 3 dot-separated JWS segments, got {segments.Length}. Token: {token}");
+
+        // Each segment must be valid base64url (no '+', '/', '=' characters).
+        foreach (var (segment, index) in segments.Select((s, i) => (s, i)))
+        {
+            Ensure(!string.IsNullOrWhiteSpace(segment),
+                $"JWS segment {index} must not be empty. Token: {token}");
+            Ensure(!segment.Contains('+') && !segment.Contains('/') && !segment.Contains('='),
+                $"JWS segment {index} contains invalid base64url characters. Segment: {segment}");
+        }
+
+        // Decode and validate the header.
+        var headerBytes = Base64UrlDecodeBytes(segments[0]);
+        using var headerDoc = System.Text.Json.JsonDocument.Parse(headerBytes);
+        var alg = headerDoc.RootElement.GetProperty("alg").GetString();
+        var typ = headerDoc.RootElement.GetProperty("typ").GetString();
+        Ensure(string.Equals(alg, "HS256", StringComparison.Ordinal),
+            $"Expected JWS header alg=HS256, got {alg}.");
+        Ensure(string.Equals(typ, "JWT", StringComparison.Ordinal),
+            $"Expected JWS header typ=JWT, got {typ}.");
+
+        // Decode and validate the payload.
+        var payloadBytes = Base64UrlDecodeBytes(segments[1]);
+        using var payloadDoc = System.Text.Json.JsonDocument.Parse(payloadBytes);
+        var root = payloadDoc.RootElement;
+
+        Ensure(root.TryGetProperty("iss", out var iss) && iss.GetString() == "test-authority",
+            $"Expected payload iss=test-authority. Payload: {System.Text.Encoding.UTF8.GetString(payloadBytes)}");
+
+        Ensure(root.TryGetProperty("sub", out var sub) && !string.IsNullOrWhiteSpace(sub.GetString()),
+            $"Expected non-empty payload sub. Payload: {System.Text.Encoding.UTF8.GetString(payloadBytes)}");
+
+        long iatVal = 0, expVal = 0;
+
+        Ensure(root.TryGetProperty("iat", out var iat) && iat.TryGetInt64(out iatVal) && iatVal > 0,
+            "Expected positive payload iat claim.");
+
+        Ensure(root.TryGetProperty("nbf", out var nbf) && nbf.TryGetInt64(out _),
+            "Expected payload nbf claim.");
+
+        Ensure(root.TryGetProperty("exp", out var exp) && exp.TryGetInt64(out expVal) && expVal > iatVal,
+            $"Expected payload exp > iat. iat={iatVal}, exp={expVal}.");
+
+        Ensure(root.TryGetProperty("jti", out var jti) && !string.IsNullOrWhiteSpace(jti.GetString()),
+            "Expected non-empty payload jti claim.");
+
+        Ensure(root.TryGetProperty("scope", out var scope) &&
+               string.Equals(scope.GetString(), "octocon:deeplink", StringComparison.Ordinal),
+            $"Expected payload scope=octocon:deeplink. Got: {scope.GetString()}");
     }
 
     [Test]
@@ -320,10 +488,11 @@ public sealed class ApiAuthSmokeTests
         string workspaceRoot,
         int port,
         bool devPrincipalAllowed,
-        string? jwtAuthority)
+        string? jwtAuthority,
+        IReadOnlyDictionary<string, string?>? additionalEnv = null)
     {
         var gateLease = await ApiProcessGate.AcquireAsync();
-        var process = StartApiProcess(workspaceRoot, port, devPrincipalAllowed, jwtAuthority);
+        var process = StartApiProcess(workspaceRoot, port, devPrincipalAllowed, jwtAuthority, additionalEnv);
 
         using var http = new HttpClient { BaseAddress = new Uri($"http://127.0.0.1:{port}") };
         var ready = await WaitForApiReadyAsync(process, http, timeoutMs: 30000);
@@ -346,7 +515,8 @@ public sealed class ApiAuthSmokeTests
         string workspaceRoot,
         int port,
         bool devPrincipalAllowed,
-        string? jwtAuthority)
+        string? jwtAuthority,
+        IReadOnlyDictionary<string, string?>? additionalEnv = null)
     {
         var apiProjectPath = Path.Combine(workspaceRoot, "csharp", "Octocon.Api", "Octocon.Api.csproj");
 
@@ -371,6 +541,14 @@ public sealed class ApiAuthSmokeTests
         else
         {
             psi.Environment["OCTOCON_JWT_AUTHORITY"] = jwtAuthority;
+        }
+
+        if (additionalEnv is not null)
+        {
+            foreach (var kvp in additionalEnv)
+            {
+                psi.Environment[kvp.Key] = kvp.Value ?? string.Empty;
+            }
         }
 
         var process = new Process { StartInfo = psi };
@@ -414,6 +592,18 @@ public sealed class ApiAuthSmokeTests
     {
         if (!condition)
             throw new InvalidOperationException(message);
+    }
+
+    private static byte[] Base64UrlDecodeBytes(string base64Url)
+    {
+        var padded = base64Url.Replace('-', '+').Replace('_', '/');
+        padded = (padded.Length % 4) switch
+        {
+            2 => padded + "==",
+            3 => padded + "=",
+            _ => padded
+        };
+        return Convert.FromBase64String(padded);
     }
 
     private sealed class RunningApi : IAsyncDisposable
