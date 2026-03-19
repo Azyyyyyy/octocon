@@ -2,6 +2,14 @@
 
 **Octocon is the modern, all-in-one toolkit for people with DID and OSDD to manage their disorder and express themselves.**
 
+> [!WARNING]  
+> This branch is currently heavily AI generated and only gets the Octocon client loaded up to the Alters page.
+> A lot of work is pending to get a new backend built with love and care, please be patient <3
+
+> [!NOTE]
+> #### **Wewww you used AI!!**
+> Yes I did, but in light of the likely timeframe for getting something in a functional state before the shutdown of the offical server, this realistically was the only way with the workload I have in my day-to-day life. I am fully aware that the codebase will is not.. great. We will be working on making it a LOT better with actual love and care (and ☕) 
+
 It's also a
 wacky monolith built with [Elixir](https://elixir-lang.org/), [Phoenix](https://www.phoenixframework.org/),
 and [ScyllaDB](https://www.scylladb.com/), deployed on a combination of [cloud infrastructure](https://fly.io/) and bare-metal hardware!
