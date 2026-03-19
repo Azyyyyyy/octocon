@@ -280,7 +280,7 @@ public sealed class ScyllaSettingsFieldRepository : ISettingsFieldRepository
 
         session.UserDefinedTypes.Define(
             UdtMap
-                .For<UserFieldUdt>(keyspace, "field")
+                .For<UserFieldUdt>("field", keyspace)
                 .Map(f => f.Id, "id")
                 .Map(f => f.Name, "name")
                 .Map(f => f.Type, "type")

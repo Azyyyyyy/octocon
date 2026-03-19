@@ -37,7 +37,7 @@ public sealed class ScyllaEncryptionStateRepository : IEncryptionStateRepository
             return row is null
                 ? null
                 : new EncryptionState(
-                    row.GetValue<bool>("encryption_initialized"),
+                    row.GetValue<bool?>("encryption_initialized") ?? false,
                     row.GetValue<string?>("encryption_key_checksum"));
         }, _options, cancellationToken);
     }

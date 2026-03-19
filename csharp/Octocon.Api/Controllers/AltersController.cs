@@ -30,6 +30,34 @@ public sealed class AltersController : OctoconControllerBase
         _avatarStorage = avatarStorage;
     }
 
+    [HttpGet]
+    public async Task<IActionResult> List(CancellationToken ct)
+    {
+        var principal = GetPrincipalId();
+        if (principal is null) return Unauthorized();
+
+        var alters = await _alterRepository.ListAsync(principal, ct);
+        return Ok(new { data = alters });
+    }
+
+    [HttpGet("{id}")]
+    public async Task<IActionResult> Show(string id, CancellationToken ct)
+    {
+        var principal = GetPrincipalId();
+        if (principal is null) return Unauthorized();
+
+        if (!TryParseAlterId(id, out var alterId))
+            return BadRequest(new { error = "Invalid alter ID.", code = "invalid_alter_id" });
+
+        var alter = await _alterRepository.GetAsync(principal, alterId, ct);
+        if (alter is null)
+        {
+            return NotFound(new { error = "Alter not found.", code = "alter_not_found" });
+        }
+
+        return Ok(new { data = alter });
+    }
+
     [HttpPost]
     public async Task<IActionResult> Create([FromBody] CreateAlterRequest req, CancellationToken ct)
     {

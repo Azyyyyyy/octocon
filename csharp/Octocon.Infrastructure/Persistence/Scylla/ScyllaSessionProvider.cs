@@ -27,7 +27,12 @@ public sealed class ScyllaSessionProvider : IScyllaSessionProvider
         {
             var builder = Cluster.Builder()
                 .AddContactPoints(_options.ScyllaContactPoints)
-                .WithLoadBalancingPolicy(new DCAwareRoundRobinPolicy(_options.ScyllaLocalDatacenter));
+                .WithLoadBalancingPolicy(new DCAwareRoundRobinPolicy(_options.ScyllaLocalDatacenter))
+                .WithReconnectionPolicy(new ExponentialReconnectionPolicy(1000, 30000))
+                .WithQueryTimeout(10000)
+                .WithSocketOptions(new SocketOptions()
+                    .SetConnectTimeoutMillis(10000)
+                    .SetKeepAlive(true));
 
             if (!string.IsNullOrWhiteSpace(_options.ScyllaUsername))
             {

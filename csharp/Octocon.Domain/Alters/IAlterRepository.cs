@@ -1,19 +1,42 @@
+using System.Text.Json.Serialization;
+
 namespace Octocon.Domain.Alters;
 
 public sealed record AlterPublicFieldReadModel(string Id, string Name, string Type, string? Value);
 
-public sealed record AlterPublicReadModel(
-    int AlterId,
-    string Name,
-    string? Alias,
-    IReadOnlyList<AlterPublicFieldReadModel>? Fields = null
-);
+public sealed class AlterPublicReadModel {
 
+    public AlterPublicReadModel(
+        int id,
+        string name,
+        string? alias,
+        IReadOnlyList<AlterPublicFieldReadModel>? fields = null,
+        VisibilityLevel securityLevel = VisibilityLevel.Public)
+    {
+        Id = id;
+        Name = name;
+        Alias = alias;
+        Fields = fields;
+        SecurityLevel = securityLevel;
+    }
+
+    public int Id { get; set; }
+    public string Name { get; set; }
+    public string? Alias { get; set; }
+    public IReadOnlyList<AlterPublicFieldReadModel>? Fields { get; set; }
+    public VisibilityLevel SecurityLevel { get; set; }
+}
+
+[JsonConverter(typeof(JsonStringEnumConverter))]
 public enum VisibilityLevel
 {
+    [JsonStringEnumMemberName("public")]
     Public = 0,
+    [JsonStringEnumMemberName("friends_only")]
     FriendsOnly = 1,
+    [JsonStringEnumMemberName("trusted_only")]
     TrustedOnly = 2,
+    [JsonStringEnumMemberName("private")]
     Private = 3
 }
 

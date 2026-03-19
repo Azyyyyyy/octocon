@@ -192,7 +192,7 @@ public sealed class ScyllaAlterRepository : IAlterRepository
             var keyspace = _keyspaceResolver.ResolveRegionalKeyspace(systemId);
 
             var query = new SimpleStatement(
-                $"SELECT id, name, alias FROM {keyspace}.alters WHERE user_id = ?",
+                $"SELECT id, name, alias, security_level, fields FROM {keyspace}.alters WHERE user_id = ?",
                 normalizedSystemId
             );
 
@@ -201,9 +201,10 @@ public sealed class ScyllaAlterRepository : IAlterRepository
                 .Select(row => new AlterPublicReadModel(
                     row.GetValue<short>("id"),
                     row.GetValue<string>("name"),
-                    row.GetValue<string?>("alias")))
-                // VERIFIED: 2026-03-17 Elixir alters.ex:168,187 uses Enum.sort_by(& &1.id, :asc). Matches C# OrderBy.
-                .OrderBy(x => x.AlterId)
+                    row.GetValue<string?>("alias"),
+                    row.GetValue<List<AlterPublicFieldReadModel>?>("fields") ?? [],
+                    ResolveVisibilityLevel(row.GetValue<short?>("security_level"))))
+                .OrderBy(x => x.Id)
                 .ToArray();
         }, _options, cancellationToken, _logger);
     }
@@ -235,7 +236,7 @@ public sealed class ScyllaAlterRepository : IAlterRepository
                     row.GetValue<string>("name"),
                     row.GetValue<string?>("alias"),
                     ResolveGuardedFields(row.GetValue<IEnumerable<AlterFieldUdt>?>("fields"), definitions)))
-                .OrderBy(x => x.AlterId)
+                .OrderBy(x => x.Id)
                 .ToArray();
         }, _options, cancellationToken, _logger);
     }
@@ -249,7 +250,7 @@ public sealed class ScyllaAlterRepository : IAlterRepository
             var keyspace = _keyspaceResolver.ResolveRegionalKeyspace(systemId);
 
             var query = new SimpleStatement(
-                $"SELECT id, name, alias FROM {keyspace}.alters WHERE user_id = ? AND id = ? LIMIT 1",
+                $"SELECT id, name, alias, fields, security_level FROM {keyspace}.alters WHERE user_id = ? AND id = ? LIMIT 1",
                 normalizedSystemId,
                 (short)alterId
             );
@@ -260,7 +261,9 @@ public sealed class ScyllaAlterRepository : IAlterRepository
                 : new AlterPublicReadModel(
                     row.GetValue<short>("id"),
                     row.GetValue<string>("name"),
-                    row.GetValue<string?>("alias"));
+                    row.GetValue<string?>("alias"),
+                    row.GetValue<List<AlterPublicFieldReadModel>?>("fields") ?? [],
+                    ResolveVisibilityLevel(row.GetValue<short?>("security_level")));
         }, _options, cancellationToken, _logger);
     }
 
@@ -433,7 +436,7 @@ public sealed class ScyllaAlterRepository : IAlterRepository
         }
 
         session.UserDefinedTypes.Define(
-            UdtMap.For<AlterFieldUdt>(keyspace, "alter_field")
+            UdtMap.For<AlterFieldUdt>("alter_field", keyspace)
                 .Map(f => f.Id, "id")
                 .Map(f => f.Value, "value"));
 

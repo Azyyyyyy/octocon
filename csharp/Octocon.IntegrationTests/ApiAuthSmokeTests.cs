@@ -2,6 +2,8 @@ using System.Diagnostics;
 using System.Net;
 using System.Net.Http.Json;
 using System.Net.Sockets;
+using System.Net.WebSockets;
+using System.Text;
 using System.Text.Json;
 using TUnit.Core;
 
@@ -129,6 +131,49 @@ public sealed class ApiAuthSmokeTests
             $"Expected replay alter-create 201, got {(int)second.StatusCode}. Body: {second.Body}");
         Ensure(ReadReplay(second.Body) == true,
             $"Expected replay alter-create replay=true. Body: {second.Body}");
+
+        using var listReq = new HttpRequestMessage(HttpMethod.Get, "/api/systems/me/alters");
+        listReq.Headers.Add("X-Octocon-Dev-Principal", "sys-api-smoke");
+        var listRes = await client.SendAsync(listReq);
+        var listBody = await listRes.Content.ReadAsStringAsync();
+        Ensure(listRes.StatusCode == HttpStatusCode.OK,
+            $"Expected alters list 200, got {(int)listRes.StatusCode}. Body: {listBody}");
+
+        using var listDoc = JsonDocument.Parse(listBody);
+        Ensure(listDoc.RootElement.TryGetProperty("data", out var altersData) && altersData.ValueKind == JsonValueKind.Array,
+            $"Expected alters list response to include data array. Body: {listBody}");
+
+        int? createdAlterId = null;
+        foreach (var item in altersData.EnumerateArray())
+        {
+            if (!item.TryGetProperty("name", out var nameProp)
+                || !string.Equals(nameProp.GetString(), "IntegrationOne", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            if (item.TryGetProperty("alterId", out var idProp) && idProp.TryGetInt32(out var parsedId))
+            {
+                createdAlterId = parsedId;
+                break;
+            }
+        }
+
+        Ensure(createdAlterId.HasValue,
+            $"Expected to find created alter in GET /api/systems/me/alters response. Body: {listBody}");
+
+        var createdId = createdAlterId.GetValueOrDefault();
+
+        using var showReq = new HttpRequestMessage(HttpMethod.Get, $"/api/systems/me/alters/{createdId}");
+        showReq.Headers.Add("X-Octocon-Dev-Principal", "sys-api-smoke");
+        var showRes = await client.SendAsync(showReq);
+        var showBody = await showRes.Content.ReadAsStringAsync();
+        Ensure(showRes.StatusCode == HttpStatusCode.OK,
+            $"Expected alter show 200, got {(int)showRes.StatusCode}. Body: {showBody}");
+
+        using var showDoc = JsonDocument.Parse(showBody);
+        Ensure(showDoc.RootElement.TryGetProperty("data", out var showData) && showData.ValueKind == JsonValueKind.Object,
+            $"Expected alter show response to include data object. Body: {showBody}");
     }
 
     [Test]
@@ -156,6 +201,181 @@ public sealed class ApiAuthSmokeTests
 
         Ensure(combined.Contains("OCTOCON_JWT_AUTHORITY", StringComparison.Ordinal),
             $"Expected startup guardrail message mentioning OCTOCON_JWT_AUTHORITY. Output: {combined}");
+    }
+
+    [Test]
+    public async Task Api_UserSocketEndpoint_AllowsWebSocketUpgrade_WithToken()
+    {
+        if (!ShouldRunApiIntegration())
+            return;
+
+        var workspaceRoot = FindWorkspaceRoot();
+        var port = GetFreePort();
+
+        await using var api = await StartApiAsync(
+            workspaceRoot,
+            port,
+            devPrincipalAllowed: true,
+            jwtAuthority: null);
+
+        using var ws = new ClientWebSocket();
+        const string socketToken = "integration-test-token";
+        var uri = new Uri($"ws://127.0.0.1:{port}/api/socket?token={socketToken}");
+        await ws.ConnectAsync(uri, CancellationToken.None);
+
+        Ensure(ws.State == WebSocketState.Open,
+            $"Expected websocket to be open after connecting to /api/socket, got {ws.State}.");
+
+        var buffer = new byte[2048];
+        var received = await ws.ReceiveAsync(buffer, CancellationToken.None);
+        var message = Encoding.UTF8.GetString(buffer, 0, received.Count);
+
+        Ensure(received.MessageType == WebSocketMessageType.Text,
+            $"Expected text frame from /api/socket, got {received.MessageType}.");
+        Ensure(message.Contains("system:socket_ready", StringComparison.Ordinal),
+            $"Expected socket readiness event, got payload: {message}");
+
+        var arrayJoinFrame =
+            "[" +
+            "\"51\"," +
+            "\"51\"," +
+            "\"system:sys-phx-join\"," +
+            "\"phx_join\"," +
+            "{" +
+            "\"token\":\"" + socketToken + "\"," +
+            "\"protocolVersion\":\"2.0.0\"," +
+            "\"platform\":\"wasm\"," +
+            "\"isReconnect\":true" +
+            "}" +
+            "]";
+
+        var arrayJoinBytes = Encoding.UTF8.GetBytes(arrayJoinFrame);
+        await ws.SendAsync(arrayJoinBytes, WebSocketMessageType.Text, endOfMessage: true, CancellationToken.None);
+
+        var arrayJoinReply = await ReceiveWebSocketTextAsync(ws);
+        using var arrayJoinDoc = JsonDocument.Parse(arrayJoinReply);
+        var arrayRoot = arrayJoinDoc.RootElement;
+
+        Ensure(arrayRoot.ValueKind == JsonValueKind.Array,
+            $"Expected array-frame reply for array-frame request. Payload: {arrayJoinReply}");
+        Ensure(arrayRoot.GetArrayLength() >= 5,
+            $"Expected 5-element Phoenix array reply. Payload: {arrayJoinReply}");
+        Ensure(string.Equals(arrayRoot[0].GetString(), "51", StringComparison.Ordinal),
+            $"Expected join_ref=51 in array reply. Payload: {arrayJoinReply}");
+        Ensure(string.Equals(arrayRoot[1].GetString(), "51", StringComparison.Ordinal),
+            $"Expected ref=51 in array reply. Payload: {arrayJoinReply}");
+        Ensure(string.Equals(arrayRoot[2].GetString(), "system:sys-phx-join", StringComparison.Ordinal),
+            $"Expected topic to match array join topic. Payload: {arrayJoinReply}");
+        Ensure(string.Equals(arrayRoot[3].GetString(), "phx_reply", StringComparison.Ordinal),
+            $"Expected array reply event phx_reply. Payload: {arrayJoinReply}");
+
+        var arrayPayload = arrayRoot[4];
+        Ensure(string.Equals(arrayPayload.GetProperty("status").GetString(), "ok", StringComparison.Ordinal),
+            $"Expected array join status=ok. Payload: {arrayJoinReply}");
+        Ensure(arrayPayload.GetProperty("response").ValueKind == JsonValueKind.Object,
+            $"Expected reconnect join response object in array reply. Payload: {arrayJoinReply}");
+
+        var joinFrame =
+            "{" +
+            "\"topic\":\"system:sys-phx-join\"," +
+            "\"event\":\"phx_join\"," +
+            "\"payload\":{\"token\":\"" + socketToken + "\"}," +
+            "\"ref\":\"1\"," +
+            "\"join_ref\":\"1\"" +
+            "}";
+
+        var joinBytes = Encoding.UTF8.GetBytes(joinFrame);
+        await ws.SendAsync(joinBytes, WebSocketMessageType.Text, endOfMessage: true, CancellationToken.None);
+
+        var joinReply = await ReceiveWebSocketTextAsync(ws);
+
+        using var joinDoc = JsonDocument.Parse(joinReply);
+        var root = joinDoc.RootElement;
+
+        Ensure(string.Equals(root.GetProperty("event").GetString(), "phx_reply", StringComparison.Ordinal),
+            $"Expected Phoenix phx_reply event, got payload: {joinReply}");
+        Ensure(string.Equals(root.GetProperty("topic").GetString(), "system:sys-phx-join", StringComparison.Ordinal),
+            $"Expected join reply topic to match requested topic. Payload: {joinReply}");
+
+        var payload = root.GetProperty("payload");
+        Ensure(string.Equals(payload.GetProperty("status").GetString(), "ok", StringComparison.Ordinal),
+            $"Expected phx_join status=ok, got payload: {joinReply}");
+
+        var response = payload.GetProperty("response");
+        Ensure(response.TryGetProperty("system", out _),
+            $"Expected phx_join response to include 'system' key. Payload: {joinReply}");
+        Ensure(response.TryGetProperty("alters", out var altersEl) && altersEl.ValueKind == JsonValueKind.Array,
+            $"Expected phx_join response to include 'alters' array. Payload: {joinReply}");
+        Ensure(response.TryGetProperty("fronts", out var frontsEl) && frontsEl.ValueKind == JsonValueKind.Array,
+            $"Expected phx_join response to include 'fronts' array. Payload: {joinReply}");
+        Ensure(response.TryGetProperty("tags", out var tagsEl) && tagsEl.ValueKind == JsonValueKind.Array,
+            $"Expected phx_join response to include 'tags' array. Payload: {joinReply}");
+
+        var endpointFrame =
+            "{" +
+            "\"topic\":\"system:sys-phx-join\"," +
+            "\"event\":\"endpoint\"," +
+            "\"payload\":{" +
+            "\"method\":\"GET\"," +
+            "\"path\":\"/api/heartbeat\"," +
+            "\"body\":{}" +
+            "}," +
+            "\"ref\":\"2\"," +
+            "\"join_ref\":\"1\"" +
+            "}";
+
+        var endpointBytes = Encoding.UTF8.GetBytes(endpointFrame);
+        await ws.SendAsync(endpointBytes, WebSocketMessageType.Text, endOfMessage: true, CancellationToken.None);
+
+        var endpointReply = await ReceiveWebSocketTextAsync(ws);
+        using var endpointDoc = JsonDocument.Parse(endpointReply);
+        var endpointRoot = endpointDoc.RootElement;
+
+        Ensure(string.Equals(endpointRoot.GetProperty("event").GetString(), "phx_reply", StringComparison.Ordinal),
+            $"Expected endpoint reply to use phx_reply event. Payload: {endpointReply}");
+
+        var endpointPayload = endpointRoot.GetProperty("payload");
+        Ensure(string.Equals(endpointPayload.GetProperty("status").GetString(), "ok", StringComparison.Ordinal),
+            $"Expected endpoint event status=ok envelope. Payload: {endpointReply}");
+
+        var endpointResponse = endpointPayload.GetProperty("response");
+        Ensure(endpointResponse.GetProperty("status").GetInt32() == 200,
+            $"Expected proxied /api/heartbeat status=200. Payload: {endpointReply}");
+
+        var proxiedBody = endpointResponse.GetProperty("body").GetString() ?? string.Empty;
+        Ensure(proxiedBody.Contains("ACK", StringComparison.Ordinal),
+            $"Expected proxied heartbeat body to include ACK. Body: {proxiedBody}");
+
+        var createAlterFrame =
+            "{" +
+            "\"topic\":\"system:sys-phx-join\"," +
+            "\"event\":\"endpoint\"," +
+            "\"payload\":{" +
+            "\"method\":\"POST\"," +
+            "\"path\":\"/api/systems/me/alters\"," +
+            "\"body\":{\"name\":\"SocketCreate\"}" +
+            "}," +
+            "\"ref\":\"3\"," +
+            "\"join_ref\":\"1\"" +
+            "}";
+
+        var createAlterBytes = Encoding.UTF8.GetBytes(createAlterFrame);
+        await ws.SendAsync(createAlterBytes, WebSocketMessageType.Text, endOfMessage: true, CancellationToken.None);
+
+        var createAlterReply = await ReceiveWebSocketTextAsync(ws);
+        using var createAlterDoc = JsonDocument.Parse(createAlterReply);
+        var createAlterRoot = createAlterDoc.RootElement;
+        var createAlterPayload = createAlterRoot.GetProperty("payload");
+        var createAlterResponse = createAlterPayload.GetProperty("response");
+
+        Ensure(createAlterResponse.GetProperty("status").GetInt32() == 201,
+            $"Expected proxied alter-create status=201. Payload: {createAlterReply}");
+
+        var createAlterBody = createAlterResponse.GetProperty("body").GetString() ?? string.Empty;
+        Ensure(ReadReplay(createAlterBody) == false,
+            $"Expected first socket-proxied alter-create replay=false. Body: {createAlterBody}");
+
+        await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "test done", CancellationToken.None);
     }
 
     [Test]
@@ -586,6 +806,26 @@ public sealed class ApiAuthSmokeTests
     {
         var completed = await Task.WhenAny(process.WaitForExitAsync(), Task.Delay(timeoutMs));
         return completed.IsCompletedSuccessfully && process.HasExited;
+    }
+
+    private static async Task<string> ReceiveWebSocketTextAsync(ClientWebSocket ws)
+    {
+        var buffer = new byte[4096];
+        using var stream = new MemoryStream();
+
+        while (true)
+        {
+            var chunk = await ws.ReceiveAsync(buffer, CancellationToken.None);
+            Ensure(chunk.MessageType == WebSocketMessageType.Text,
+                $"Expected websocket text frame, got {chunk.MessageType}.");
+
+            await stream.WriteAsync(buffer.AsMemory(0, chunk.Count));
+
+            if (chunk.EndOfMessage)
+            {
+                return Encoding.UTF8.GetString(stream.ToArray());
+            }
+        }
     }
 
     private static void Ensure(bool condition, string message)
