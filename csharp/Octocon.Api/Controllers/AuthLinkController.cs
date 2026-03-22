@@ -1,6 +1,8 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Mvc;
+using Octocon.Api.Socket;
+using Octocon.Domain.Abstractions;
 using Octocon.Contracts.Operations;
 using Octocon.Domain.Accounts;
 using Octocon.Api;
@@ -18,17 +20,20 @@ public sealed class AuthLinkController : ControllerBase
     private readonly ApiSettings _apiSettings;
     private readonly IAuthenticationSchemeProvider _schemeProvider;
     private readonly GoogleOAuthService _googleOAuth;
+    private readonly IClusterEventBus _eventBus;
 
     public AuthLinkController(
         IAccountRepository accounts,
         ApiSettings apiSettings,
         IAuthenticationSchemeProvider schemeProvider,
-        GoogleOAuthService googleOAuth)
+        GoogleOAuthService googleOAuth,
+        IClusterEventBus eventBus)
     {
         _accounts = accounts;
         _apiSettings = apiSettings;
         _schemeProvider = schemeProvider;
         _googleOAuth = googleOAuth;
+        _eventBus = eventBus;
     }
 
     private static readonly HashSet<string> SupportedProviders = new(StringComparer.OrdinalIgnoreCase)
@@ -146,7 +151,7 @@ public sealed class AuthLinkController : ControllerBase
 
         return result switch
         {
-            AccountLinkResult.Success => Redirect($"{_apiSettings.DeepEndpointAddress}/link_success/{providerKey}"),
+            AccountLinkResult.Success => await RedirectWithSocketEventAsync(systemId, providerKey, identity),
             AccountLinkResult.AlreadyLinked => StatusCode(StatusCodes.Status403Forbidden, new
             {
                 error = providerKey switch
@@ -169,6 +174,32 @@ public sealed class AuthLinkController : ControllerBase
             }),
             _ => StatusCode(StatusCodes.Status403Forbidden, new { error = "System not found" })
         };
+    }
+
+    private async Task<IActionResult> RedirectWithSocketEventAsync(string systemId, string providerKey, string identity)
+    {
+        var eventName = providerKey switch
+        {
+            "discord" => "discord_account_linked",
+            "google" => "google_account_linked",
+            "apple" => "apple_account_linked",
+            _ => "account_linked"
+        };
+
+        object payload = providerKey switch
+        {
+            "discord" => new { discord_id = identity },
+            "google" => new { email = identity },
+            "apple" => new { apple_id = identity },
+            _ => new { }
+        };
+
+        await _eventBus.PublishAsync(new SocketRawPushEvent(
+            systemId,
+            eventName,
+            System.Text.Json.JsonSerializer.Serialize(payload)), HttpContext.RequestAborted);
+
+        return Redirect($"{_apiSettings.DeepEndpointAddress}/link_success/{providerKey}");
     }
 
     private async Task<string?> ExtractProviderIdentityAsync(string provider)

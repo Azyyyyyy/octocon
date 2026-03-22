@@ -10,15 +10,18 @@ public sealed class SendFriendRequestCommandHandler : ICommandHandler<SendFriend
     private readonly IFriendshipRepository _repository;
     private readonly IIdempotencyStore _idempotencyStore;
     private readonly IAggregateVersionStore _versionStore;
+    private readonly IClusterEventBus _eventBus;
 
     public SendFriendRequestCommandHandler(
         IFriendshipRepository repository,
         IIdempotencyStore idempotencyStore,
-        IAggregateVersionStore versionStore)
+        IAggregateVersionStore versionStore,
+        IClusterEventBus eventBus)
     {
         _repository = repository;
         _idempotencyStore = idempotencyStore;
         _versionStore = versionStore;
+        _eventBus = eventBus;
     }
 
     public async Task<CommandExecutionResult<FriendshipCommandResult>> HandleAsync(
@@ -91,6 +94,41 @@ public sealed class SendFriendRequestCommandHandler : ICommandHandler<SendFriend
             CommandSerialization.Hash(resultJson),
             resultJson,
             cancellationToken);
+
+        if (outcome is SendFriendRequestOutcome.Accepted)
+        {
+            await _eventBus.PublishAsync(new FriendshipSocketEvent(
+                command.PrincipalId,
+                "friend_added",
+                "system_id",
+                command.Payload.TargetSystemId), cancellationToken);
+
+            await _eventBus.PublishAsync(new FriendshipSocketEvent(
+                command.Payload.TargetSystemId,
+                "friend_added",
+                "system_id",
+                command.PrincipalId), cancellationToken);
+
+            await _eventBus.PublishAsync(new FriendshipSocketEvent(
+                command.Payload.TargetSystemId,
+                "friend_request_removed",
+                "to",
+                command.PrincipalId), cancellationToken);
+        }
+        else
+        {
+            await _eventBus.PublishAsync(new FriendshipSocketEvent(
+                command.PrincipalId,
+                "friend_request_sent",
+                "to",
+                command.Payload.TargetSystemId), cancellationToken);
+
+            await _eventBus.PublishAsync(new FriendshipSocketEvent(
+                command.Payload.TargetSystemId,
+                "friend_request_received",
+                "from",
+                command.PrincipalId), cancellationToken);
+        }
 
         return CommandExecutionResult<FriendshipCommandResult>.Success(result);
     }

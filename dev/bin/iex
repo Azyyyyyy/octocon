@@ -1,4 +1,0 @@
-#!/bin/bash
-set -euxo pipefail
-
-docker compose -f docker-compose.dev.yml exec octocon-app iex -S mix phx.server

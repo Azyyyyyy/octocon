@@ -8,7 +8,7 @@
 
 > [!NOTE]
 > #### **Wewww you used AI!!**
-> Yes I did, but in light of the likely timeframe for getting something in a functional state before the shutdown of the offical server, this realistically was the only way with the workload I have in my day-to-day life. I am fully aware that the codebase will is not.. great. We will be working on making it a LOT better with actual love and care (and ☕) 
+> Yes I did, but in light of the likely timeframe for getting something in a functional state before the shutdown of the offical server, this realistically was the only way with the workload I have in my day-to-day life. I am fully aware that the codebase is not.. great. We will be working on making it a LOT better with actual love and care (and ☕) 
 
 It's also a
 wacky monolith built with [Elixir](https://elixir-lang.org/), [Phoenix](https://www.phoenixframework.org/),

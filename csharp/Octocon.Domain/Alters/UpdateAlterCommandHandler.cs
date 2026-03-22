@@ -10,16 +10,19 @@ public sealed class UpdateAlterCommandHandler : ICommandHandler<UpdateAlterComma
     private readonly IAlterRepository _alterRepository;
     private readonly IIdempotencyStore _idempotencyStore;
     private readonly IAggregateVersionStore _versionStore;
+    private readonly IClusterEventBus _eventBus;
 
     public UpdateAlterCommandHandler(
         IAlterRepository alterRepository,
         IIdempotencyStore idempotencyStore,
-        IAggregateVersionStore versionStore
+        IAggregateVersionStore versionStore,
+        IClusterEventBus eventBus
     )
     {
         _alterRepository = alterRepository;
         _idempotencyStore = idempotencyStore;
         _versionStore = versionStore;
+        _eventBus = eventBus;
     }
 
     public async Task<CommandExecutionResult<AlterCommandResult>> HandleAsync(
@@ -111,6 +114,10 @@ public sealed class UpdateAlterCommandHandler : ICommandHandler<UpdateAlterComma
             resultJson,
             cancellationToken
         );
+
+        await _eventBus.PublishAsync(
+            new AlterChangedEvent(command.PrincipalId, "alter_updated", command.Payload.AlterId),
+            cancellationToken);
 
         return CommandExecutionResult<AlterCommandResult>.Success(result);
     }

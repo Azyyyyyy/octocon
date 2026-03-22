@@ -10,15 +10,18 @@ public sealed class CancelFriendRequestCommandHandler : ICommandHandler<CancelFr
     private readonly IFriendshipRepository _repository;
     private readonly IIdempotencyStore _idempotencyStore;
     private readonly IAggregateVersionStore _versionStore;
+    private readonly IClusterEventBus _eventBus;
 
     public CancelFriendRequestCommandHandler(
         IFriendshipRepository repository,
         IIdempotencyStore idempotencyStore,
-        IAggregateVersionStore versionStore)
+        IAggregateVersionStore versionStore,
+        IClusterEventBus eventBus)
     {
         _repository = repository;
         _idempotencyStore = idempotencyStore;
         _versionStore = versionStore;
+        _eventBus = eventBus;
     }
 
     public async Task<CommandExecutionResult<FriendshipCommandResult>> HandleAsync(
@@ -89,6 +92,18 @@ public sealed class CancelFriendRequestCommandHandler : ICommandHandler<CancelFr
             CommandSerialization.Hash(resultJson),
             resultJson,
             cancellationToken);
+
+        await _eventBus.PublishAsync(new FriendshipSocketEvent(
+            command.PrincipalId,
+            "friend_request_removed",
+            "to",
+            command.Payload.TargetSystemId), cancellationToken);
+
+        await _eventBus.PublishAsync(new FriendshipSocketEvent(
+            command.Payload.TargetSystemId,
+            "friend_request_removed",
+            "from",
+            command.PrincipalId), cancellationToken);
 
         return CommandExecutionResult<FriendshipCommandResult>.Success(result);
     }

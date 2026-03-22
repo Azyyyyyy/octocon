@@ -286,12 +286,14 @@ public sealed class CreateFieldCommandHandler : ICommandHandler<CreateFieldComma
     private readonly ISettingsFieldRepository _fieldRepository;
     private readonly IIdempotencyStore _idempotencyStore;
     private readonly IAggregateVersionStore _versionStore;
+    private readonly IClusterEventBus _eventBus;
 
-    public CreateFieldCommandHandler(ISettingsFieldRepository fieldRepository, IIdempotencyStore idempotencyStore, IAggregateVersionStore versionStore)
+    public CreateFieldCommandHandler(ISettingsFieldRepository fieldRepository, IIdempotencyStore idempotencyStore, IAggregateVersionStore versionStore, IClusterEventBus eventBus)
     {
         _fieldRepository = fieldRepository;
         _idempotencyStore = idempotencyStore;
         _versionStore = versionStore;
+        _eventBus = eventBus;
     }
 
     public Task<CommandExecutionResult<SettingsCommandResult>> HandleAsync(CommandEnvelope<CreateFieldCommand> command, CancellationToken cancellationToken = default)
@@ -310,7 +312,15 @@ public sealed class CreateFieldCommandHandler : ICommandHandler<CreateFieldComma
                 new ConflictResult(ConflictCode.ConflictInvariant, command.OperationId, "settings:field_security_level_invalid", null, "manual_merge_required", null)));
         }
 
-        return SettingsPhaseOCommandHelper.ExecuteAsync(
+        return ExecuteAndPublishAsync(command, normalizedType, cancellationToken);
+    }
+
+    private async Task<CommandExecutionResult<SettingsCommandResult>> ExecuteAndPublishAsync(
+        CommandEnvelope<CreateFieldCommand> command,
+        string normalizedType,
+        CancellationToken cancellationToken)
+    {
+        var result = await SettingsPhaseOCommandHelper.ExecuteAsync(
             command,
             AggregateType,
             "field_created",
@@ -325,6 +335,13 @@ public sealed class CreateFieldCommandHandler : ICommandHandler<CreateFieldComma
                 command.Payload.Locked,
                 ct)) is not null,
             cancellationToken);
+
+        if (result.Accepted && result.Result is { Replay: false })
+        {
+            await _eventBus.PublishAsync(new SettingsFieldsChangedEvent(command.PrincipalId), cancellationToken);
+        }
+
+        return result;
     }
 
     private static string NormalizeType(string? type)
@@ -344,16 +361,19 @@ public sealed class UpdateFieldCommandHandler : ICommandHandler<UpdateFieldComma
     private readonly ISettingsFieldRepository _fieldRepository;
     private readonly IIdempotencyStore _idempotencyStore;
     private readonly IAggregateVersionStore _versionStore;
+    private readonly IClusterEventBus _eventBus;
 
-    public UpdateFieldCommandHandler(ISettingsFieldRepository fieldRepository, IIdempotencyStore idempotencyStore, IAggregateVersionStore versionStore)
+    public UpdateFieldCommandHandler(ISettingsFieldRepository fieldRepository, IIdempotencyStore idempotencyStore, IAggregateVersionStore versionStore, IClusterEventBus eventBus)
     {
         _fieldRepository = fieldRepository;
         _idempotencyStore = idempotencyStore;
         _versionStore = versionStore;
+        _eventBus = eventBus;
     }
 
-    public Task<CommandExecutionResult<SettingsCommandResult>> HandleAsync(CommandEnvelope<UpdateFieldCommand> command, CancellationToken cancellationToken = default) =>
-        SettingsPhaseOCommandHelper.ExecuteAsync(
+    public async Task<CommandExecutionResult<SettingsCommandResult>> HandleAsync(CommandEnvelope<UpdateFieldCommand> command, CancellationToken cancellationToken = default)
+    {
+        var result = await SettingsPhaseOCommandHelper.ExecuteAsync(
             command,
             AggregateType,
             "field_updated",
@@ -362,6 +382,14 @@ public sealed class UpdateFieldCommandHandler : ICommandHandler<UpdateFieldComma
             _versionStore,
             ct => _fieldRepository.UpdateAsync(command.PrincipalId, command.Payload.FieldId, command.Payload.Name, command.Payload.SecurityLevel, command.Payload.Locked, ct),
             cancellationToken);
+
+        if (result.Accepted && result.Result is { Replay: false })
+        {
+            await _eventBus.PublishAsync(new SettingsFieldsChangedEvent(command.PrincipalId), cancellationToken);
+        }
+
+        return result;
+    }
 }
 
 public sealed class DeleteFieldCommandHandler : ICommandHandler<DeleteFieldCommand, SettingsCommandResult>
@@ -370,16 +398,19 @@ public sealed class DeleteFieldCommandHandler : ICommandHandler<DeleteFieldComma
     private readonly ISettingsFieldRepository _fieldRepository;
     private readonly IIdempotencyStore _idempotencyStore;
     private readonly IAggregateVersionStore _versionStore;
+    private readonly IClusterEventBus _eventBus;
 
-    public DeleteFieldCommandHandler(ISettingsFieldRepository fieldRepository, IIdempotencyStore idempotencyStore, IAggregateVersionStore versionStore)
+    public DeleteFieldCommandHandler(ISettingsFieldRepository fieldRepository, IIdempotencyStore idempotencyStore, IAggregateVersionStore versionStore, IClusterEventBus eventBus)
     {
         _fieldRepository = fieldRepository;
         _idempotencyStore = idempotencyStore;
         _versionStore = versionStore;
+        _eventBus = eventBus;
     }
 
-    public Task<CommandExecutionResult<SettingsCommandResult>> HandleAsync(CommandEnvelope<DeleteFieldCommand> command, CancellationToken cancellationToken = default) =>
-        SettingsPhaseOCommandHelper.ExecuteAsync(
+    public async Task<CommandExecutionResult<SettingsCommandResult>> HandleAsync(CommandEnvelope<DeleteFieldCommand> command, CancellationToken cancellationToken = default)
+    {
+        var result = await SettingsPhaseOCommandHelper.ExecuteAsync(
             command,
             AggregateType,
             "field_deleted",
@@ -388,6 +419,14 @@ public sealed class DeleteFieldCommandHandler : ICommandHandler<DeleteFieldComma
             _versionStore,
             ct => _fieldRepository.DeleteAsync(command.PrincipalId, command.Payload.FieldId, ct),
             cancellationToken);
+
+        if (result.Accepted && result.Result is { Replay: false })
+        {
+            await _eventBus.PublishAsync(new SettingsFieldsChangedEvent(command.PrincipalId), cancellationToken);
+        }
+
+        return result;
+    }
 }
 
 public sealed class RelocateFieldCommandHandler : ICommandHandler<RelocateFieldCommand, SettingsCommandResult>
@@ -396,16 +435,19 @@ public sealed class RelocateFieldCommandHandler : ICommandHandler<RelocateFieldC
     private readonly ISettingsFieldRepository _fieldRepository;
     private readonly IIdempotencyStore _idempotencyStore;
     private readonly IAggregateVersionStore _versionStore;
+    private readonly IClusterEventBus _eventBus;
 
-    public RelocateFieldCommandHandler(ISettingsFieldRepository fieldRepository, IIdempotencyStore idempotencyStore, IAggregateVersionStore versionStore)
+    public RelocateFieldCommandHandler(ISettingsFieldRepository fieldRepository, IIdempotencyStore idempotencyStore, IAggregateVersionStore versionStore, IClusterEventBus eventBus)
     {
         _fieldRepository = fieldRepository;
         _idempotencyStore = idempotencyStore;
         _versionStore = versionStore;
+        _eventBus = eventBus;
     }
 
-    public Task<CommandExecutionResult<SettingsCommandResult>> HandleAsync(CommandEnvelope<RelocateFieldCommand> command, CancellationToken cancellationToken = default) =>
-        SettingsPhaseOCommandHelper.ExecuteAsync(
+    public async Task<CommandExecutionResult<SettingsCommandResult>> HandleAsync(CommandEnvelope<RelocateFieldCommand> command, CancellationToken cancellationToken = default)
+    {
+        var result = await SettingsPhaseOCommandHelper.ExecuteAsync(
             command,
             AggregateType,
             "field_relocated",
@@ -414,4 +456,12 @@ public sealed class RelocateFieldCommandHandler : ICommandHandler<RelocateFieldC
             _versionStore,
             ct => _fieldRepository.RelocateAsync(command.PrincipalId, command.Payload.FieldId, command.Payload.Index, ct),
             cancellationToken);
+
+        if (result.Accepted && result.Result is { Replay: false })
+        {
+            await _eventBus.PublishAsync(new SettingsFieldsChangedEvent(command.PrincipalId), cancellationToken);
+        }
+
+        return result;
+    }
 }

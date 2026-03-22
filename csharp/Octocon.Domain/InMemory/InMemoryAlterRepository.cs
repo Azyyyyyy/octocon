@@ -107,19 +107,33 @@ public sealed class InMemoryAlterRepository : IAlterRepository
         return Task.FromResult(store.TryRemove(alterId, out _));
     }
 
-    public Task<IReadOnlyList<AlterPublicReadModel>> ListAsync(string systemId, CancellationToken cancellationToken = default)
+    public Task<IReadOnlyList<AlterReadModel>> ListAsync(string systemId, CancellationToken cancellationToken = default)
     {
         if (!_bySystem.TryGetValue(systemId, out var store))
         {
-            return Task.FromResult<IReadOnlyList<AlterPublicReadModel>>(Array.Empty<AlterPublicReadModel>());
+            return Task.FromResult<IReadOnlyList<AlterReadModel>>(Array.Empty<AlterReadModel>());
         }
 
+        // TODO: this should return the full read model
         var rows = store.Values
             .OrderBy(x => x.AlterId)
-            .Select(x => new AlterPublicReadModel(x.AlterId, x.Name, x.Alias))
+            .Select(x => new AlterReadModel(
+                x.AlterId,
+                x.Name,
+                null,
+                null,
+                null,
+                null,
+                x.VisibilityLevel,
+                null,
+                null,
+                x.Alias,
+                null,
+                null,
+                null))
             .ToArray();
 
-        return Task.FromResult<IReadOnlyList<AlterPublicReadModel>>(rows);
+        return Task.FromResult<IReadOnlyList<AlterReadModel>>(rows);
     }
 
     public async Task<IReadOnlyList<AlterPublicReadModel>> ListGuardedAsync(
@@ -148,14 +162,28 @@ public sealed class InMemoryAlterRepository : IAlterRepository
         return rows;
     }
 
-    public Task<AlterPublicReadModel?> GetAsync(string systemId, int alterId, CancellationToken cancellationToken = default)
+    public Task<AlterReadModel?> GetAsync(string systemId, int alterId, CancellationToken cancellationToken = default)
     {
         if (!_bySystem.TryGetValue(systemId, out var store) || !store.TryGetValue(alterId, out var alter))
         {
-            return Task.FromResult<AlterPublicReadModel?>(null);
+            return Task.FromResult<AlterReadModel?>(null);
         }
 
-        return Task.FromResult<AlterPublicReadModel?>(new AlterPublicReadModel(alter.AlterId, alter.Name, alter.Alias));
+        return Task.FromResult<AlterReadModel?>(
+            new AlterReadModel(
+                alter.AlterId, 
+                alter.Name, 
+                alter.Alias,
+                null,
+                null,
+                null,
+                alter.VisibilityLevel,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null));
     }
 
     public async Task<AlterPublicReadModel?> GetGuardedAsync(

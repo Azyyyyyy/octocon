@@ -10,15 +10,18 @@ public sealed class DeleteTagCommandHandler : ICommandHandler<DeleteTagCommand, 
     private readonly ITagRepository _tagRepository;
     private readonly IIdempotencyStore _idempotencyStore;
     private readonly IAggregateVersionStore _versionStore;
+    private readonly IClusterEventBus _eventBus;
 
     public DeleteTagCommandHandler(
         ITagRepository tagRepository,
         IIdempotencyStore idempotencyStore,
-        IAggregateVersionStore versionStore)
+        IAggregateVersionStore versionStore,
+        IClusterEventBus eventBus)
     {
         _tagRepository = tagRepository;
         _idempotencyStore = idempotencyStore;
         _versionStore = versionStore;
+        _eventBus = eventBus;
     }
 
     public async Task<CommandExecutionResult<TagCommandResult>> HandleAsync(
@@ -57,6 +60,10 @@ public sealed class DeleteTagCommandHandler : ICommandHandler<DeleteTagCommand, 
         await _idempotencyStore.SaveAsync(
             command.PrincipalId, command.OperationId, command.IdempotencyKey,
             payloadHash, CommandSerialization.Hash(resultJson), resultJson, cancellationToken);
+
+        await _eventBus.PublishAsync(
+            new TagChangedEvent(command.PrincipalId, "tag_deleted", tagId),
+            cancellationToken);
 
         return CommandExecutionResult<TagCommandResult>.Success(result);
     }

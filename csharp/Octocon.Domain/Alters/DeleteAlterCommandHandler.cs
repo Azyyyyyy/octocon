@@ -10,15 +10,18 @@ public sealed class DeleteAlterCommandHandler : ICommandHandler<DeleteAlterComma
     private readonly IAlterRepository _alterRepository;
     private readonly IIdempotencyStore _idempotencyStore;
     private readonly IAggregateVersionStore _versionStore;
+    private readonly IClusterEventBus _eventBus;
 
     public DeleteAlterCommandHandler(
         IAlterRepository alterRepository,
         IIdempotencyStore idempotencyStore,
-        IAggregateVersionStore versionStore)
+        IAggregateVersionStore versionStore,
+        IClusterEventBus eventBus)
     {
         _alterRepository = alterRepository;
         _idempotencyStore = idempotencyStore;
         _versionStore = versionStore;
+        _eventBus = eventBus;
     }
 
     public async Task<CommandExecutionResult<AlterCommandResult>> HandleAsync(
@@ -78,6 +81,10 @@ public sealed class DeleteAlterCommandHandler : ICommandHandler<DeleteAlterComma
             resultJson,
             cancellationToken
         );
+
+        await _eventBus.PublishAsync(
+            new AlterChangedEvent(command.PrincipalId, "alter_deleted", command.Payload.AlterId),
+            cancellationToken);
 
         return CommandExecutionResult<AlterCommandResult>.Success(result);
     }

@@ -297,7 +297,7 @@ public sealed class AuthController : ControllerBase
             ["sub"] = systemId,
             ["iat"] = now.ToUnixTimeSeconds(),
             ["nbf"] = now.ToUnixTimeSeconds(),
-            ["exp"] = now.AddMinutes(10).ToUnixTimeSeconds(),
+            ["exp"] = now.AddDays(10).ToUnixTimeSeconds(),
             ["jti"] = Guid.NewGuid().ToString("N"),
             ["scope"] = "octocon:deeplink"
         });

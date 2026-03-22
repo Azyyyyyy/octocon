@@ -23,7 +23,7 @@ RUN chmod +x /docker/entrypoint.sh /docker/command.sh && \
   chown nobody /docker/entrypoint.sh /docker/command.sh
 
 RUN apt-get update -y && apt-get install -y build-essential git libstdc++6 openssl libncurses6 locales ca-certificates curl gnupg iproute2 iputils-ping jq \
-  && apt-get clean && rm -f /var/lib/apt/lists/*_*
+    && apt-get clean && rm -f /var/lib/apt/lists/*_*
 
 # Set the locale
 RUN sed -i '/en_US.UTF-8/s/^# //g' /etc/locale.gen && locale-gen

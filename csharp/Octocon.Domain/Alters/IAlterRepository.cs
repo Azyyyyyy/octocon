@@ -4,6 +4,53 @@ namespace Octocon.Domain.Alters;
 
 public sealed record AlterPublicFieldReadModel(string Id, string Name, string Type, string? Value);
 
+public sealed class AlterReadModel {
+
+    public AlterReadModel(
+        int id,
+        string name,
+        string? description,
+        string? avatarUrl,
+        string? color,
+        string? pronouns,
+        VisibilityLevel securityLevel,
+        IReadOnlyList<AlterPublicFieldReadModel> fields,
+        string? proxyName,
+        string? alias,
+        bool? untracked,
+        bool? archived,
+        bool? pinned)
+    {
+        Id = id;
+        Name = name;
+        Alias = alias;
+        Fields = fields;
+        SecurityLevel = securityLevel;
+        ProxyName = proxyName;
+        Description = description;
+        AvatarUrl = avatarUrl;
+        Color = color;
+        Pronouns = pronouns;
+        Untracked = untracked ?? false;
+        Archived = archived ?? false;
+        Pinned = pinned ?? false;
+    }
+
+    public int Id { get; set; }
+    public string Name { get; set; }
+    public string? Alias { get; set; }
+    public IReadOnlyList<AlterPublicFieldReadModel>? Fields { get; set; }
+    public VisibilityLevel SecurityLevel { get; set; }
+    public string? ProxyName { get; set; }
+    public string? Description { get; set; }
+    public string? AvatarUrl { get; set; }
+    public string? Color { get; set; }
+    public string? Pronouns { get; set; }
+    public bool Untracked { get; set; }
+    public bool Archived { get; set; }
+    public bool Pinned { get; set; }
+}
+
 public sealed class AlterPublicReadModel {
 
     public AlterPublicReadModel(
@@ -50,7 +97,7 @@ public interface IAlterRepository
 
     Task<bool> DeleteAsync(string systemId, int alterId, CancellationToken cancellationToken = default);
 
-    Task<IReadOnlyList<AlterPublicReadModel>> ListAsync(string systemId, CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<AlterReadModel>> ListAsync(string systemId, CancellationToken cancellationToken = default);
 
     Task<IReadOnlyList<AlterPublicReadModel>> ListGuardedAsync(
         string systemId,
@@ -58,7 +105,7 @@ public interface IAlterRepository
         CancellationToken cancellationToken = default
     );
 
-    Task<AlterPublicReadModel?> GetAsync(string systemId, int alterId, CancellationToken cancellationToken = default);
+    Task<AlterReadModel?> GetAsync(string systemId, int alterId, CancellationToken cancellationToken = default);
 
     Task<AlterPublicReadModel?> GetGuardedAsync(
         string systemId,

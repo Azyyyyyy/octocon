@@ -5,12 +5,15 @@ using Microsoft.OpenApi.Models;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Trace;
 using System.Security.Claims;
+using System.IdentityModel.Tokens.Jwt;
 using Microsoft.IdentityModel.Tokens;
 using System.Text;
 using Octocon.Api;
 using Octocon.Api.Auth;
+using Octocon.Api.Socket;
 using Octocon.Api.Services;
 using Octocon.Api.Swagger;
+using Octocon.Domain.Abstractions;
 using Octocon.Domain.Accounts;
 using Octocon.Domain.Alters;
 using Octocon.Domain.Friendships;
@@ -143,13 +146,33 @@ builder.Services.AddSingleton(new ApiSettings
 builder.Services.AddHttpClient<GoogleOAuthService>();
 
 // --- Auth (Phase F baseline) ---
-var jwtAuthority = Env("OCTOCON_JWT_AUTHORITY");
-var jwtAudience = Env("OCTOCON_JWT_AUDIENCE");
+// Tokens are always self-issued by this backend (or the Elixir Guardian backend) after
+// OAuth provider authentication completes. There is no single external OIDC authority to
+// validate against — the provider (Google/Apple/Discord) is only used to identify the user;
+// the resulting JWT is issued by Octocon itself. We therefore skip issuer validation and
+// rely on audience and lifetime checks only.
+var jwtAudience = "octocon";
+var jwtSigningSecrets = new[]
+{
+    Env("OCTOCON_AUTH_DEEP_LINK_SECRET"),
+    Env("GUARDIAN_SECRET_KEY"),
+    Env("OCTOCON_JWT_AUTHORITY"), // legacy fallback used as secret in token issuance
+    "octocon-local" // final local fallback for parity with IssueDeepLinkToken
+}
+    .Where(static s => !string.IsNullOrWhiteSpace(s))
+    .Distinct(StringComparer.Ordinal)
+    .ToArray();
 
-if (!devPrincipalAllowed && string.IsNullOrWhiteSpace(jwtAuthority))
-    throw new InvalidOperationException(
-        "OCTOCON_JWT_AUTHORITY must be configured when OCTOCON_DEV_ALLOW_HEADER_PRINCIPAL is false."
-    );
+var jwtSigningKeys = jwtSigningSecrets
+    .Select(static secret => (SecurityKey)new SymmetricSecurityKey(Encoding.UTF8.GetBytes(secret!)))
+    .ToArray();
+
+SecurityKey[] ResolveJwtSigningKeys(
+    string token,
+    SecurityToken? securityToken,
+    string? kid,
+    TokenValidationParameters validationParameters)
+    => jwtSigningKeys;
 
 builder.Services
     .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
@@ -159,13 +182,18 @@ builder.Services
         options.TokenValidationParameters = new TokenValidationParameters
         {
             NameClaimType = "sub",
-            ValidateAudience = !string.IsNullOrWhiteSpace(jwtAudience),
+            ValidateIssuer = false,
+            ValidateAudience = false,
             ValidAudience = jwtAudience,
-            ValidateIssuer = !string.IsNullOrWhiteSpace(jwtAuthority)
+            ValidateLifetime = true,
+            RequireExpirationTime = true,
+            ClockSkew = TimeSpan.FromMinutes(1),
+            ValidateIssuerSigningKey = false,
+            RequireSignedTokens = true,
+            IssuerSigningKeys = jwtSigningKeys,
+            IssuerSigningKeyResolver = ResolveJwtSigningKeys,
+            SignatureValidator = ValidateHs256TokenSignatureForBearer
         };
-
-        if (!string.IsNullOrWhiteSpace(jwtAuthority))
-            options.Authority = jwtAuthority;
     });
 
 if (authChallengeEnabled)
@@ -431,9 +459,71 @@ static async Task HandleUserSocketAsync(HttpContext context)
 
     using var socket = await context.WebSockets.AcceptWebSocketAsync();
 
-    var buffer = new byte[4096];
-    var joinedTopics = new HashSet<string>(StringComparer.Ordinal);
+    var buffer = new byte[1024 * 16];
+    var batchedInitThresholdBytes = ReadPositiveIntFromEnv("OCTOCON_SOCKET_BATCH_BYTES_THRESHOLD", 1_048_576);
+    var joinedTopics = new System.Collections.Concurrent.ConcurrentDictionary<string, byte>(StringComparer.Ordinal);
     string? joinedSystemId = null;
+    var topicReplyAsArrayFrame = new System.Collections.Concurrent.ConcurrentDictionary<string, bool>(StringComparer.Ordinal);
+    var topicJoinReference = new System.Collections.Concurrent.ConcurrentDictionary<string, string?>(StringComparer.Ordinal);
+    using var sendGate = new SemaphoreSlim(1, 1);
+    using var pushCts = CancellationTokenSource.CreateLinkedTokenSource(context.RequestAborted);
+    var eventBus = context.RequestServices.GetRequiredService<IClusterEventBus>();
+    var frontingRepository = context.RequestServices.GetRequiredService<IFrontingRepository>();
+    var alterRepository = context.RequestServices.GetRequiredService<IAlterRepository>();
+    var tagRepository = context.RequestServices.GetRequiredService<ITagRepository>();
+    var settingsFieldRepository = context.RequestServices.GetRequiredService<ISettingsFieldRepository>();
+    var frontingPushTask = PumpFrontingPushesAsync(
+        socket,
+        eventBus,
+        frontingRepository,
+        joinedTopics,
+        topicJoinReference,
+        topicReplyAsArrayFrame,
+        sendGate,
+        pushCts.Token);
+    var alterPushTask = PumpAlterPushesAsync(
+        socket,
+        eventBus,
+        alterRepository,
+        joinedTopics,
+        topicJoinReference,
+        topicReplyAsArrayFrame,
+        sendGate,
+        pushCts.Token);
+    var tagPushTask = PumpTagPushesAsync(
+        socket,
+        eventBus,
+        tagRepository,
+        joinedTopics,
+        topicJoinReference,
+        topicReplyAsArrayFrame,
+        sendGate,
+        pushCts.Token);
+    var fieldsPushTask = PumpSettingsFieldsPushesAsync(
+        socket,
+        eventBus,
+        settingsFieldRepository,
+        joinedTopics,
+        topicJoinReference,
+        topicReplyAsArrayFrame,
+        sendGate,
+        pushCts.Token);
+    var friendshipPushTask = PumpFriendshipPushesAsync(
+        socket,
+        eventBus,
+        joinedTopics,
+        topicJoinReference,
+        topicReplyAsArrayFrame,
+        sendGate,
+        pushCts.Token);
+    var rawPushTask = PumpRawPushesAsync(
+        socket,
+        eventBus,
+        joinedTopics,
+        topicJoinReference,
+        topicReplyAsArrayFrame,
+        sendGate,
+        pushCts.Token);
 
     while (socket.State == WebSocketState.Open)
     {
@@ -464,7 +554,8 @@ static async Task HandleUserSocketAsync(HttpContext context)
                 status: "ok",
                 responseJson: "{}",
                 replyAsArrayFrame,
-                context.RequestAborted);
+                context.RequestAborted,
+                sendGate);
             continue;
         }
 
@@ -472,6 +563,10 @@ static async Task HandleUserSocketAsync(HttpContext context)
         {
             var payloadToken = string.Empty;
             var isReconnect = false;
+            var forceBatch = false;
+            var platform = "unknown";
+            var protocolVersion = new Version(1, 0, 0);
+            var protocolSupported = true;
             if (payload?.ValueKind == System.Text.Json.JsonValueKind.Object
                 && payload.Value.TryGetProperty("token", out var tokenProp)
                 && tokenProp.ValueKind == System.Text.Json.JsonValueKind.String)
@@ -486,35 +581,43 @@ static async Task HandleUserSocketAsync(HttpContext context)
                 isReconnect = isReconnectProp.GetBoolean();
             }
 
+            if (payload?.ValueKind == System.Text.Json.JsonValueKind.Object
+                && payload.Value.TryGetProperty("forceBatch", out var forceBatchProp)
+                && forceBatchProp.ValueKind is System.Text.Json.JsonValueKind.True or System.Text.Json.JsonValueKind.False)
+            {
+                forceBatch = forceBatchProp.GetBoolean();
+            }
+
+            if (payload?.ValueKind == System.Text.Json.JsonValueKind.Object
+                && payload.Value.TryGetProperty("platform", out var platformProp)
+                && platformProp.ValueKind == System.Text.Json.JsonValueKind.String)
+            {
+                platform = platformProp.GetString() ?? "unknown";
+            }
+
+            if (payload?.ValueKind == System.Text.Json.JsonValueKind.Object
+                && payload.Value.TryGetProperty("protocolVersion", out var protocolVersionProp)
+                && protocolVersionProp.ValueKind == System.Text.Json.JsonValueKind.String)
+            {
+                var rawVersion = protocolVersionProp.GetString();
+                if (!TryParseLooseVersion(rawVersion, out protocolVersion))
+                {
+                    protocolSupported = false;
+                }
+            }
+
             var isSystemTopic = !string.IsNullOrWhiteSpace(topic)
                 && topic.StartsWith("system:", StringComparison.OrdinalIgnoreCase)
                 && topic.Length > "system:".Length;
 
             var requestedSystemId = isSystemTopic ? topic["system:".Length..] : string.Empty;
-            var tokenSystemId = TryReadJwtSubjectUnchecked(token);
-            var topicMatchesTokenSubject = string.IsNullOrWhiteSpace(tokenSystemId)
-                || string.Equals(tokenSystemId, requestedSystemId, StringComparison.Ordinal);
+            var tokenAuthorized = IsSocketJoinTokenAuthorized(
+                context,
+                token,
+                requestedSystemId,
+                out var tokenAuthFailureReason);
 
-            if (isSystemTopic
-                && string.Equals(payloadToken, token, StringComparison.Ordinal)
-                && topicMatchesTokenSubject)
-            {
-                joinedTopics.Add(topic);
-                joinedSystemId = requestedSystemId;
-
-                await SendPhoenixReplyAsync(
-                    socket,
-                    topic,
-                    reference,
-                    joinReference,
-                    status: "ok",
-                    responseJson: isReconnect
-                        ? "{}"
-                        : await BuildJoinInitJsonAsync(context, joinedSystemId, context.RequestAborted),
-                    replyAsArrayFrame,
-                    context.RequestAborted);
-            }
-            else
+            if (!protocolSupported)
             {
                 await SendPhoenixReplyAsync(
                     socket,
@@ -522,9 +625,115 @@ static async Task HandleUserSocketAsync(HttpContext context)
                     reference,
                     joinReference,
                     status: "error",
-                    responseJson: "{\"reason\":\"unauthorized\"}",
+                    responseJson: "{\"reason\":\"unsupported_protocol_version\"}",
+                    replyAsArrayFrame,
+                        context.RequestAborted,
+                        sendGate);
+            }
+            else if (isSystemTopic
+                && string.Equals(payloadToken, token, StringComparison.Ordinal)
+                && tokenAuthorized)
+            {
+                if (!SocketJoinRateLimiter.Allow(requestedSystemId, DateTimeOffset.UtcNow))
+                {
+                    await SendPhoenixReplyAsync(
+                        socket,
+                        topic,
+                        reference,
+                        joinReference,
+                        status: "error",
+                        responseJson: "{\"reason\":\"rate_limited\"}",
                         replyAsArrayFrame,
-                    context.RequestAborted);
+                        context.RequestAborted,
+                        sendGate);
+                    continue;
+                }
+
+                joinedTopics[topic] = 0;
+                joinedSystemId = requestedSystemId;
+                topicReplyAsArrayFrame[topic] = replyAsArrayFrame;
+                topicJoinReference[topic] = joinReference;
+
+                var initJson = await BuildJoinInitJsonAsync(context, joinedSystemId, context.RequestAborted);
+                var useBatchedInit = false;
+
+                if (!isReconnect)
+                {
+                    var estimatedEncodedBytes = (int)(Encoding.UTF8.GetByteCount(initJson) * 1.1);
+                    useBatchedInit = forceBatch
+                        || (string.Equals(platform, "ios", StringComparison.OrdinalIgnoreCase)
+                            && estimatedEncodedBytes > batchedInitThresholdBytes
+                            && protocolVersion >= new Version(2, 0, 0));
+                }
+
+                string joinResponseJson;
+                if (isReconnect)
+                {
+                    using var reconnectDoc = JsonDocument.Parse(initJson);
+                    var reconnectSystemJson = reconnectDoc.RootElement.TryGetProperty("system", out var reconnectSystemEl)
+                        ? reconnectSystemEl.GetRawText()
+                        : "null";
+                    joinResponseJson = "{\"system\":" + reconnectSystemJson + "}";
+                }
+                else if (useBatchedInit)
+                {
+                    using var initDoc = JsonDocument.Parse(initJson);
+                    var systemJson = initDoc.RootElement.TryGetProperty("system", out var systemEl)
+                        ? systemEl.GetRawText()
+                        : "null";
+
+                    joinResponseJson =
+                        "{" +
+                        "\"batched\":true," +
+                        "\"system\":" + systemJson + "," +
+                        "\"alters\":null," +
+                        "\"fronts\":null," +
+                        "\"tags\":null" +
+                        "}";
+                }
+                else
+                {
+                    joinResponseJson = initJson;
+                }
+
+                await SendPhoenixReplyAsync(
+                    socket,
+                    topic,
+                    reference,
+                    joinReference,
+                    status: "ok",
+                    responseJson: joinResponseJson,
+                    replyAsArrayFrame,
+                    context.RequestAborted,
+                    sendGate);
+
+                if (useBatchedInit)
+                {
+                    await SendBatchedInitAsync(
+                        socket,
+                        topic,
+                        topicJoinReference[topic],
+                        topicReplyAsArrayFrame[topic],
+                        initJson,
+                        context.RequestAborted,
+                        sendGate);
+                }
+            }
+            else
+            {
+                var unauthorizedReason = tokenAuthFailureReason is null
+                    ? "unauthorized"
+                    : tokenAuthFailureReason;
+                await SendPhoenixReplyAsync(
+                    socket,
+                    topic,
+                    reference,
+                    joinReference,
+                    status: "error",
+                    responseJson: SerializeSocketJson(new { reason = unauthorizedReason }),
+                    replyAsArrayFrame,
+                    context.RequestAborted,
+                    sendGate);
             }
 
             continue;
@@ -532,7 +741,7 @@ static async Task HandleUserSocketAsync(HttpContext context)
 
         if (string.Equals(eventName, "endpoint", StringComparison.OrdinalIgnoreCase))
         {
-            if (!joinedTopics.Contains(topic))
+            if (!joinedTopics.ContainsKey(topic))
             {
                 await SendPhoenixReplyAsync(
                     socket,
@@ -542,7 +751,8 @@ static async Task HandleUserSocketAsync(HttpContext context)
                     status: "error",
                     responseJson: "{\"reason\":\"not_joined\"}",
                     replyAsArrayFrame,
-                    context.RequestAborted);
+                    context.RequestAborted,
+                    sendGate);
                 continue;
             }
 
@@ -557,7 +767,8 @@ static async Task HandleUserSocketAsync(HttpContext context)
                 status: "ok",
                 responseJson: endpointResponseJson,
                 replyAsArrayFrame,
-                context.RequestAborted);
+                context.RequestAborted,
+                sendGate);
             continue;
         }
 
@@ -568,8 +779,19 @@ static async Task HandleUserSocketAsync(HttpContext context)
             joinReference,
             status: "error",
             responseJson: "{\"reason\":\"event_not_implemented\"}",
-                replyAsArrayFrame,
-            context.RequestAborted);
+            replyAsArrayFrame,
+            context.RequestAborted,
+            sendGate);
+    }
+
+    pushCts.Cancel();
+    try
+    {
+        await Task.WhenAll(frontingPushTask, alterPushTask, tagPushTask, fieldsPushTask, friendshipPushTask, rawPushTask);
+    }
+    catch (OperationCanceledException)
+    {
+        // Expected on socket shutdown.
     }
 
     if (socket.State == WebSocketState.Open || socket.State == WebSocketState.CloseReceived)
@@ -635,17 +857,31 @@ static async Task<object> HandleEndpointProxyAsync(
         request.Headers.TryAddWithoutValidation("X-Octocon-Dev-Principal", joinedSystemId);
     }
 
+    string? requestBodyJson = null;
     if (payloadObj.TryGetProperty("body", out var bodyProp)
-        && bodyProp.ValueKind == System.Text.Json.JsonValueKind.String
+        && bodyProp.ValueKind != System.Text.Json.JsonValueKind.Null
         && method is not "GET" and not "HEAD")
     {
-        var bodyJson = bodyProp.GetString();
-        request.Content = new StringContent(bodyJson, Encoding.UTF8, "application/json");
+        //This NEEDS to be GetString() because the raw JSON is what we want to forward, not a re-serialized version of the body element.
+        requestBodyJson = bodyProp.GetString();
+        if (requestBodyJson != null) {
+            request.Content = new StringContent(requestBodyJson, Encoding.UTF8, "application/json");
+        }
     }
 
     using var httpClient = new HttpClient();
     using var response = await httpClient.SendAsync(request, websocketContext.RequestAborted);
     var responseBody = await response.Content.ReadAsStringAsync(websocketContext.RequestAborted);
+
+    await PublishRelayDomainEventsAsync(
+        websocketContext,
+        joinedSystemId,
+        method,
+        path,
+        (int)response.StatusCode,
+        responseBody,
+        requestBodyJson,
+        websocketContext.RequestAborted);
 
     return new
     {
@@ -654,43 +890,90 @@ static async Task<object> HandleEndpointProxyAsync(
     };
 }
 
-static string? TryReadJwtSubjectUnchecked(string token)
+static bool IsSocketJoinTokenAuthorized(
+    HttpContext context,
+    string token,
+    string requestedSystemId,
+    out string? failureReason)
 {
-    var parts = token.Split('.');
-    if (parts.Length != 3)
+    failureReason = null;
+
+    if (string.IsNullOrWhiteSpace(token))
     {
-        return null;
+        failureReason = "missing_socket_token";
+        return false;
     }
+
+    var settings = context.RequestServices.GetRequiredService<ApiSettings>();
+    var configuration = context.RequestServices.GetRequiredService<IConfiguration>();
+    var jwtAudience = "octocon";
+    var jwtSigningSecrets = new[]
+    {
+        configuration["OCTOCON_AUTH_DEEP_LINK_SECRET"],
+        configuration["GUARDIAN_SECRET_KEY"],
+        configuration["OCTOCON_JWT_AUTHORITY"],
+        "octocon-local"
+    }
+        .Where(static s => !string.IsNullOrWhiteSpace(s))
+        .Distinct(StringComparer.Ordinal)
+        .ToArray();
+
+    var jwtSigningKeys = jwtSigningSecrets
+        .Select(static secret => (SecurityKey)new SymmetricSecurityKey(Encoding.UTF8.GetBytes(secret!)))
+        .ToArray();
+
+    var handler = new JwtSecurityTokenHandler { MapInboundClaims = false };
+    if (!handler.CanReadToken(token))
+    {
+        if (settings.DevPrincipalAllowed)
+        {
+            return true;
+        }
+
+        failureReason = "invalid_socket_token";
+        return false;
+    }
+
+    var parameters = new TokenValidationParameters
+    {
+        ValidateIssuer = false,
+        ValidateAudience = false,
+        ValidAudience = jwtAudience,
+        ValidateLifetime = true,
+        RequireExpirationTime = true,
+        ClockSkew = TimeSpan.FromMinutes(1),
+        ValidateIssuerSigningKey = false,
+        RequireSignedTokens = true,
+        IssuerSigningKeys = jwtSigningKeys,
+        IssuerSigningKeyResolver = static (token, securityToken, kid, validationParameters) =>
+            validationParameters.IssuerSigningKeys ?? Array.Empty<SecurityKey>(),
+        SignatureValidator = ValidateHs256TokenSignatureForSocket,
+        NameClaimType = "sub"
+    };
 
     try
     {
-        var payloadBytes = Base64UrlDecode(parts[1]);
-        using var doc = System.Text.Json.JsonDocument.Parse(payloadBytes);
-        if (doc.RootElement.TryGetProperty("sub", out var sub)
-            && sub.ValueKind == System.Text.Json.JsonValueKind.String)
+        var principal = handler.ValidateToken(token, parameters, out _);
+        var tokenSystemId = principal.FindFirstValue("sub");
+        if (string.IsNullOrWhiteSpace(tokenSystemId))
         {
-            return sub.GetString();
+            failureReason = "invalid_socket_token_subject";
+            return false;
         }
+
+        if (!string.Equals(tokenSystemId, requestedSystemId, StringComparison.Ordinal))
+        {
+            failureReason = "unauthorized_topic";
+            return false;
+        }
+
+        return true;
     }
-    catch
+    catch (Exception)
     {
-        return null;
+        failureReason = "invalid_socket_token";
+        return false;
     }
-
-    return null;
-}
-
-static byte[] Base64UrlDecode(string base64Url)
-{
-    var padded = base64Url.Replace('-', '+').Replace('_', '/');
-    padded = (padded.Length % 4) switch
-    {
-        2 => padded + "==",
-        3 => padded + "=",
-        _ => padded
-    };
-
-    return Convert.FromBase64String(padded);
 }
 
 static async Task<string?> ReceiveSocketTextAsync(WebSocket socket, byte[] buffer, CancellationToken cancellationToken)
@@ -790,9 +1073,905 @@ static async Task<string> BuildJoinInitJsonAsync(
     return JsonSerializer.Serialize(initData, opts);
 }
 
+static async Task SendBatchedInitAsync(
+    WebSocket socket,
+    string topic,
+    string? joinReference,
+    bool replyAsArrayFrame,
+    string initJson,
+    CancellationToken cancellationToken,
+    SemaphoreSlim? sendGate = null)
+{
+    using var initDoc = JsonDocument.Parse(initJson);
+    var root = initDoc.RootElement;
+
+    var alters = root.TryGetProperty("alters", out var altersEl) && altersEl.ValueKind == JsonValueKind.Array
+        ? altersEl.EnumerateArray().Select(x => x.GetRawText()).ToList()
+        : [];
+    var tags = root.TryGetProperty("tags", out var tagsEl) && tagsEl.ValueKind == JsonValueKind.Array
+        ? tagsEl.EnumerateArray().Select(x => x.GetRawText()).ToList()
+        : [];
+    var fronts = root.TryGetProperty("fronts", out var frontsEl) && frontsEl.ValueKind == JsonValueKind.Array
+        ? frontsEl.EnumerateArray().Select(x => x.GetRawText()).ToList()
+        : [];
+
+    await SendBatchedDataAsync(socket, topic, joinReference, replyAsArrayFrame, "batched_init_alters", "alters", 3000, alters, cancellationToken, sendGate);
+    await SendBatchedDataAsync(socket, topic, joinReference, replyAsArrayFrame, "batched_init_tags", "tags", 1000, tags, cancellationToken, sendGate);
+    await SendBatchedDataAsync(socket, topic, joinReference, replyAsArrayFrame, "batched_init_fronts", "fronts", 50, fronts, cancellationToken, sendGate);
+
+    await SendPhoenixPushAsync(
+        socket,
+        topic,
+        joinReference,
+        eventName: "batched_init_complete",
+        payloadJson: "{}",
+        replyAsArrayFrame,
+        cancellationToken,
+        sendGate);
+}
+
+static async Task SendBatchedDataAsync(
+    WebSocket socket,
+    string topic,
+    string? joinReference,
+    bool replyAsArrayFrame,
+    string eventName,
+    string dataName,
+    int batchSize,
+    List<string> data,
+    CancellationToken cancellationToken,
+    SemaphoreSlim? sendGate = null)
+{
+    if (data.Count == 0)
+    {
+        return;
+    }
+
+    var totalBatches = (int)Math.Ceiling((double)data.Count / batchSize);
+    for (var i = 0; i < totalBatches; i++)
+    {
+        if (i > 0)
+        {
+            await Task.Delay(50, cancellationToken);
+        }
+
+        var start = i * batchSize;
+        var count = Math.Min(batchSize, data.Count - start);
+        var batchItems = string.Join(",", data.GetRange(start, count));
+        var payloadJson =
+            "{" +
+            "\"batch_index\":" + (i + 1) + "," +
+            "\"total_batches\":" + totalBatches + "," +
+            "\"" + dataName + "\":[" + batchItems + "]" +
+            "}";
+
+        await SendPhoenixPushAsync(
+            socket,
+            topic,
+            joinReference,
+            eventName,
+            payloadJson,
+            replyAsArrayFrame,
+            cancellationToken,
+            sendGate);
+    }
+}
+
+static async Task SendPhoenixPushAsync(
+    WebSocket socket,
+    string topic,
+    string? joinReference,
+    string eventName,
+    string payloadJson,
+    bool replyAsArrayFrame,
+    CancellationToken cancellationToken,
+    SemaphoreSlim? sendGate = null)
+{
+    var escapedTopic = JsonSerializer.Serialize(topic);
+    var escapedJoinRef = joinReference is null ? "null" : JsonSerializer.Serialize(joinReference);
+    var escapedEvent = JsonSerializer.Serialize(eventName);
+
+    var frame = replyAsArrayFrame
+        ?
+        "[" +
+        escapedJoinRef + "," +
+        "null," +
+        escapedTopic + "," +
+        escapedEvent + "," +
+        payloadJson +
+        "]"
+        :
+        "{" +
+        "\"topic\":" + escapedTopic + "," +
+        "\"event\":" + escapedEvent + "," +
+        "\"payload\":" + payloadJson + "," +
+        "\"ref\":null," +
+        "\"join_ref\":" + escapedJoinRef +
+        "}";
+
+    var bytes = Encoding.UTF8.GetBytes(frame);
+    if (sendGate is not null)
+    {
+        await sendGate.WaitAsync(cancellationToken);
+        try
+        {
+            await socket.SendAsync(bytes, WebSocketMessageType.Text, endOfMessage: true, cancellationToken);
+        }
+        finally
+        {
+            sendGate.Release();
+        }
+    }
+    else
+    {
+        await socket.SendAsync(bytes, WebSocketMessageType.Text, endOfMessage: true, cancellationToken);
+    }
+}
+
+static async Task PumpFrontingPushesAsync(
+    WebSocket socket,
+    IClusterEventBus eventBus,
+    IFrontingRepository frontingRepository,
+    System.Collections.Concurrent.ConcurrentDictionary<string, byte> joinedTopics,
+    System.Collections.Concurrent.ConcurrentDictionary<string, string?> topicJoinReference,
+    System.Collections.Concurrent.ConcurrentDictionary<string, bool> topicReplyAsArrayFrame,
+    SemaphoreSlim sendGate,
+    CancellationToken cancellationToken)
+{
+    await foreach (var evt in eventBus.SubscribeAsync<FrontingStateChangedEvent>(cancellationToken).ConfigureAwait(false))
+    {
+        var topic = $"system:{evt.SystemId}";
+        if (!joinedTopics.ContainsKey(topic))
+        {
+            continue;
+        }
+
+        var fronts = await frontingRepository.ListActiveAsync(evt.SystemId, cancellationToken).ConfigureAwait(false);
+        var payloadJson = SerializeSocketJson(new { fronts });
+
+        topicJoinReference.TryGetValue(topic, out var joinRef);
+        topicReplyAsArrayFrame.TryGetValue(topic, out var asArray);
+
+        await SendPhoenixPushAsync(
+            socket,
+            topic,
+            joinRef,
+            eventName: "fronting_changed",
+            payloadJson,
+            asArray,
+            cancellationToken,
+            sendGate);
+    }
+}
+
+static async Task PumpAlterPushesAsync(
+    WebSocket socket,
+    IClusterEventBus eventBus,
+    IAlterRepository alterRepository,
+    System.Collections.Concurrent.ConcurrentDictionary<string, byte> joinedTopics,
+    System.Collections.Concurrent.ConcurrentDictionary<string, string?> topicJoinReference,
+    System.Collections.Concurrent.ConcurrentDictionary<string, bool> topicReplyAsArrayFrame,
+    SemaphoreSlim sendGate,
+    CancellationToken cancellationToken)
+{
+    await foreach (var evt in eventBus.SubscribeAsync<AlterChangedEvent>(cancellationToken).ConfigureAwait(false))
+    {
+        var topic = $"system:{evt.SystemId}";
+        if (!joinedTopics.ContainsKey(topic))
+        {
+            continue;
+        }
+
+        string payloadJson;
+        if (string.Equals(evt.EventName, "alter_deleted", StringComparison.Ordinal) && evt.AlterId.HasValue)
+        {
+            payloadJson = SerializeSocketJson(new Dictionary<string, object?> { ["alter_id"] = evt.AlterId.Value });
+        }
+        else
+        {
+            if (!evt.AlterId.HasValue)
+            {
+                continue;
+            }
+
+            var alter = await alterRepository.GetAsync(evt.SystemId, evt.AlterId.Value, cancellationToken).ConfigureAwait(false);
+            if (alter is null)
+            {
+                continue;
+            }
+
+            payloadJson = SerializeSocketJson(new { alter });
+        }
+
+        topicJoinReference.TryGetValue(topic, out var joinRef);
+        topicReplyAsArrayFrame.TryGetValue(topic, out var asArray);
+
+        await SendPhoenixPushAsync(
+            socket,
+            topic,
+            joinRef,
+            eventName: evt.EventName,
+            payloadJson,
+            asArray,
+            cancellationToken,
+            sendGate);
+    }
+}
+
+static async Task PumpTagPushesAsync(
+    WebSocket socket,
+    IClusterEventBus eventBus,
+    ITagRepository tagRepository,
+    System.Collections.Concurrent.ConcurrentDictionary<string, byte> joinedTopics,
+    System.Collections.Concurrent.ConcurrentDictionary<string, string?> topicJoinReference,
+    System.Collections.Concurrent.ConcurrentDictionary<string, bool> topicReplyAsArrayFrame,
+    SemaphoreSlim sendGate,
+    CancellationToken cancellationToken)
+{
+    await foreach (var evt in eventBus.SubscribeAsync<TagChangedEvent>(cancellationToken).ConfigureAwait(false))
+    {
+        var topic = $"system:{evt.SystemId}";
+        if (!joinedTopics.ContainsKey(topic))
+        {
+            continue;
+        }
+
+        string payloadJson;
+        if (string.Equals(evt.EventName, "tag_deleted", StringComparison.Ordinal))
+        {
+            payloadJson = SerializeSocketJson(new Dictionary<string, object?> { ["tag_id"] = evt.TagId });
+        }
+        else
+        {
+            var tag = await tagRepository.GetAsync(evt.SystemId, evt.TagId, cancellationToken).ConfigureAwait(false);
+            if (tag is null)
+            {
+                continue;
+            }
+
+            payloadJson = SerializeSocketJson(new { tag });
+        }
+
+        topicJoinReference.TryGetValue(topic, out var joinRef);
+        topicReplyAsArrayFrame.TryGetValue(topic, out var asArray);
+
+        await SendPhoenixPushAsync(
+            socket,
+            topic,
+            joinRef,
+            eventName: evt.EventName,
+            payloadJson,
+            asArray,
+            cancellationToken,
+            sendGate);
+    }
+}
+
+static async Task PumpSettingsFieldsPushesAsync(
+    WebSocket socket,
+    IClusterEventBus eventBus,
+    ISettingsFieldRepository fieldRepository,
+    System.Collections.Concurrent.ConcurrentDictionary<string, byte> joinedTopics,
+    System.Collections.Concurrent.ConcurrentDictionary<string, string?> topicJoinReference,
+    System.Collections.Concurrent.ConcurrentDictionary<string, bool> topicReplyAsArrayFrame,
+    SemaphoreSlim sendGate,
+    CancellationToken cancellationToken)
+{
+    await foreach (var evt in eventBus.SubscribeAsync<SettingsFieldsChangedEvent>(cancellationToken).ConfigureAwait(false))
+    {
+        var topic = $"system:{evt.SystemId}";
+        if (!joinedTopics.ContainsKey(topic))
+        {
+            continue;
+        }
+
+        var fields = await fieldRepository.ListAsync(evt.SystemId, cancellationToken).ConfigureAwait(false);
+        var payloadJson = SerializeSocketJson(new { fields });
+
+        topicJoinReference.TryGetValue(topic, out var joinRef);
+        topicReplyAsArrayFrame.TryGetValue(topic, out var asArray);
+
+        await SendPhoenixPushAsync(
+            socket,
+            topic,
+            joinRef,
+            eventName: "fields_updated",
+            payloadJson,
+            asArray,
+            cancellationToken,
+            sendGate);
+    }
+}
+
+static async Task PumpRawPushesAsync(
+    WebSocket socket,
+    IClusterEventBus eventBus,
+    System.Collections.Concurrent.ConcurrentDictionary<string, byte> joinedTopics,
+    System.Collections.Concurrent.ConcurrentDictionary<string, string?> topicJoinReference,
+    System.Collections.Concurrent.ConcurrentDictionary<string, bool> topicReplyAsArrayFrame,
+    SemaphoreSlim sendGate,
+    CancellationToken cancellationToken)
+{
+    await foreach (var evt in eventBus.SubscribeAsync<SocketRawPushEvent>(cancellationToken).ConfigureAwait(false))
+    {
+        var topic = $"system:{evt.SystemId}";
+        if (!joinedTopics.ContainsKey(topic))
+        {
+            continue;
+        }
+
+        topicJoinReference.TryGetValue(topic, out var joinRef);
+        topicReplyAsArrayFrame.TryGetValue(topic, out var asArray);
+
+        await SendPhoenixPushAsync(
+            socket,
+            topic,
+            joinRef,
+            eventName: evt.EventName,
+            evt.PayloadJson,
+            asArray,
+            cancellationToken,
+            sendGate);
+    }
+}
+
+static async Task PumpFriendshipPushesAsync(
+    WebSocket socket,
+    IClusterEventBus eventBus,
+    System.Collections.Concurrent.ConcurrentDictionary<string, byte> joinedTopics,
+    System.Collections.Concurrent.ConcurrentDictionary<string, string?> topicJoinReference,
+    System.Collections.Concurrent.ConcurrentDictionary<string, bool> topicReplyAsArrayFrame,
+    SemaphoreSlim sendGate,
+    CancellationToken cancellationToken)
+{
+    await foreach (var evt in eventBus.SubscribeAsync<FriendshipSocketEvent>(cancellationToken).ConfigureAwait(false))
+    {
+        var topic = $"system:{evt.TargetSystemId}";
+        if (!joinedTopics.ContainsKey(topic))
+        {
+            continue;
+        }
+
+        topicJoinReference.TryGetValue(topic, out var joinRef);
+        topicReplyAsArrayFrame.TryGetValue(topic, out var asArray);
+
+        var payloadJson = SerializeSocketJson(new Dictionary<string, object?>
+        {
+            [evt.PayloadKey] = evt.PayloadValue
+        });
+
+        await SendPhoenixPushAsync(
+            socket,
+            topic,
+            joinRef,
+            evt.EventName,
+            payloadJson,
+            asArray,
+            cancellationToken,
+            sendGate);
+    }
+}
+
+static async Task PublishRelayDomainEventsAsync(
+    HttpContext context,
+    string? systemId,
+    string method,
+    string path,
+    int statusCode,
+    string responseBody,
+    string? requestBodyJson,
+    CancellationToken ct)
+{
+    if (string.IsNullOrWhiteSpace(systemId)
+        || statusCode is < 200 or >= 300
+        || string.Equals(method, "GET", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(method, "HEAD", StringComparison.OrdinalIgnoreCase))
+    {
+        return;
+    }
+
+    var eventBus = context.RequestServices.GetRequiredService<IClusterEventBus>();
+
+    // ── Alters ────────────────────────────────────────────────────────────
+    if (path.StartsWith("/api/systems/me/alters", StringComparison.OrdinalIgnoreCase))
+    {
+        // Alter journals live under /api/systems/me/alters/{id}/journals – handle first
+        if (path.Contains("/journals", StringComparison.OrdinalIgnoreCase))
+        {
+            await HandleAlterJournalRelayAsync(eventBus, context, systemId, method, path, responseBody, ct);
+            return;
+        }
+        // Non-journal alter events are published by domain command handlers.
+        return;
+    }
+
+    // ── Tags ──────────────────────────────────────────────────────────────
+    if (path.StartsWith("/api/systems/me/tags", StringComparison.OrdinalIgnoreCase))
+    {
+        // Tag events are published by domain command handlers.
+        return;
+    }
+
+    // ── Settings: custom fields ───────────────────────────────────────────
+    if (path.StartsWith("/api/settings/fields", StringComparison.OrdinalIgnoreCase))
+    {
+        // settings field events are published by domain command handlers.
+        return;
+    }
+
+    // ── Settings: account management ──────────────────────────────────────
+    if (path.StartsWith("/api/settings", StringComparison.OrdinalIgnoreCase))
+    {
+        if (string.Equals(method, "POST", StringComparison.OrdinalIgnoreCase))
+        {
+            if (path.EndsWith("/delete-account", StringComparison.OrdinalIgnoreCase))
+            {
+                await eventBus.PublishAsync(new SocketRawPushEvent(systemId, "account_deleted", "{}"), ct);
+                return;
+            }
+            if (path.EndsWith("/wipe-alters", StringComparison.OrdinalIgnoreCase))
+            {
+                await eventBus.PublishAsync(new SocketRawPushEvent(systemId, "alters_wiped", "{}"), ct);
+                return;
+            }
+            if (path.EndsWith("/reset-encryption", StringComparison.OrdinalIgnoreCase))
+            {
+                await eventBus.PublishAsync(new SocketRawPushEvent(systemId, "encrypted_data_wiped", "{}"), ct);
+                return;
+            }
+            if (path.EndsWith("/unlink_discord", StringComparison.OrdinalIgnoreCase))
+            {
+                await eventBus.PublishAsync(new SocketRawPushEvent(systemId, "discord_account_unlinked", "{}"), ct);
+                return;
+            }
+            if (path.EndsWith("/unlink_apple", StringComparison.OrdinalIgnoreCase))
+            {
+                await eventBus.PublishAsync(new SocketRawPushEvent(systemId, "apple_account_unlinked", "{}"), ct);
+                return;
+            }
+        }
+
+        // Profile-mutating operations → self_updated (and username_updated when applicable)
+        var isAvatarWrite = path.EndsWith("/avatar", StringComparison.OrdinalIgnoreCase);
+        var isPost = string.Equals(method, "POST", StringComparison.OrdinalIgnoreCase);
+        var emitsProfileUpdate =
+            isAvatarWrite ||
+            (isPost && (
+                path.EndsWith("/username", StringComparison.OrdinalIgnoreCase) ||
+                path.EndsWith("/description", StringComparison.OrdinalIgnoreCase) ||
+                path.EndsWith("/import-pk", StringComparison.OrdinalIgnoreCase) ||
+                path.EndsWith("/import-sp", StringComparison.OrdinalIgnoreCase) ||
+                path.EndsWith("/setup-encryption", StringComparison.OrdinalIgnoreCase)));
+
+        if (emitsProfileUpdate)
+        {
+            var accountRepo = context.RequestServices.GetRequiredService<IAccountRepository>();
+            var profile = await accountRepo.GetPublicProfileAsync(systemId, ct);
+            if (isPost && path.EndsWith("/username", StringComparison.OrdinalIgnoreCase) && profile?.Username != null)
+            {
+                var usernamePayload = SerializeSocketJson(new { username = profile.Username });
+                await eventBus.PublishAsync(new SocketRawPushEvent(systemId, "username_updated", usernamePayload), ct);
+            }
+            var selfData = new Dictionary<string, object?>
+            {
+                ["id"] = profile?.SystemId ?? systemId,
+                ["username"] = profile?.Username,
+                ["description"] = profile?.Description,
+                ["avatar_url"] = profile?.AvatarUrl,
+                ["autoproxy_mode"] = "off",
+                ["show_system_tag"] = false
+            };
+            await eventBus.PublishAsync(new SocketRawPushEvent(systemId, "self_updated", SerializeSocketJson(new { data = selfData })), ct);
+        }
+
+        return;
+    }
+
+    // ── Fronting ──────────────────────────────────────────────────────────
+    if (path.StartsWith("/api/systems/me/front", StringComparison.OrdinalIgnoreCase))
+    {
+        // primary_front: SetPrimaryFrontCommandHandler already publishes FrontingStateChangedEvent
+        // but we also want to emit the specific primary_front event
+        if (path.EndsWith("/primary", StringComparison.OrdinalIgnoreCase)
+            && string.Equals(method, "POST", StringComparison.OrdinalIgnoreCase))
+        {
+            int? alterIdForPrimary = null;
+            if (!string.IsNullOrEmpty(requestBodyJson))
+            {
+                try
+                {
+                    using var reqDoc = JsonDocument.Parse(requestBodyJson);
+                    if (reqDoc.RootElement.TryGetProperty("alter_id", out var aidProp) && aidProp.TryGetInt32(out var aid))
+                        alterIdForPrimary = aid;
+                    else if (reqDoc.RootElement.TryGetProperty("id", out var idProp) && idProp.TryGetInt32(out var id2))
+                        alterIdForPrimary = id2;
+                }
+                catch (JsonException) { }
+            }
+            await eventBus.PublishAsync(new SocketRawPushEvent(systemId, "primary_front",
+                SerializeSocketJson(new { alter_id = alterIdForPrimary })), ct);
+
+            // Also emit self_updated since set_primary_front mutates the user record
+            var accountRepo = context.RequestServices.GetRequiredService<IAccountRepository>();
+            var profile = await accountRepo.GetPublicProfileAsync(systemId, ct);
+            var selfData = new Dictionary<string, object?>
+            {
+                ["id"] = profile?.SystemId ?? systemId,
+                ["username"] = profile?.Username,
+                ["description"] = profile?.Description,
+                ["avatar_url"] = profile?.AvatarUrl,
+                ["autoproxy_mode"] = "off",
+                ["show_system_tag"] = false
+            };
+            await eventBus.PublishAsync(new SocketRawPushEvent(systemId, "self_updated", SerializeSocketJson(new { data = selfData })), ct);
+            return;
+        }
+
+        if (string.Equals(method, "DELETE", StringComparison.OrdinalIgnoreCase)
+            && TryExtractTerminalString(path, "/api/systems/me/front", out var deletedFrontId)
+            && !string.IsNullOrWhiteSpace(deletedFrontId)
+            && char.IsDigit(deletedFrontId[0]))
+        {
+            // front_deleted with the front ID
+            await eventBus.PublishAsync(new SocketRawPushEvent(systemId, "front_deleted",
+                SerializeSocketJson(new { front_id = deletedFrontId })), ct);
+            // FrontingStateChangedEvent already fired by DeleteFrontByIdCommandHandler (added in todo 9)
+            return;
+        }
+
+        // POST /api/systems/me/front/{id}/comment → front_updated
+        if (string.Equals(method, "POST", StringComparison.OrdinalIgnoreCase)
+            && path.EndsWith("/comment", StringComparison.OrdinalIgnoreCase))
+        {
+            var segments = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
+            // segments: [api, systems, me, front, {id}, comment]
+            if (segments.Length >= 2 && int.TryParse(segments[^2], out var frontIdForComment))
+            {
+                var frontingRepo = context.RequestServices.GetRequiredService<IFrontingRepository>();
+                var front = await frontingRepo.GetActiveByFrontIdAsync(systemId, frontIdForComment.ToString(), ct);
+                if (front is not null)
+                {
+                    await eventBus.PublishAsync(new SocketRawPushEvent(systemId, "front_updated",
+                        SerializeSocketJson(new { front })), ct);
+                }
+            }
+            return;
+        }
+
+        // bulk update (POST /api/systems/me/front) and set (POST /api/systems/me/front/set)
+        // FrontingStateChangedEvent is published by the command handlers (added in todo 9)
+        return;
+    }
+
+    // ── Polls ─────────────────────────────────────────────────────────────
+    if (path.StartsWith("/api/polls", StringComparison.OrdinalIgnoreCase))
+    {
+        var pollRepo = context.RequestServices.GetRequiredService<IPollRepository>();
+
+        if (statusCode is 201
+            && string.Equals(method, "POST", StringComparison.OrdinalIgnoreCase)
+            && string.Equals(path, "/api/polls", StringComparison.OrdinalIgnoreCase))
+        {
+            var poll = TryExtractEntityFromResponse(responseBody);
+            if (poll is not null)
+                await eventBus.PublishAsync(new SocketRawPushEvent(systemId, "poll_created", "{\"poll\":" + poll + "}"), ct);
+            return;
+        }
+
+        if (TryExtractTerminalString(path, "/api/polls", out var pollId))
+        {
+            if (string.Equals(method, "PATCH", StringComparison.OrdinalIgnoreCase))
+            {
+                var poll = await pollRepo.GetAsync(systemId, pollId, ct);
+                if (poll is not null)
+                    await eventBus.PublishAsync(new SocketRawPushEvent(systemId, "poll_updated",
+                        SerializeSocketJson(new { poll })), ct);
+                return;
+            }
+            if (string.Equals(method, "DELETE", StringComparison.OrdinalIgnoreCase))
+            {
+                await eventBus.PublishAsync(new SocketRawPushEvent(systemId, "poll_deleted",
+                    SerializeSocketJson(new { poll_id = pollId })), ct);
+                return;
+            }
+        }
+
+        return;
+    }
+
+    // ── Global journals ───────────────────────────────────────────────────
+    if (path.StartsWith("/api/journals", StringComparison.OrdinalIgnoreCase))
+    {
+        await HandleGlobalJournalRelayAsync(eventBus, context, systemId, method, path, responseBody, ct);
+        return;
+    }
+
+    // ── Friends ───────────────────────────────────────────────────────────
+    if (path.StartsWith("/api/friends", StringComparison.OrdinalIgnoreCase))
+    {
+        // Friend events are published by domain command handlers.
+        return;
+    }
+
+    // ── Friend requests ───────────────────────────────────────────────────
+    if (path.StartsWith("/api/friend-requests", StringComparison.OrdinalIgnoreCase))
+    {
+        // Friend request events are published by domain command handlers.
+        return;
+    }
+}
+
+// Helper: extract the raw JSON of the "data" field from a response body
+static string? TryExtractEntityFromResponse(string responseBody)
+{
+    try
+    {
+        using var doc = JsonDocument.Parse(responseBody);
+        return doc.RootElement.TryGetProperty("data", out var data)
+            ? data.GetRawText()
+            : null;
+    }
+    catch (JsonException)
+    {
+        return null;
+    }
+}
+
+// Helper: journal fan-out for global journals
+static async Task HandleGlobalJournalRelayAsync(
+    IClusterEventBus eventBus,
+    HttpContext context,
+    string systemId,
+    string method,
+    string path,
+    string responseBody,
+    CancellationToken ct)
+{
+    var journalRepo = context.RequestServices.GetRequiredService<IJournalRepository>();
+
+    // POST /api/journals → create
+    if (string.Equals(method, "POST", StringComparison.OrdinalIgnoreCase)
+        && string.Equals(path, "/api/journals", StringComparison.OrdinalIgnoreCase))
+    {
+        var entryRaw = TryExtractEntityFromResponse(responseBody);
+        if (entryRaw is not null)
+            await eventBus.PublishAsync(new SocketRawPushEvent(systemId, "global_journal_entry_created",
+                "{\"entry\":" + entryRaw + "}"), ct);
+        return;
+    }
+
+    if (TryExtractTerminalString(path, "/api/journals", out var entryId))
+    {
+        if (string.Equals(method, "DELETE", StringComparison.OrdinalIgnoreCase))
+        {
+            await eventBus.PublishAsync(new SocketRawPushEvent(systemId, "global_journal_entry_deleted",
+                SerializeSocketJson(new { entry_id = entryId })), ct);
+            return;
+        }
+
+        // PATCH or POST sub-operations (alters, locked, pinned) → entry updated
+        var entry = await journalRepo.GetGlobalAsync(systemId, entryId, ct);
+        if (entry is not null)
+            await eventBus.PublishAsync(new SocketRawPushEvent(systemId, "global_journal_entry_updated",
+                SerializeSocketJson(new { entry })), ct);
+    }
+}
+
+// Helper: journal fan-out for alter journals (/api/systems/me/alters/{alterId}/journals/...)
+static async Task HandleAlterJournalRelayAsync(
+    IClusterEventBus eventBus,
+    HttpContext context,
+    string systemId,
+    string method,
+    string path,
+    string responseBody,
+    CancellationToken ct)
+{
+    var journalRepo = context.RequestServices.GetRequiredService<IJournalRepository>();
+
+    // Find the journals segment index to extract entry ID
+    var segments = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
+    // segments: [api, systems, me, alters, {alterId}, journals[, {entryId}]]
+    var journalsIdx = Array.FindIndex(segments, s => string.Equals(s, "journals", StringComparison.OrdinalIgnoreCase));
+    if (journalsIdx < 0) return;
+
+    var isCreate = string.Equals(method, "POST", StringComparison.OrdinalIgnoreCase)
+        && journalsIdx == segments.Length - 1;
+
+    if (isCreate)
+    {
+        var entryRaw = TryExtractEntityFromResponse(responseBody);
+        if (entryRaw is not null)
+            await eventBus.PublishAsync(new SocketRawPushEvent(systemId, "alter_journal_entry_created",
+                "{\"entry\":" + entryRaw + "}"), ct);
+        return;
+    }
+
+    if (journalsIdx + 1 < segments.Length)
+    {
+        var entryId = segments[journalsIdx + 1];
+        if (string.Equals(method, "DELETE", StringComparison.OrdinalIgnoreCase))
+        {
+            await eventBus.PublishAsync(new SocketRawPushEvent(systemId, "alter_journal_entry_deleted",
+                SerializeSocketJson(new { entry_id = entryId })), ct);
+            return;
+        }
+
+        var entry = await journalRepo.GetAlterAsync(systemId, entryId, ct);
+        if (entry is not null)
+            await eventBus.PublishAsync(new SocketRawPushEvent(systemId, "alter_journal_entry_updated",
+                SerializeSocketJson(new { entry })), ct);
+    }
+}
+
+static bool TryExtractTerminalString(string path, string prefix, out string segment)
+{
+    segment = string.Empty;
+    if (!path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+    {
+        return false;
+    }
+
+    var tail = path[prefix.Length..].Trim('/');
+    if (string.IsNullOrWhiteSpace(tail))
+    {
+        return false;
+    }
+
+    var first = tail.Split('/', StringSplitOptions.RemoveEmptyEntries)[0];
+    if (string.IsNullOrWhiteSpace(first))
+    {
+        return false;
+    }
+
+    segment = first;
+    return true;
+}
+
+static string SerializeSocketJson(object value)
+{
+    var opts = new JsonSerializerOptions
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower
+    };
+    return JsonSerializer.Serialize(value, opts);
+}
+
+static bool TryParseLooseVersion(string? value, out Version parsed)
+{
+    parsed = new Version(1, 0, 0);
+    if (string.IsNullOrWhiteSpace(value))
+    {
+        return true;
+    }
+
+    var normalized = value.Trim();
+    if (Version.TryParse(normalized, out parsed!))
+    {
+        return true;
+    }
+
+    // Phoenix clients typically use semver strings like "2.0.0";
+    // allow a trailing prerelease segment by stripping from '-'.
+    var dashIndex = normalized.IndexOf('-');
+    if (dashIndex > 0)
+    {
+        var stable = normalized[..dashIndex];
+        return Version.TryParse(stable, out parsed!);
+    }
+
+    return false;
+}
+
+static SecurityToken ValidateHs256TokenSignatureForSocket(string token, TokenValidationParameters validationParameters)
+{
+    if (string.IsNullOrWhiteSpace(token))
+    {
+        throw new SecurityTokenInvalidSignatureException("Token is empty.");
+    }
+
+    var parts = token.Split('.');
+    if (parts.Length != 3)
+    {
+        throw new SecurityTokenInvalidSignatureException("Token is not a valid JWS compact token.");
+    }
+
+    var headerJson = Encoding.UTF8.GetString(Base64UrlDecode(parts[0]));
+    using (var headerDoc = JsonDocument.Parse(headerJson))
+    {
+        if (!headerDoc.RootElement.TryGetProperty("alg", out var algProp)
+            || !string.Equals(algProp.GetString(), "HS256", StringComparison.Ordinal))
+        {
+            throw new SecurityTokenInvalidSignatureException("Unsupported JWT algorithm.");
+        }
+    }
+
+    var signingInput = Encoding.UTF8.GetBytes(parts[0] + "." + parts[1]);
+    var signatureBytes = Base64UrlDecode(parts[2]);
+
+    var keys = validationParameters.IssuerSigningKeys?.OfType<SymmetricSecurityKey>().ToArray()
+        ?? Array.Empty<SymmetricSecurityKey>();
+
+    foreach (var key in keys)
+    {
+        using var hmac = new System.Security.Cryptography.HMACSHA256(key.Key);
+        var computed = hmac.ComputeHash(signingInput);
+        if (System.Security.Cryptography.CryptographicOperations.FixedTimeEquals(computed, signatureBytes))
+        {
+            return new JwtSecurityToken(token);
+        }
+    }
+
+    throw new SecurityTokenInvalidSignatureException("Invalid JWT signature.");
+}
+
+static SecurityToken ValidateHs256TokenSignatureForBearer(string token, TokenValidationParameters validationParameters)
+{
+    if (string.IsNullOrWhiteSpace(token))
+    {
+        throw new SecurityTokenInvalidSignatureException("Token is empty.");
+    }
+
+    var parts = token.Split('.');
+    if (parts.Length != 3)
+    {
+        throw new SecurityTokenInvalidSignatureException("Token is not a valid JWS compact token.");
+    }
+
+    var headerJson = Encoding.UTF8.GetString(Base64UrlDecode(parts[0]));
+    using (var headerDoc = JsonDocument.Parse(headerJson))
+    {
+        if (!headerDoc.RootElement.TryGetProperty("alg", out var algProp)
+            || !string.Equals(algProp.GetString(), "HS256", StringComparison.Ordinal))
+        {
+            throw new SecurityTokenInvalidSignatureException("Unsupported JWT algorithm.");
+        }
+    }
+
+    var signingInput = Encoding.UTF8.GetBytes(parts[0] + "." + parts[1]);
+    var signatureBytes = Base64UrlDecode(parts[2]);
+
+    var keys = validationParameters.IssuerSigningKeys?.OfType<SymmetricSecurityKey>().ToArray()
+        ?? Array.Empty<SymmetricSecurityKey>();
+
+    foreach (var key in keys)
+    {
+        using var hmac = new System.Security.Cryptography.HMACSHA256(key.Key);
+        var computed = hmac.ComputeHash(signingInput);
+        if (System.Security.Cryptography.CryptographicOperations.FixedTimeEquals(computed, signatureBytes))
+        {
+            return new Microsoft.IdentityModel.JsonWebTokens.JsonWebToken(token);
+        }
+    }
+
+    throw new SecurityTokenInvalidSignatureException("Invalid JWT signature.");
+}
+
+static byte[] Base64UrlDecode(string value)
+{
+    var padded = value.Replace('-', '+').Replace('_', '/');
+    switch (padded.Length % 4)
+    {
+        case 2:
+            padded += "==";
+            break;
+        case 3:
+            padded += "=";
+            break;
+    }
+
+    return Convert.FromBase64String(padded);
+}
+
+static int ReadPositiveIntFromEnv(string key, int fallback)
+{
+    var raw = Env(key);
+    return int.TryParse(raw, out var parsed) && parsed > 0 ? parsed : fallback;
+}
+
 static async Task<(
     AccountPublicProfileReadModel? profile,
-    IReadOnlyList<AlterPublicReadModel> alters,
+    IReadOnlyList<AlterReadModel> alters,
     IReadOnlyList<FrontActiveReadModel> fronts,
     IReadOnlyList<TagPublicReadModel> tags,
     IReadOnlyList<SettingsFieldReadModel> settingsFields,
@@ -935,7 +2114,8 @@ static async Task SendPhoenixReplyAsync(
     string status,
     string responseJson,
     bool replyAsArrayFrame,
-    CancellationToken cancellationToken)
+    CancellationToken cancellationToken,
+    SemaphoreSlim? sendGate = null)
 {
     var escapedTopic = System.Text.Json.JsonSerializer.Serialize(topic);
     // Preserve null so the client receives null rather than empty-string, which
@@ -970,6 +2150,48 @@ static async Task SendPhoenixReplyAsync(
         "}";
 
     var bytes = Encoding.UTF8.GetBytes(frame);
-    await socket.SendAsync(bytes, WebSocketMessageType.Text, endOfMessage: true, cancellationToken);
+    if (sendGate is not null)
+    {
+        await sendGate.WaitAsync(cancellationToken);
+        try
+        {
+            await socket.SendAsync(bytes, WebSocketMessageType.Text, endOfMessage: true, cancellationToken);
+        }
+        finally
+        {
+            sendGate.Release();
+        }
+    }
+    else
+    {
+        await socket.SendAsync(bytes, WebSocketMessageType.Text, endOfMessage: true, cancellationToken);
+    }
+}
+
+static class SocketJoinRateLimiter
+{
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, Queue<DateTimeOffset>> _windows =
+        new(StringComparer.Ordinal);
+
+    public static bool Allow(string systemId, DateTimeOffset now)
+    {
+        var queue = _windows.GetOrAdd(systemId, _ => new Queue<DateTimeOffset>());
+        lock (queue)
+        {
+            var cutoff = now.AddSeconds(-1);
+            while (queue.Count > 0 && queue.Peek() < cutoff)
+            {
+                queue.Dequeue();
+            }
+
+            if (queue.Count >= 2)
+            {
+                return false;
+            }
+
+            queue.Enqueue(now);
+            return true;
+        }
+    }
 }
 

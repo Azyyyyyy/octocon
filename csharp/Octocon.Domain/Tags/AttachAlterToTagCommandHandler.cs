@@ -12,17 +12,20 @@ public sealed class AttachAlterToTagCommandHandler : ICommandHandler<AttachAlter
     private readonly IAlterRepository _alterRepository;
     private readonly IIdempotencyStore _idempotencyStore;
     private readonly IAggregateVersionStore _versionStore;
+    private readonly IClusterEventBus _eventBus;
 
     public AttachAlterToTagCommandHandler(
         ITagRepository tagRepository,
         IAlterRepository alterRepository,
         IIdempotencyStore idempotencyStore,
-        IAggregateVersionStore versionStore)
+        IAggregateVersionStore versionStore,
+        IClusterEventBus eventBus)
     {
         _tagRepository = tagRepository;
         _alterRepository = alterRepository;
         _idempotencyStore = idempotencyStore;
         _versionStore = versionStore;
+        _eventBus = eventBus;
     }
 
     public async Task<CommandExecutionResult<TagCommandResult>> HandleAsync(
@@ -66,6 +69,10 @@ public sealed class AttachAlterToTagCommandHandler : ICommandHandler<AttachAlter
         await _idempotencyStore.SaveAsync(
             command.PrincipalId, command.OperationId, command.IdempotencyKey,
             payloadHash, CommandSerialization.Hash(resultJson), resultJson, cancellationToken);
+
+        await _eventBus.PublishAsync(
+            new TagChangedEvent(command.PrincipalId, "tag_updated", payload.TagId),
+            cancellationToken);
 
         return CommandExecutionResult<TagCommandResult>.Success(result);
     }

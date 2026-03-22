@@ -24,11 +24,16 @@ public sealed class InProcessEventBus : IClusterEventBus, IDisposable
 
     private sealed class TopicBag<TEvent> : ITopicBag where TEvent : class
     {
-        public readonly ConcurrentBag<ChannelWriter<TEvent>> Writers = new();
+        public readonly ConcurrentDictionary<ChannelWriter<TEvent>, byte> Writers = new();
 
         public void CompleteAll()
         {
-            foreach (var w in Writers) w.TryComplete();
+            foreach (var w in Writers.Keys)
+            {
+                w.TryComplete();
+            }
+
+            Writers.Clear();
         }
     }
 
@@ -43,8 +48,18 @@ public sealed class InProcessEventBus : IClusterEventBus, IDisposable
         if (!_topics.TryGetValue(typeof(TEvent), out var bag))
             return; // no subscribers — drop the event
 
-        foreach (var writer in ((TopicBag<TEvent>)bag).Writers)
-            await writer.WriteAsync(evt, ct).ConfigureAwait(false);
+        var topicBag = (TopicBag<TEvent>)bag;
+        foreach (var writer in topicBag.Writers.Keys)
+        {
+            try
+            {
+                await writer.WriteAsync(evt, ct).ConfigureAwait(false);
+            }
+            catch (ChannelClosedException)
+            {
+                topicBag.Writers.TryRemove(writer, out _);
+            }
+        }
     }
 
     public async IAsyncEnumerable<TEvent> SubscribeAsync<TEvent>(
@@ -58,7 +73,8 @@ public sealed class InProcessEventBus : IClusterEventBus, IDisposable
             AllowSynchronousContinuations = false
         });
 
-        GetOrCreateBag<TEvent>().Writers.Add(channel.Writer);
+        var topicBag = GetOrCreateBag<TEvent>();
+        topicBag.Writers.TryAdd(channel.Writer, 0);
 
         try
         {
@@ -67,8 +83,8 @@ public sealed class InProcessEventBus : IClusterEventBus, IDisposable
         }
         finally
         {
-            // Complete this writer; we can't remove it from the bag but completed writers
-            // silently swallow future writes instead of blocking.
+            // Remove the writer so reconnect churn does not leave stale writers behind.
+            topicBag.Writers.TryRemove(channel.Writer, out _);
             channel.Writer.TryComplete();
         }
     }
