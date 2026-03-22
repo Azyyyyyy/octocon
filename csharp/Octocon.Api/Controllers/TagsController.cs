@@ -55,7 +55,7 @@ public sealed class TagsController : OctoconControllerBase
             IdempotencyKey: GetIdempotencyKey(body.IdempotencyKey),
             ExpectedVersion: body.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
-            Payload: new CreateTagCommand(body.Name, body.ResolveParentTagId())
+            Payload: new CreateTagCommand(body.Name, body.ParentTagId)
         );
 
        var execution = await _create.HandleAsync(command, cancellationToken);
@@ -115,7 +115,7 @@ public sealed class TagsController : OctoconControllerBase
        var principal = GetPrincipalId();
        if (principal is null) return Unauthorized();
 
-       var alterId = body.ResolveAlterId();
+       var alterId = body.AlterId ?? 0;
        if (alterId <= 0)
            return BadRequest(new { error = "Invalid alter ID.", code = "invalid_alter_id" });
 
@@ -139,7 +139,7 @@ public sealed class TagsController : OctoconControllerBase
        var principal = GetPrincipalId();
        if (principal is null) return Unauthorized();
 
-       var alterId = body.ResolveAlterId();
+       var alterId = body.AlterId ?? 0;
        if (alterId <= 0)
            return BadRequest(new { error = "Invalid alter ID.", code = "invalid_alter_id" });
 
@@ -163,7 +163,7 @@ public sealed class TagsController : OctoconControllerBase
        var principal = GetPrincipalId();
        if (principal is null) return Unauthorized();
 
-       var parentTagId = body.ResolveParentTagId();
+       var parentTagId = body.ParentTagId;
        if (string.IsNullOrWhiteSpace(parentTagId))
            return BadRequest(new { error = "Invalid parent tag ID.", code = "invalid_parent_tag_id" });
 
@@ -182,7 +182,7 @@ public sealed class TagsController : OctoconControllerBase
    }
 
    [HttpDelete("{id}/parent")]
-   public async Task<IActionResult> RemoveParent(string id, [FromBody] TagIdempotencyRequest body, CancellationToken ct)
+   public async Task<IActionResult> RemoveParent(string id, [FromBody] TagIdempotencyRequest? body, CancellationToken ct)
    {
        var principal = GetPrincipalId();
        if (principal is null) return Unauthorized();
@@ -191,8 +191,8 @@ public sealed class TagsController : OctoconControllerBase
            OperationId: OperationIds.TagRemoveParent,
            CommandId: Guid.NewGuid(),
            PrincipalId: principal,
-           IdempotencyKey: GetIdempotencyKey(body.IdempotencyKey),
-           ExpectedVersion: body.ExpectedVersion,
+           IdempotencyKey: GetIdempotencyKey(body?.IdempotencyKey),
+           ExpectedVersion: body?.ExpectedVersion,
            OccurredAt: DateTimeOffset.UtcNow,
            Payload: new RemoveParentTagCommand(id)
        );
@@ -205,13 +205,9 @@ public sealed class TagsController : OctoconControllerBase
 public sealed record CreateTagRequest(
     string Name,
     string? ParentTagId,
-    [property: JsonPropertyName("parent_tag_id")] string? ParentTagIdSnake = null,
     string? IdempotencyKey = null,
     long? ExpectedVersion = null
-)
-{
-    public string? ResolveParentTagId() => ParentTagId ?? ParentTagIdSnake;
-}
+);
 
 public sealed record UpdateTagRequest(
     string? Name = null,
@@ -229,20 +225,12 @@ public sealed record TagIdempotencyRequest(
 
 public sealed record TagAlterRequest(
     int? AlterId,
-    [property: JsonPropertyName("alter_id")] int? AlterIdSnake = null,
     string? IdempotencyKey = null,
     long? ExpectedVersion = null
-)
-{
-    public int ResolveAlterId() => AlterId ?? AlterIdSnake ?? 0;
-}
+);
 
 public sealed record SetParentRequest(
     string? ParentTagId,
-    [property: JsonPropertyName("parent_tag_id")] string? ParentTagIdSnake = null,
     string? IdempotencyKey = null,
     long? ExpectedVersion = null
-)
-{
-    public string? ResolveParentTagId() => ParentTagId ?? ParentTagIdSnake;
-}
+);

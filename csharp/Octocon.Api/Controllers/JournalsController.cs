@@ -150,7 +150,7 @@ public sealed class JournalsController : OctoconControllerBase
         var principal = GetPrincipalId();
         if (principal is null) return Unauthorized();
 
-        var alterId = req.ResolveAlterId();
+        var alterId = req.AlterId ?? 0;
         if (alterId <= 0)
             return BadRequest(new { error = "Invalid alter ID.", code = "invalid_alter_id" });
 
@@ -174,7 +174,7 @@ public sealed class JournalsController : OctoconControllerBase
         var principal = GetPrincipalId();
         if (principal is null) return Unauthorized();
 
-        var alterId = req.ResolveAlterId();
+        var alterId = req.AlterId ?? 0;
         if (alterId <= 0)
             return BadRequest(new { error = "Invalid alter ID.", code = "invalid_alter_id" });
 
@@ -257,10 +257,6 @@ public sealed record JournalActionRequest(
 
 public sealed record JournalAlterRequest(
     int? AlterId,
-    [property: JsonPropertyName("alter_id")] int? AlterIdSnake = null,
     string? IdempotencyKey = null,
     long? ExpectedVersion = null
-)
-{
-    public int ResolveAlterId() => AlterId ?? AlterIdSnake ?? 0;
-}
+);

@@ -12,6 +12,8 @@ public sealed class InMemoryTagRepository : ITagRepository
        string TagId,
        string? ParentTagId,
        string Name,
+       DateTime InsertedAt,
+       DateTime UpdatedAt,
        string? Color = null,
        string? Description = null,
        string? SecurityLevel = null
@@ -47,7 +49,8 @@ public sealed class InMemoryTagRepository : ITagRepository
             return Task.FromResult<string?>(null);
 
         var id = Guid.NewGuid().ToString("N");
-        store[id] = new TagState(id, command.ParentTagId, command.Name);
+        var now = DateTime.UtcNow;
+        store[id] = new TagState(id, command.ParentTagId, command.Name, now, now);
         return Task.FromResult<string?>(id);
     }
 
@@ -67,6 +70,7 @@ public sealed class InMemoryTagRepository : ITagRepository
            store[command.TagId] = existing with
            {
                Name        = command.Name        ?? existing.Name,
+               UpdatedAt   = DateTime.UtcNow,
                Color       = command.Color       ?? existing.Color,
                Description = command.Description ?? existing.Description,
                SecurityLevel = command.SecurityLevel ?? existing.SecurityLevel
@@ -126,7 +130,7 @@ public sealed class InMemoryTagRepository : ITagRepository
            if (!store.TryGetValue(tagId, out var existing) || !store.ContainsKey(parentTagId))
                return Task.FromResult(false);
 
-           store[tagId] = existing with { ParentTagId = parentTagId };
+           store[tagId] = existing with { ParentTagId = parentTagId, UpdatedAt = DateTime.UtcNow };
            return Task.FromResult(true);
        }
 
@@ -136,7 +140,7 @@ public sealed class InMemoryTagRepository : ITagRepository
            if (!_bySystem.TryGetValue(systemKey, out var store) || !store.TryGetValue(tagId, out var existing))
                return Task.FromResult(false);
 
-           store[tagId] = existing with { ParentTagId = null };
+           store[tagId] = existing with { ParentTagId = null, UpdatedAt = DateTime.UtcNow };
            return Task.FromResult(true);
        }
 
@@ -151,8 +155,14 @@ public sealed class InMemoryTagRepository : ITagRepository
                .Select(x => new TagPublicReadModel(
                    x.TagId,
                    x.Name,
+                   x.Color,
+                   x.Description,
                    x.ParentTagId,
-                   GetAlterIds(systemKey, x.TagId)))
+                   GetAlterIds(systemKey, x.TagId),
+                   x.InsertedAt,
+                   x.UpdatedAt,
+                   ParseVisibilityLevel(x.SecurityLevel),
+                   systemId))
                .ToArray();
 
            return Task.FromResult<IReadOnlyList<TagPublicReadModel>>(rows);
@@ -174,8 +184,14 @@ public sealed class InMemoryTagRepository : ITagRepository
                .Select(x => new TagPublicReadModel(
                    x.TagId,
                    x.Name,
+                   x.Color,
+                   x.Description,
                    x.ParentTagId,
-                   GetAlterIds(systemKey, x.TagId)))
+                   GetAlterIds(systemKey, x.TagId),
+                   x.InsertedAt,
+                   x.UpdatedAt,
+                   ParseVisibilityLevel(x.SecurityLevel),
+                   systemId))
                .ToArray();
 
            return rows;
@@ -190,8 +206,14 @@ public sealed class InMemoryTagRepository : ITagRepository
            return Task.FromResult<TagPublicReadModel?>(new TagPublicReadModel(
                tag.TagId,
                tag.Name,
+               tag.Color,
+               tag.Description,
                tag.ParentTagId,
-               GetAlterIds(systemKey, tag.TagId)));
+               GetAlterIds(systemKey, tag.TagId),
+               tag.InsertedAt,
+               tag.UpdatedAt,
+               ParseVisibilityLevel(tag.SecurityLevel),
+               systemId));
        }
 
        public async Task<TagPublicReadModel?> GetGuardedAsync(
@@ -215,8 +237,14 @@ public sealed class InMemoryTagRepository : ITagRepository
            return new TagPublicReadModel(
                tag.TagId,
                tag.Name,
+               tag.Color,
+               tag.Description,
                tag.ParentTagId,
-               GetAlterIds(systemKey, tag.TagId));
+               GetAlterIds(systemKey, tag.TagId),
+               tag.InsertedAt,
+               tag.UpdatedAt,
+               ParseVisibilityLevel(tag.SecurityLevel),
+               systemId);
        }
 
     private IReadOnlyList<int> GetAlterIds(string systemKey, string tagId)

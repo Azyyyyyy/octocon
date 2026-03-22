@@ -127,29 +127,47 @@ public sealed class ScyllaTagRepository : ITagRepository
                 return false;
             }
 
+            var setClauses = new List<string>();
+            var values = new List<object?>();
+
             if (command.Name is not null)
             {
-                var updateName = new SimpleStatement(
-                    $"UPDATE {keyspace}.tags SET name = ?, updated_at = toTimestamp(now()) WHERE user_id = ? AND id = ?",
-                    command.Name,
-                    normalizedSystemId,
-                    tagGuid
-                );
+                setClauses.Add("name = ?");
+                values.Add(command.Name);
+            }
 
-                await session.ExecuteAsync(updateName);
+            if (command.Color is not null)
+            {
+                setClauses.Add("color = ?");
+                values.Add(command.Color);
+            }
+
+            if (command.Description is not null)
+            {
+                setClauses.Add("description = ?");
+                values.Add(command.Description);
             }
 
             if (command.SecurityLevel is not null)
             {
-                var updateSecurity = new SimpleStatement(
-                    $"UPDATE {keyspace}.tags SET security_level = ?, updated_at = toTimestamp(now()) WHERE user_id = ? AND id = ?",
-                    ToSecurityLevel(command.SecurityLevel),
-                    normalizedSystemId,
-                    tagGuid
-                );
-
-                await session.ExecuteAsync(updateSecurity);
+                setClauses.Add("security_level = ?");
+                values.Add(ToSecurityLevel(command.SecurityLevel));
             }
+
+            if (setClauses.Count == 0)
+            {
+                return true;
+            }
+
+            setClauses.Add("updated_at = toTimestamp(now())");
+            values.Add(normalizedSystemId);
+            values.Add(tagGuid);
+
+            var update = new SimpleStatement(
+                $"UPDATE {keyspace}.tags SET {string.Join(", ", setClauses)} WHERE user_id = ? AND id = ?",
+                [.. values]);
+
+            await session.ExecuteAsync(update);
 
             return true;
         }, _options, cancellationToken);
@@ -381,7 +399,7 @@ public sealed class ScyllaTagRepository : ITagRepository
             var keyspace = _keyspaceResolver.ResolveRegionalKeyspace(systemId);
 
             var query = new SimpleStatement(
-                $"SELECT id, name, parent_tag_id FROM {keyspace}.tags WHERE user_id = ?",
+                $"SELECT id, name, color, description, parent_tag_id, inserted_at, updated_at, security_level, user_id FROM {keyspace}.tags WHERE user_id = ?",
                 normalizedSystemId
             );
 
@@ -395,12 +413,18 @@ public sealed class ScyllaTagRepository : ITagRepository
                 tags.Add(new TagPublicReadModel(
                     tagId,
                     row.GetValue<string>("name"),
+                    row.GetValue<string?>("color"),
+                    row.GetValue<string?>("description"),
                     row.GetValue<Guid?>("parent_tag_id")?.ToString("N"),
-                    alterIds));
+                    alterIds,
+                    row.GetValue<DateTimeOffset>("inserted_at").UtcDateTime,
+                    row.GetValue<DateTimeOffset>("updated_at").UtcDateTime,
+                    ResolveVisibilityLevel(row.GetValue<short?>("security_level")),
+                    row.GetValue<string>("user_id")));
             }
 
             // VERIFIED: 2026-03-17 Elixir tags.ex get_tags() has no explicit sort → database order (ascending). Matches C# OrderBy.
-            return tags.OrderBy(x => x.TagId).ToArray();
+            return tags.OrderBy(x => x.Id).ToArray();
         }, _options, cancellationToken);
     }
 
@@ -417,7 +441,7 @@ public sealed class ScyllaTagRepository : ITagRepository
             var friendshipLevel = await ResolveFriendshipLevelAsync(session, normalizedSystemId, viewerSystemId);
 
             var query = new SimpleStatement(
-                $"SELECT id, name, parent_tag_id, security_level FROM {keyspace}.tags WHERE user_id = ?",
+                $"SELECT id, name, color, description, parent_tag_id, inserted_at, updated_at, security_level, user_id FROM {keyspace}.tags WHERE user_id = ?",
                 normalizedSystemId
             );
 
@@ -437,11 +461,17 @@ public sealed class ScyllaTagRepository : ITagRepository
                 tags.Add(new TagPublicReadModel(
                     tagId,
                     row.GetValue<string>("name"),
+                    row.GetValue<string?>("color"),
+                    row.GetValue<string?>("description"),
                     row.GetValue<Guid?>("parent_tag_id")?.ToString("N"),
-                    alterIds));
+                    alterIds,
+                    row.GetValue<DateTimeOffset>("inserted_at").UtcDateTime,
+                    row.GetValue<DateTimeOffset>("updated_at").UtcDateTime,
+                    visibility,
+                    row.GetValue<string>("user_id")));
             }
 
-            return tags.OrderBy(x => x.TagId).ToArray();
+            return tags.OrderBy(x => x.Id).ToArray();
         }, _options, cancellationToken);
     }
 
@@ -459,7 +489,7 @@ public sealed class ScyllaTagRepository : ITagRepository
             var keyspace = _keyspaceResolver.ResolveRegionalKeyspace(systemId);
 
             var query = new SimpleStatement(
-                $"SELECT id, name, parent_tag_id FROM {keyspace}.tags WHERE user_id = ? AND id = ? LIMIT 1",
+                $"SELECT id, name, color, description, parent_tag_id, inserted_at, updated_at, security_level, user_id FROM {keyspace}.tags WHERE user_id = ? AND id = ? LIMIT 1",
                 normalizedSystemId,
                 tagGuid
             );
@@ -474,8 +504,14 @@ public sealed class ScyllaTagRepository : ITagRepository
             return new TagPublicReadModel(
                 row.GetValue<Guid>("id").ToString("N"),
                 row.GetValue<string>("name"),
+                row.GetValue<string?>("color"),
+                row.GetValue<string?>("description"),
                 row.GetValue<Guid?>("parent_tag_id")?.ToString("N"),
-                alterIds);
+                alterIds,
+                row.GetValue<DateTimeOffset>("inserted_at").UtcDateTime,
+                row.GetValue<DateTimeOffset>("updated_at").UtcDateTime,
+                ResolveVisibilityLevel(row.GetValue<short?>("security_level")),
+                row.GetValue<string>("user_id"));
         }, _options, cancellationToken);
     }
 
@@ -498,7 +534,7 @@ public sealed class ScyllaTagRepository : ITagRepository
             var friendshipLevel = await ResolveFriendshipLevelAsync(session, normalizedSystemId, viewerSystemId);
 
             var query = new SimpleStatement(
-                $"SELECT id, name, parent_tag_id, security_level FROM {keyspace}.tags WHERE user_id = ? AND id = ? LIMIT 1",
+                $"SELECT id, name, color, description, parent_tag_id, inserted_at, updated_at, security_level, user_id FROM {keyspace}.tags WHERE user_id = ? AND id = ? LIMIT 1",
                 normalizedSystemId,
                 tagGuid
             );
@@ -519,8 +555,14 @@ public sealed class ScyllaTagRepository : ITagRepository
             return new TagPublicReadModel(
                 row.GetValue<Guid>("id").ToString("N"),
                 row.GetValue<string>("name"),
+                row.GetValue<string?>("color"),
+                row.GetValue<string?>("description"),
                 row.GetValue<Guid?>("parent_tag_id")?.ToString("N"),
-                alterIds);
+                alterIds,
+                row.GetValue<DateTimeOffset>("inserted_at").UtcDateTime,
+                row.GetValue<DateTimeOffset>("updated_at").UtcDateTime,
+                visibility,
+                row.GetValue<string>("user_id"));
         }, _options, cancellationToken);
     }
 

@@ -1,10 +1,18 @@
+using Octocon.Domain.Alters;
+
 namespace Octocon.Domain.Tags;
 
 public sealed record TagPublicReadModel(
-    string TagId,
+    string Id,
     string Name,
+    string? Color,
+    string? Description,
     string? ParentTagId,
-    IReadOnlyList<int> AlterIds
+    IReadOnlyList<int> Alters,
+    DateTime InsertedAt,
+    DateTime UpdatedAt,
+    VisibilityLevel SecurityLevel,
+    string? UserId
 );
 
 public interface ITagRepository
