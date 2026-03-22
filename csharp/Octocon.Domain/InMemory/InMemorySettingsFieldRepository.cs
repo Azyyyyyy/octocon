@@ -56,7 +56,7 @@ public sealed class InMemorySettingsFieldRepository : ISettingsFieldRepository
 
         lock (store)
         {
-            var index = store.FindIndex(x => string.Equals(x.FieldId, fieldId, StringComparison.Ordinal));
+            var index = store.FindIndex(x => string.Equals(x.Id, fieldId, StringComparison.Ordinal));
             if (index < 0)
             {
                 return Task.FromResult(false);
@@ -81,7 +81,7 @@ public sealed class InMemorySettingsFieldRepository : ISettingsFieldRepository
 
         lock (store)
         {
-            var index = store.FindIndex(x => string.Equals(x.FieldId, fieldId, StringComparison.Ordinal));
+            var index = store.FindIndex(x => string.Equals(x.Id, fieldId, StringComparison.Ordinal));
             if (index < 0)
             {
                 return Task.FromResult(false);
@@ -100,7 +100,7 @@ public sealed class InMemorySettingsFieldRepository : ISettingsFieldRepository
 
         lock (store)
         {
-            var oldIndex = store.FindIndex(x => string.Equals(x.FieldId, fieldId, StringComparison.Ordinal));
+            var oldIndex = store.FindIndex(x => string.Equals(x.Id, fieldId, StringComparison.Ordinal));
             if (oldIndex < 0)
             {
                 return Task.FromResult(false);

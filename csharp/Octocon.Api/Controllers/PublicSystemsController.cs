@@ -8,6 +8,7 @@ using Octocon.Domain.Tags;
 
 namespace Octocon.Api.Controllers;
 
+//TODO: To ensure route works as expected
 [AllowAnonymous]
 [Route("api/systems")]
 public sealed class PublicSystemsController : OctoconControllerBase

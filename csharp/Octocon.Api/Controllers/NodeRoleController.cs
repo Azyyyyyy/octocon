@@ -4,6 +4,7 @@ using Octocon.Domain.Abstractions;
 
 namespace Octocon.Api.Controllers;
 
+//TODO: To ensure route works as expected
 /// <summary>
 /// Exposes node-role metadata for load-balancer and ops health checks.
 /// </summary>

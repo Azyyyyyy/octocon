@@ -5,6 +5,7 @@ using Octocon.Domain.Fronting;
 
 namespace Octocon.Api.Controllers;
 
+//TODO: To ensure route works as expected
 [Route("api/systems/me/front")]
 public sealed class FrontingController : OctoconControllerBase
 {

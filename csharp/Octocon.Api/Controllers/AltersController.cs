@@ -143,6 +143,7 @@ public sealed class AltersController : OctoconControllerBase
         return result is OkObjectResult ? NoContent() : result;
     }
 
+    //TODO: To ensure route works as expected
     [HttpPut("{id}/avatar")]
     [Consumes("application/json")]
     public async Task<IActionResult> UploadAvatar(string id, [FromBody] AlterAvatarRequest req, CancellationToken ct)
@@ -183,6 +184,7 @@ public sealed class AltersController : OctoconControllerBase
         return result is OkObjectResult ? NoContent() : result;
     }
 
+    //TODO: To ensure route works as expected
     [HttpPut("{id}/avatar")]
     [Consumes("multipart/form-data")]
     public async Task<IActionResult> UploadAvatarMultipart(string id, [FromForm] AlterAvatarMultipartRequest req, CancellationToken ct)
@@ -236,6 +238,7 @@ public sealed class AltersController : OctoconControllerBase
         return result is OkObjectResult ? NoContent() : result;
     }
 
+    //TODO: To ensure route works as expected
     [HttpDelete("{id}/avatar")]
     public async Task<IActionResult> DeleteAvatar(string id, [FromBody] DeleteAlterRequest? req, CancellationToken ct)
     {

@@ -10,6 +10,7 @@ using Octocon.Api.Services;
 
 namespace Octocon.Api.Controllers;
 
+//TODO: To ensure route works as expected
 [AllowAnonymous]
 [Route("auth/link")]
 public sealed class AuthLinkController : ControllerBase

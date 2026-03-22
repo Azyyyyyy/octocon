@@ -8,6 +8,7 @@ using Octocon.Domain.Settings;
 
 namespace Octocon.Api.Controllers;
 
+//TODO: To ensure route works as expected
 [Route("api/settings")]
 public sealed class SettingsController : OctoconControllerBase
 {

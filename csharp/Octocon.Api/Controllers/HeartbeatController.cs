@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 
 namespace Octocon.Api.Controllers;
 
+//TODO: To ensure route works as expected
 [Route("api")]
 public sealed class HeartbeatController : OctoconControllerBase
 {

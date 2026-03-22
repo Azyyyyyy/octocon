@@ -5,6 +5,7 @@ using Octocon.Domain.Journals;
 
 namespace Octocon.Api.Controllers;
 
+//TODO: To ensure route works as expected
 [Route("api/journals")]
 public sealed class JournalsController : OctoconControllerBase
 {

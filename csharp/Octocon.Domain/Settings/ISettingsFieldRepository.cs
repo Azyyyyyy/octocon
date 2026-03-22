@@ -1,7 +1,7 @@
 namespace Octocon.Domain.Settings;
 
 public sealed record SettingsFieldReadModel(
-    string FieldId,
+    string Id,
     string Name,
     string Type,
     string SecurityLevel,

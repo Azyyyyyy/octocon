@@ -424,8 +424,8 @@ public sealed class ScyllaAlterRepository : IAlterRepository
         }
 
         return definitions
-            .Where(def => valuesByFieldId.ContainsKey(def.FieldId))
-            .Select(def => new AlterPublicFieldReadModel(def.FieldId, def.Name, def.Type, valuesByFieldId[def.FieldId]))
+            .Where(def => valuesByFieldId.ContainsKey(def.Id))
+            .Select(def => new AlterPublicFieldReadModel(def.Id, def.Name, def.Type, valuesByFieldId[def.Id]))
             .ToArray();
     }
 

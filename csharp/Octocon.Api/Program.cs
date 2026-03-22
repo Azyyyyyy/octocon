@@ -1035,7 +1035,7 @@ static async Task<string> BuildJoinInitJsonAsync(
         .OrderBy(x => x.Index)
         .Select(x => (object)new Dictionary<string, object?>
         {
-            ["id"] = x.FieldId,
+            ["id"] = x.Id,
             ["name"] = x.Name,
             ["type"] = x.Type,
             ["security_level"] = x.SecurityLevel,

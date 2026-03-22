@@ -304,12 +304,12 @@ public sealed class InMemoryRegionalAlterRepository : IAlterRepository
         }
 
         return definitions
-            .Where(def => alter.Fields.ContainsKey(def.FieldId))
+            .Where(def => alter.Fields.ContainsKey(def.Id))
             .Select(def => new AlterPublicFieldReadModel(
-                def.FieldId,
+                def.Id,
                 def.Name,
                 def.Type,
-                alter.Fields.TryGetValue(def.FieldId, out var value) ? value : null))
+                alter.Fields.TryGetValue(def.Id, out var value) ? value : null))
             .ToArray();
     }
 

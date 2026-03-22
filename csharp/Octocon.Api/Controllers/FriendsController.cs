@@ -4,6 +4,7 @@ using Octocon.Domain.Friendships;
 
 namespace Octocon.Api.Controllers;
 
+//TODO: To ensure route works as expected
 [Route("api/friends")]
 public sealed class FriendsController : OctoconControllerBase
 {

@@ -5,6 +5,7 @@ using Octocon.Domain.Journals;
 
 namespace Octocon.Api.Controllers;
 
+//TODO: To ensure route works as expected
 [Route("api/systems/me/alters")]
 public sealed class AlterJournalsController : OctoconControllerBase
 {

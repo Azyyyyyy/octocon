@@ -5,6 +5,7 @@ using Octocon.Domain.Polls;
 
 namespace Octocon.Api.Controllers;
 
+//TODO: To ensure route works as expected
 [Route("api/polls")]
 public sealed class PollsController : OctoconControllerBase
 {
