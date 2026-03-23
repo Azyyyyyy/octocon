@@ -26,7 +26,11 @@ public interface IFrontingRepository
 
     Task<FrontActiveReadModel?> GetActiveByFrontIdAsync(string systemId, string frontId, CancellationToken cancellationToken = default);
 
+    Task<FrontHistoryReadModel?> GetHistoryEntryByFrontIdAsync(string systemId, string frontId, CancellationToken cancellationToken = default);
+
     Task<bool> EndByFrontIdAsync(string systemId, string frontId, CancellationToken cancellationToken = default);
+
+    Task<bool> DeleteFrontByIdAsync(string systemId, string frontId, CancellationToken cancellationToken = default);
 
     Task<bool> UpdateCommentByFrontIdAsync(string systemId, string frontId, string comment, CancellationToken cancellationToken = default);
 }

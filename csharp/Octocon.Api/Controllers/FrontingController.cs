@@ -5,7 +5,6 @@ using Octocon.Domain.Fronting;
 
 namespace Octocon.Api.Controllers;
 
-//TODO: To ensure route works as expected
 [Route("api/systems/me/front")]
 public sealed class FrontingController : OctoconControllerBase
 {
@@ -40,6 +39,7 @@ public sealed class FrontingController : OctoconControllerBase
         _updateCommentHandler = updateCommentHandler;
     }
 
+    //TODO: To ensure route works as expected
     [HttpPost]
     public async Task<IActionResult> Update([FromBody] FrontBulkUpdateRequest req, CancellationToken ct)
     {
@@ -119,6 +119,7 @@ public sealed class FrontingController : OctoconControllerBase
         return result is OkObjectResult ? NoContent() : result;
     }
 
+    //TODO: To ensure route works as expected
     [HttpPost("set")]
     public async Task<IActionResult> Set([FromBody] FrontSetRequest req, CancellationToken ct)
     {
@@ -163,6 +164,7 @@ public sealed class FrontingController : OctoconControllerBase
         return result is OkObjectResult ? NoContent() : result;
     }
 
+    //TODO: To ensure route works as expected
     [HttpGet("month")]
     public async Task<IActionResult> Month([FromQuery(Name = "end_anchor")] string endAnchor, CancellationToken ct)
     {
@@ -215,6 +217,7 @@ public sealed class FrontingController : OctoconControllerBase
         return Ok(new { data = fronts });
     }
 
+    //TODO: To ensure route works as expected
     [HttpGet("{id}")]
     public async Task<IActionResult> Show(string id, CancellationToken ct)
     {
@@ -247,6 +250,7 @@ public sealed class FrontingController : OctoconControllerBase
         return result is OkObjectResult ? NoContent() : result;
     }
 
+    //TODO: To ensure route works as expected
     [HttpPost("{id}/comment")]
     public async Task<IActionResult> UpdateComment(string id, [FromBody] FrontCommentRequest req, CancellationToken ct)
     {

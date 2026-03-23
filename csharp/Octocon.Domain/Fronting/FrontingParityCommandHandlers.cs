@@ -179,7 +179,7 @@ public sealed class SetFrontCommandHandler : ICommandHandler<SetFrontCommand, Fr
 
         var active = await _frontingRepository.ListActiveAsync(command.PrincipalId, cancellationToken);
         foreach (var front in active)
-            await _frontingRepository.EndAsync(command.PrincipalId, front.AlterId, cancellationToken);
+            await _frontingRepository.EndAsync(command.PrincipalId, front.Front.AlterId, cancellationToken);
 
         var frontId = await _frontingRepository.StartAsync(
             command.PrincipalId,
@@ -279,8 +279,13 @@ public sealed class DeleteFrontByIdCommandHandler : ICommandHandler<DeleteFrontB
         }
 
         var existing = await _frontingRepository.GetActiveByFrontIdAsync(command.PrincipalId, command.Payload.FrontId, cancellationToken);
+        FrontHistoryReadModel? existingHistory = null;
         if (existing is null)
-            return RejectInvariant(command, "fronting:no_front");
+        {
+            existingHistory = await _frontingRepository.GetHistoryEntryByFrontIdAsync(command.PrincipalId, command.Payload.FrontId, cancellationToken);
+            if (existingHistory is null)
+                return RejectInvariant(command, "fronting:no_front");
+        }
 
         var versionAdvanced = await _versionStore.TryAdvanceVersionAsync(
             AggregateType,
@@ -291,11 +296,19 @@ public sealed class DeleteFrontByIdCommandHandler : ICommandHandler<DeleteFrontB
         if (!versionAdvanced)
             return await RejectStaleVersion(command, cancellationToken);
 
-        var deleted = await _frontingRepository.EndByFrontIdAsync(command.PrincipalId, command.Payload.FrontId, cancellationToken);
-        if (!deleted)
+        if (existing is not null)
+        {
+            var deleted = await _frontingRepository.EndByFrontIdAsync(command.PrincipalId, command.Payload.FrontId, cancellationToken);
+            if (!deleted)
+                return RejectInvariant(command, "fronting:delete_failed");
+        }
+
+        var deletedFromHistory = await _frontingRepository.DeleteFrontByIdAsync(command.PrincipalId, command.Payload.FrontId, cancellationToken);
+        if (!deletedFromHistory)
             return RejectInvariant(command, "fronting:delete_failed");
 
-        var result = new FrontCommandResult(command.PrincipalId, existing.AlterId, command.Payload.FrontId, Replay: false);
+        var alterId = existing?.Front.AlterId ?? existingHistory!.AlterId;
+        var result = new FrontCommandResult(command.PrincipalId, alterId, command.Payload.FrontId, Replay: false);
         var resultJson = CommandSerialization.Serialize(result);
 
         await _idempotencyStore.SaveAsync(
@@ -307,7 +320,9 @@ public sealed class DeleteFrontByIdCommandHandler : ICommandHandler<DeleteFrontB
             resultJson,
             cancellationToken);
 
-        await _eventBus.PublishAsync(new FrontingStateChangedEvent(command.PrincipalId), cancellationToken);
+        if (existing is not null)
+            await _eventBus.PublishAsync(new FrontingStateChangedEvent(command.PrincipalId), cancellationToken);
+        await _eventBus.PublishAsync(new FrontDeletedEvent(command.PrincipalId, command.Payload.FrontId), cancellationToken);
 
         return CommandExecutionResult<FrontCommandResult>.Success(result);
     }
@@ -406,7 +421,7 @@ public sealed class UpdateFrontCommentCommandHandler : ICommandHandler<UpdateFro
         if (!updated)
             return RejectInvariant(command, "fronting:update_comment_failed");
 
-        var result = new FrontCommandResult(command.PrincipalId, existing.AlterId, command.Payload.FrontId, Replay: false);
+        var result = new FrontCommandResult(command.PrincipalId, existing.Front.AlterId, command.Payload.FrontId, Replay: false);
         var resultJson = CommandSerialization.Serialize(result);
 
         await _idempotencyStore.SaveAsync(

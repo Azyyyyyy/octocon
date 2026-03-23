@@ -4,7 +4,32 @@ namespace Octocon.Domain.Alters;
 
 public sealed record AlterPublicFieldReadModel(string Id, string Name, string Type, string? Value);
 
-public sealed class AlterReadModel {
+public class BareAlter {
+    public BareAlter(
+        int id,
+        string name,
+        string? avatarUrl,
+        string? color,
+        string? pronouns,
+        bool? pinned)
+    {
+        Id = id;
+        Name = name;
+        AvatarUrl = avatarUrl;
+        Color = color;
+        Pronouns = pronouns;
+        Pinned = pinned ?? false;
+    }
+
+    public int Id { get; set; }
+    public string? AvatarUrl { get; set; }
+    public string? Color { get; set; }
+    public string Name { get; set; }
+    public string? Pronouns { get; set; }
+    public bool Pinned { get; set; }
+ }
+
+public sealed class AlterReadModel : BareAlter {
 
     public AlterReadModel(
         int id,
@@ -19,36 +44,24 @@ public sealed class AlterReadModel {
         string? alias,
         bool? untracked,
         bool? archived,
-        bool? pinned)
+        bool? pinned) : base(id, name, avatarUrl, color, pronouns, pinned)
     {
-        Id = id;
-        Name = name;
         Alias = alias;
         Fields = fields;
         SecurityLevel = securityLevel;
         ProxyName = proxyName;
         Description = description;
-        AvatarUrl = avatarUrl;
-        Color = color;
-        Pronouns = pronouns;
         Untracked = untracked ?? false;
         Archived = archived ?? false;
-        Pinned = pinned ?? false;
     }
 
-    public int Id { get; set; }
-    public string Name { get; set; }
     public string? Alias { get; set; }
     public IReadOnlyList<AlterPublicFieldReadModel>? Fields { get; set; }
     public VisibilityLevel SecurityLevel { get; set; }
     public string? ProxyName { get; set; }
     public string? Description { get; set; }
-    public string? AvatarUrl { get; set; }
-    public string? Color { get; set; }
-    public string? Pronouns { get; set; }
     public bool Untracked { get; set; }
     public bool Archived { get; set; }
-    public bool Pinned { get; set; }
 }
 
 public sealed class AlterPublicReadModel {

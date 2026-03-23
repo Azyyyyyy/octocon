@@ -144,12 +144,10 @@ public sealed class InMemoryFrontingRepository : IFrontingRepository
 
             var results = set.Values
                 .Select(x => new FrontActiveReadModel(
-                    x.FrontId,
-                    x.AlterId,
-                    x.Comment,
-                    x.StartedAt,
+                    new BareAlter(x.AlterId, $"Alter {x.AlterId}", null, null, null, false),
+                    new FrontHistoryReadModel(x.FrontId, x.AlterId, x.Comment, x.StartedAt, null, systemId),
                     primary == x.AlterId))
-                .OrderByDescending(x => x.StartedAt)
+                .OrderByDescending(x => x.Front.TimeStart)
                 .ToArray();
 
             return Task.FromResult<IReadOnlyList<FrontActiveReadModel>>(results);
@@ -186,7 +184,7 @@ public sealed class InMemoryFrontingRepository : IFrontingRepository
             var results = history
                 .Where(x => x.StartedAt >= startInclusive && x.StartedAt <= endInclusive)
                 .OrderByDescending(x => x.StartedAt)
-                .Select(x => new FrontHistoryReadModel(x.FrontId, x.AlterId, x.Comment, x.StartedAt, x.EndedAt))
+                .Select(x => new FrontHistoryReadModel(x.FrontId, x.AlterId, x.Comment, x.StartedAt, x.EndedAt, systemId))
                 .ToArray();
 
             return Task.FromResult<IReadOnlyList<FrontHistoryReadModel>>(results);
@@ -207,11 +205,25 @@ public sealed class InMemoryFrontingRepository : IFrontingRepository
                 return Task.FromResult<FrontActiveReadModel?>(null);
 
             return Task.FromResult<FrontActiveReadModel?>(new FrontActiveReadModel(
-                found.FrontId,
-                found.AlterId,
-                found.Comment,
-                found.StartedAt,
+                new BareAlter(found.AlterId, $"Alter {found.AlterId}", null, null, null, false),
+                new FrontHistoryReadModel(found.FrontId, found.AlterId, found.Comment, found.StartedAt, null, systemId),
                 primary == found.AlterId));
+        }
+    }
+
+    public Task<FrontHistoryReadModel?> GetHistoryEntryByFrontIdAsync(string systemId, string frontId, CancellationToken cancellationToken = default)
+    {
+        lock (_sync)
+        {
+            if (!_historyBySystem.TryGetValue(systemId, out var history))
+                return Task.FromResult<FrontHistoryReadModel?>(null);
+
+            var entry = history.FirstOrDefault(x => string.Equals(x.FrontId, frontId, StringComparison.Ordinal));
+            if (entry is null)
+                return Task.FromResult<FrontHistoryReadModel?>(null);
+
+            return Task.FromResult<FrontHistoryReadModel?>(new FrontHistoryReadModel(
+                entry.FrontId, entry.AlterId, entry.Comment, entry.StartedAt, entry.EndedAt, systemId));
         }
     }
 
@@ -221,7 +233,32 @@ public sealed class InMemoryFrontingRepository : IFrontingRepository
         if (found is null)
             return false;
 
-        return await EndAsync(systemId, found.AlterId, cancellationToken);
+        return await EndAsync(systemId, found.Front.AlterId, cancellationToken);
+    }
+
+    public Task<bool> DeleteFrontByIdAsync(string systemId, string frontId, CancellationToken cancellationToken = default)
+    {
+        lock (_sync)
+        {
+            if (!_historyBySystem.TryGetValue(systemId, out var history))
+                return Task.FromResult(false);
+
+            var entry = history.FirstOrDefault(x => string.Equals(x.FrontId, frontId, StringComparison.Ordinal));
+            if (entry is null)
+                return Task.FromResult(false);
+
+            history.Remove(entry);
+
+            if (_activeBySystem.TryGetValue(systemId, out var active) && active.ContainsKey(entry.AlterId))
+            {
+                active.TryRemove(entry.AlterId, out _);
+
+                if (_primaryBySystem.TryGetValue(systemId, out var primary) && primary == entry.AlterId)
+                    _primaryBySystem[systemId] = null;
+            }
+
+            return Task.FromResult(true);
+        }
     }
 
     public Task<bool> UpdateCommentByFrontIdAsync(string systemId, string frontId, string comment, CancellationToken cancellationToken = default)

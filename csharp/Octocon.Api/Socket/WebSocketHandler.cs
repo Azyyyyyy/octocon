@@ -66,6 +66,15 @@ public static async Task HandleUserSocketAsync(HttpContext context)
         topicReplyAsArrayFrame,
         sendGate,
         pushCts.Token);
+
+    var frontDeletedTask = WebSocketEvents.PumpFrontDeletedPushesAsync(
+        socket,
+        eventBus,
+        joinedTopics,
+        topicJoinReference,
+        topicReplyAsArrayFrame,
+        sendGate,
+        pushCts.Token);
     var alterPushTask = WebSocketEvents.PumpAlterPushesAsync(
         socket,
         eventBus,
@@ -372,7 +381,7 @@ public static async Task HandleUserSocketAsync(HttpContext context)
     pushCts.Cancel();
     try
     {
-        await Task.WhenAll(frontingPushTask, alterPushTask, tagPushTask, fieldsPushTask, friendshipPushTask, rawPushTask);
+        await Task.WhenAll(frontingPushTask, alterPushTask, tagPushTask, fieldsPushTask, friendshipPushTask, rawPushTask, frontDeletedTask);
     }
     catch (OperationCanceledException)
     {

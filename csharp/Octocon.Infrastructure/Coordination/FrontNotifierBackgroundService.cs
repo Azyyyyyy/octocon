@@ -71,7 +71,7 @@ public sealed class FrontNotifierBackgroundService(
         try
         {
             var active = await frontingRepository.ListActiveAsync(systemId, ct).ConfigureAwait(false);
-            var alterIds = active.Select(f => f.AlterId).ToList();
+            var alterIds = active.Select(f => f.Alter.Id).ToList();
 
             await fcmService.NotifyFrontingChangedAsync(systemId, alterIds, ct).ConfigureAwait(false);
 

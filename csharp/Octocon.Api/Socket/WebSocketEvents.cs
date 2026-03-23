@@ -50,6 +50,40 @@ public static class WebSocketEvents
     }
 }
 
+public static async Task PumpFrontDeletedPushesAsync(
+    WebSocket socket,
+    IClusterEventBus eventBus,
+    System.Collections.Concurrent.ConcurrentDictionary<string, byte> joinedTopics,
+    System.Collections.Concurrent.ConcurrentDictionary<string, string?> topicJoinReference,
+    System.Collections.Concurrent.ConcurrentDictionary<string, bool> topicReplyAsArrayFrame,
+    SemaphoreSlim sendGate,
+    CancellationToken cancellationToken)
+{
+    await foreach (var evt in eventBus.SubscribeAsync<FrontDeletedEvent>(cancellationToken).ConfigureAwait(false))
+    {
+        var topic = $"system:{evt.SystemId}";
+        if (!joinedTopics.ContainsKey(topic))
+        {
+            continue;
+        }
+
+        var payloadJson = SerializeSocketJson(new { front_id = evt.FrontId });
+
+        topicJoinReference.TryGetValue(topic, out var joinRef);
+        topicReplyAsArrayFrame.TryGetValue(topic, out var asArray);
+
+        await SendPhoenixPushAsync(
+            socket,
+            topic,
+            joinRef,
+            eventName: "front_deleted",
+            payloadJson,
+            asArray,
+            cancellationToken,
+            sendGate);
+    }
+}
+
 public static async Task PumpAlterPushesAsync(
     WebSocket socket,
     IClusterEventBus eventBus,
@@ -376,6 +410,103 @@ public static async Task PublishRelayDomainEventsAsync(
     // ── Fronting ──────────────────────────────────────────────────────────
     if (path.StartsWith("/api/systems/me/front", StringComparison.OrdinalIgnoreCase))
     {
+        var frontingRepo = context.RequestServices.GetRequiredService<IFrontingRepository>();
+
+        // POST /api/systems/me/front/start -> fronting_started
+        if (string.Equals(method, "POST", StringComparison.OrdinalIgnoreCase)
+            && path.EndsWith("/start", StringComparison.OrdinalIgnoreCase))
+        {
+            string? startedFrontId = null;
+            if (!string.IsNullOrEmpty(responseBody))
+            {
+                try
+                {
+                    using var doc = JsonDocument.Parse(responseBody);
+                    if (doc.RootElement.TryGetProperty("front_id", out var frontIdSnake) && frontIdSnake.ValueKind == JsonValueKind.String)
+                        startedFrontId = frontIdSnake.GetString();
+                    else if (doc.RootElement.TryGetProperty("frontId", out var frontIdCamel) && frontIdCamel.ValueKind == JsonValueKind.String)
+                        startedFrontId = frontIdCamel.GetString();
+                }
+                catch (JsonException) { }
+            }
+
+            if (!string.IsNullOrWhiteSpace(startedFrontId))
+            {
+                var front = await frontingRepo.GetActiveByFrontIdAsync(systemId, startedFrontId, ct);
+                if (front is not null)
+                {
+                    await eventBus.PublishAsync(new SocketRawPushEvent(systemId, "fronting_started",
+                        SerializeSocketJson(new { front })), ct);
+                }
+            }
+
+            return;
+        }
+
+        // POST /api/systems/me/front/end -> fronting_ended
+        if (string.Equals(method, "POST", StringComparison.OrdinalIgnoreCase)
+            && path.EndsWith("/end", StringComparison.OrdinalIgnoreCase))
+        {
+            int? endedAlterId = null;
+            if (!string.IsNullOrEmpty(requestBodyJson))
+            {
+                try
+                {
+                    using var reqDoc = JsonDocument.Parse(requestBodyJson);
+                    if (reqDoc.RootElement.TryGetProperty("alter_id", out var aidProp) && aidProp.TryGetInt32(out var aid))
+                        endedAlterId = aid;
+                    else if (reqDoc.RootElement.TryGetProperty("id", out var idProp) && idProp.TryGetInt32(out var id2))
+                        endedAlterId = id2;
+                }
+                catch (JsonException) { }
+            }
+
+            await eventBus.PublishAsync(new SocketRawPushEvent(systemId, "fronting_ended",
+                SerializeSocketJson(new { alter_id = endedAlterId })), ct);
+            return;
+        }
+
+        // POST /api/systems/me/front/set -> fronting_set
+        if (string.Equals(method, "POST", StringComparison.OrdinalIgnoreCase)
+            && path.EndsWith("/set", StringComparison.OrdinalIgnoreCase))
+        {
+            int? setAlterId = null;
+            if (!string.IsNullOrEmpty(requestBodyJson))
+            {
+                try
+                {
+                    using var reqDoc = JsonDocument.Parse(requestBodyJson);
+                    if (reqDoc.RootElement.TryGetProperty("alter_id", out var aidProp) && aidProp.TryGetInt32(out var aid))
+                        setAlterId = aid;
+                    else if (reqDoc.RootElement.TryGetProperty("id", out var idProp) && idProp.TryGetInt32(out var id2))
+                        setAlterId = id2;
+                }
+                catch (JsonException) { }
+            }
+
+            var activeFronts = await frontingRepo.ListActiveAsync(systemId, ct);
+            var setFront = setAlterId.HasValue
+                ? activeFronts.FirstOrDefault(x => x.Alter.Id == setAlterId.Value)
+                : activeFronts.FirstOrDefault();
+
+            if (setFront is not null)
+            {
+                await eventBus.PublishAsync(new SocketRawPushEvent(systemId, "fronting_set",
+                    SerializeSocketJson(new { front = setFront })), ct);
+            }
+            return;
+        }
+
+        // POST /api/systems/me/front -> fronting_bulk
+        if (string.Equals(method, "POST", StringComparison.OrdinalIgnoreCase)
+            && string.Equals(path, "/api/systems/me/front", StringComparison.OrdinalIgnoreCase))
+        {
+            var fronts = await frontingRepo.ListActiveAsync(systemId, ct);
+            await eventBus.PublishAsync(new SocketRawPushEvent(systemId, "fronting_bulk",
+                SerializeSocketJson(new { fronts })), ct);
+            return;
+        }
+
         // primary_front: SetPrimaryFrontCommandHandler already publishes FrontingStateChangedEvent
         // but we also want to emit the specific primary_front event
         if (path.EndsWith("/primary", StringComparison.OrdinalIgnoreCase)
@@ -389,7 +520,7 @@ public static async Task PublishRelayDomainEventsAsync(
                     using var reqDoc = JsonDocument.Parse(requestBodyJson);
                     if (reqDoc.RootElement.TryGetProperty("alter_id", out var aidProp) && aidProp.TryGetInt32(out var aid))
                         alterIdForPrimary = aid;
-                    else if (reqDoc.RootElement.TryGetProperty("id", out var idProp) && idProp.TryGetInt32(out var id2))
+                    else if (reqDoc.RootElement.TryGetProperty("id", out var idProp) && idProp.ValueKind == JsonValueKind.Number && idProp.TryGetInt32(out var id2))
                         alterIdForPrimary = id2;
                 }
                 catch (JsonException) { }
@@ -415,8 +546,7 @@ public static async Task PublishRelayDomainEventsAsync(
 
         if (string.Equals(method, "DELETE", StringComparison.OrdinalIgnoreCase)
             && TryExtractTerminalString(path, "/api/systems/me/front", out var deletedFrontId)
-            && !string.IsNullOrWhiteSpace(deletedFrontId)
-            && char.IsDigit(deletedFrontId[0]))
+            && !string.IsNullOrWhiteSpace(deletedFrontId))
         {
             // front_deleted with the front ID
             await eventBus.PublishAsync(new SocketRawPushEvent(systemId, "front_deleted",
@@ -431,10 +561,10 @@ public static async Task PublishRelayDomainEventsAsync(
         {
             var segments = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
             // segments: [api, systems, me, front, {id}, comment]
-            if (segments.Length >= 2 && int.TryParse(segments[^2], out var frontIdForComment))
+            if (segments.Length >= 2)
             {
-                var frontingRepo = context.RequestServices.GetRequiredService<IFrontingRepository>();
-                var front = await frontingRepo.GetActiveByFrontIdAsync(systemId, frontIdForComment.ToString(), ct);
+                var frontIdForComment = segments[^2];
+                var front = await frontingRepo.GetActiveByFrontIdAsync(systemId, frontIdForComment, ct);
                 if (front is not null)
                 {
                     await eventBus.PublishAsync(new SocketRawPushEvent(systemId, "front_updated",

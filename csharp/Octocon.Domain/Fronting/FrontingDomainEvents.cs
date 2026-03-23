@@ -10,3 +10,8 @@ namespace Octocon.Domain.Fronting;
 /// </para>
 /// </summary>
 public sealed record FrontingStateChangedEvent(string SystemId);
+
+/// <summary>
+/// Published whenever a front entry is permanently deleted from history.
+/// </summary>
+public sealed record FrontDeletedEvent(string SystemId, string FrontId);

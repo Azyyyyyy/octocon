@@ -1,17 +1,18 @@
+using Octocon.Domain.Alters;
+
 namespace Octocon.Domain.Fronting;
 
 public sealed record FrontActiveReadModel(
-    string FrontId,
-    int AlterId,
-    string? Comment,
-    DateTimeOffset StartedAt,
-    bool IsPrimary
+    BareAlter Alter,
+    FrontHistoryReadModel Front,
+    bool Primary
 );
 
 public sealed record FrontHistoryReadModel(
-    string FrontId,
+    string Id,
     int AlterId,
     string? Comment,
-    DateTimeOffset StartedAt,
-    DateTimeOffset? EndedAt
+    DateTimeOffset TimeStart,
+    DateTimeOffset? TimeEnd,
+    string UserId
 );
