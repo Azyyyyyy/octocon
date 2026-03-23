@@ -102,7 +102,37 @@ public sealed class ScyllaAlterRepository : IAlterRepository
             UpdateIfNotNull(batch, keyspace, command, "color", command.Color, normalizedSystemId);
             UpdateIfNotNull(batch, keyspace, command, "pronouns", command.Pronouns, normalizedSystemId);
             UpdateIfNotNull(batch, keyspace, command, "security_level", command.SecurityLevel == null ? null : ToSecurityLevel(command.SecurityLevel), normalizedSystemId);
-            UpdateIfNotNull(batch, keyspace, command, "fields", command.Fields, normalizedSystemId);
+
+            if (command.Fields is not null)
+            {
+                EnsureAlterFieldUdtMapping(session, keyspace);
+
+                var currentRow = (await session.ExecuteAsync(new SimpleStatement(
+                    $"SELECT fields FROM {keyspace}.alters WHERE user_id = ? AND id = ? LIMIT 1",
+                    normalizedSystemId,
+                    (short)command.AlterId
+                ))).FirstOrDefault();
+
+                var merged = (currentRow?.GetValue<IEnumerable<AlterFieldUdt>?>("fields") ?? [])
+                    .ToDictionary(x => x.Id.ToString("N"), x => x.Value, StringComparer.OrdinalIgnoreCase);
+
+                foreach (var f in command.Fields)
+                {
+                    merged[f.Id] = f.Value;
+                }
+
+                var udts = merged
+                    .Select(kvp => new AlterFieldUdt { Id = Guid.Parse(kvp.Key), Value = kvp.Value })
+                    .ToList();
+
+                batch.Add(new SimpleStatement(
+                    $"UPDATE {keyspace}.alters SET fields = ?, updated_at = toTimestamp(now()) WHERE user_id = ? AND id = ?",
+                    udts,
+                    normalizedSystemId,
+                    (short)command.AlterId
+                ));
+            }
+
             UpdateIfNotNull(batch, keyspace, command, "proxy_name", command.ProxyName, normalizedSystemId);
             UpdateIfNotNull(batch, keyspace, command, "alias", command.Alias, normalizedSystemId);
             UpdateIfNotNull(batch, keyspace, command, "untracked", command.Untracked, normalizedSystemId);
@@ -185,6 +215,9 @@ public sealed class ScyllaAlterRepository : IAlterRepository
             var normalizedSystemId = _keyspaceResolver.NormalizeSystemId(systemId);
             var keyspace = _keyspaceResolver.ResolveRegionalKeyspace(systemId);
 
+            var definitions = await _settingsFields.ListAsync(systemId, cancellationToken);
+            EnsureAlterFieldUdtMapping(session, keyspace);
+
             var query = new SimpleStatement(
                 $"SELECT id, name, alias, fields, security_level, color, pronouns, avatar_url, pinned, archived, untracked, description, proxy_name FROM {keyspace}.alters WHERE user_id = ?",
                 normalizedSystemId
@@ -200,7 +233,7 @@ public sealed class ScyllaAlterRepository : IAlterRepository
                     row.GetValue<string?>("color"),
                     row.GetValue<string?>("pronouns"),
                     ResolveVisibilityLevel(row.GetValue<short?>("security_level")),
-                    row.GetValue<List<AlterPublicFieldReadModel>?>("fields") ?? [],
+                    ResolveFields(row.GetValue<IEnumerable<AlterFieldUdt>?>("fields"), definitions),
                     row.GetValue<string?>("proxy_name"),
                     row.GetValue<string?>("alias"),
                     row.GetValue<bool?>("untracked"),
@@ -252,6 +285,9 @@ public sealed class ScyllaAlterRepository : IAlterRepository
             var normalizedSystemId = _keyspaceResolver.NormalizeSystemId(systemId);
             var keyspace = _keyspaceResolver.ResolveRegionalKeyspace(systemId);
 
+            var definitions = await _settingsFields.ListAsync(systemId, cancellationToken);
+            EnsureAlterFieldUdtMapping(session, keyspace);
+
             var query = new SimpleStatement(
                 $"SELECT id, name, alias, fields, security_level, color, pronouns, avatar_url, pinned, archived, untracked, description, proxy_name FROM {keyspace}.alters WHERE user_id = ? AND id = ? LIMIT 1",
                 normalizedSystemId,
@@ -269,7 +305,7 @@ public sealed class ScyllaAlterRepository : IAlterRepository
                     row.GetValue<string?>("color"),
                     row.GetValue<string?>("pronouns"),
                     ResolveVisibilityLevel(row.GetValue<short?>("security_level")),
-                    row.GetValue<List<AlterPublicFieldReadModel>?>("fields") ?? [],
+                    ResolveFields(row.GetValue<IEnumerable<AlterFieldUdt>?>("fields"), definitions),
                     row.GetValue<string?>("proxy_name"),
                     row.GetValue<string?>("alias"),
                     row.GetValue<bool?>("untracked"),
@@ -411,6 +447,20 @@ public sealed class ScyllaAlterRepository : IAlterRepository
             .ToArray();
     }
 
+    private static IReadOnlyList<AlterPublicFieldReadModel> ResolveFields(
+        IEnumerable<AlterFieldUdt>? alterFields,
+        IReadOnlyList<SettingsFieldReadModel> definitions)
+    {
+        if (definitions.Count == 0)
+        {
+            return [];
+        }
+
+        return definitions
+            .Select(def => new AlterPublicFieldReadModel(def.Id, def.Name, def.Type, alterFields?.FirstOrDefault(x => x.Id.ToString("N") == def.Id)?.Value))
+            .ToArray();
+    }
+
     private static IReadOnlyList<AlterPublicFieldReadModel> ResolveGuardedFields(
         IEnumerable<AlterFieldUdt>? alterFields,
         IReadOnlyList<SettingsFieldReadModel> definitions)
@@ -420,7 +470,7 @@ public sealed class ScyllaAlterRepository : IAlterRepository
 
         if (valuesByFieldId.Count == 0 || definitions.Count == 0)
         {
-            return Array.Empty<AlterPublicFieldReadModel>();
+            return [];
         }
 
         return definitions

@@ -376,12 +376,7 @@ if (devPrincipalAllowed)
 }
 
 app.UseAuthorization();
-
-app.Map("/api/socket", socketApp =>
-{
-    socketApp.Run(WebSocketHandler.HandleUserSocketAsync);
-});
-
+app.Map("/api/socket", socketApp => socketApp.Run(WebSocketHandler.HandleUserSocketAsync));
 app.MapControllers();
 
 app.Run();

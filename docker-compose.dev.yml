@@ -1,4 +1,11 @@
+x-log-rotation: &default-log-rotation
+  driver: "json-file"
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
+
   scylla-nam:
     image: scylladb/scylla:2025.1
     ports:
@@ -9,6 +16,7 @@ services:
       - ./dev/scylla/cassandra-rackdc.nam.properties:/etc/scylla/cassandra-rackdc.properties
       - scylla_nam_data:/var/lib/scylla
       - ./dev/scylla/scylla.yaml:/etc/scylla/scylla.yaml
+    logging: *default-log-rotation
     networks:
       octo_network:
         ipv4_address: 172.18.1.1
@@ -19,8 +27,9 @@ services:
     command: --seeds=172.18.1.1,172.18.1.2 --smp 1 --memory 750M --overprovisioned 1 --developer-mode 1 --api-address 0.0.0.0 --broadcast-address scylla-eur
     volumes:
       - ./dev/scylla/cassandra-rackdc.eur.properties:/etc/scylla/cassandra-rackdc.properties
-      - ./dev/scylla/data/eur:/var/lib/scylla
+      - scylla_eur_data:/var/lib/scylla
       - ./dev/scylla/scylla.yaml:/etc/scylla/scylla.yaml
+    logging: *default-log-rotation
     depends_on:
       - scylla-nam
     networks:
@@ -33,8 +42,9 @@ services:
     command: --seeds=172.18.1.1,172.18.1.2 --smp 1 --memory 750M --overprovisioned 1 --developer-mode 1 --api-address 0.0.0.0 --broadcast-address scylla-sam
     volumes:
       - ./dev/scylla/cassandra-rackdc.sam.properties:/etc/scylla/cassandra-rackdc.properties
-      - ./dev/scylla/data/sam:/var/lib/scylla
+      - scylla_sam_data:/var/lib/scylla
       - ./dev/scylla/scylla.yaml:/etc/scylla/scylla.yaml
+    logging: *default-log-rotation
     depends_on:
       - scylla-nam
       - scylla-eur
@@ -48,8 +58,9 @@ services:
     command: --seeds=172.18.1.1,172.18.1.2 --smp 1 --memory 750M --overprovisioned 1 --developer-mode 1 --api-address 0.0.0.0 --broadcast-address scylla-sas
     volumes:
       - ./dev/scylla/cassandra-rackdc.sas.properties:/etc/scylla/cassandra-rackdc.properties
-      - ./dev/scylla/data/sas:/var/lib/scylla
+      - scylla_sas_data:/var/lib/scylla
       - ./dev/scylla/scylla.yaml:/etc/scylla/scylla.yaml
+    logging: *default-log-rotation
     depends_on:
       - scylla-nam
       - scylla-eur
@@ -64,8 +75,9 @@ services:
     command: --seeds=172.18.1.1,172.18.1.2 --smp 1 --memory 750M --overprovisioned 1 --developer-mode 1 --api-address 0.0.0.0 --broadcast-address scylla-eas
     volumes:
       - ./dev/scylla/cassandra-rackdc.eas.properties:/etc/scylla/cassandra-rackdc.properties
-      - ./dev/scylla/data/eas:/var/lib/scylla
+      - scylla_eas_data:/var/lib/scylla
       - ./dev/scylla/scylla.yaml:/etc/scylla/scylla.yaml
+    logging: *default-log-rotation
     depends_on:
       - scylla-nam
       - scylla-eur
@@ -81,8 +93,9 @@ services:
     command: --seeds=172.18.1.1,172.18.1.2 --smp 1 --memory 750M --overprovisioned 1 --developer-mode 1 --api-address 0.0.0.0 --broadcast-address scylla-ocn
     volumes:
       - ./dev/scylla/cassandra-rackdc.ocn.properties:/etc/scylla/cassandra-rackdc.properties
-      - ./dev/scylla/data/ocn:/var/lib/scylla
+      - scylla_ocn_data:/var/lib/scylla
       - ./dev/scylla/scylla.yaml:/etc/scylla/scylla.yaml
+    logging: *default-log-rotation
     depends_on:
       - scylla-nam
       - scylla-eur
@@ -105,7 +118,8 @@ services:
         condition: service_healthy
     volumes:
       - ./dev/scylla/scripts/init.cql:/init.cql
-    entrypoint: ["/bin/bash", "-c", "echo Loading Scylla keyspaces... && cqlsh scylla-ocn -f /init.cql"]
+      - ./csharp/db/scylla/001_create_octocon_schema.cql:/schema.cql
+    entrypoint: ["/bin/bash", "-c", "echo Loading Scylla keyspaces... && cqlsh scylla-ocn -f /init.cql && echo Loading canonical Scylla schema... && tail -n +17 /schema.cql > /tmp/schema.tail.cql && cqlsh scylla-ocn -f /tmp/schema.tail.cql"]
     deploy:
       restart_policy:
         condition: on-failure
@@ -126,24 +140,7 @@ services:
       - "4200:5432"
     volumes:
       - ./msg_pgdata:/var/lib/postgresql/data
-    networks:
-      octo_network:
-
-  octocon-app:
-    container_name: octocon-app
-    build:
-      context: .
-      dockerfile: dev/Dockerfile
-    ports:
-      - "4000:4000"
-    volumes:
-      - app_build:/build
-      - app_deps:/deps
-      - .:/app
-    user: root
-    depends_on:
-      scylla-ocn:
-        condition: service_healthy
+    logging: *default-log-rotation
     networks:
       octo_network:
 
@@ -156,6 +153,9 @@ networks:
         - subnet: 172.18.0.0/16
 
 volumes:
-  app_build:
-  app_deps:
   scylla_nam_data:
+  scylla_eur_data:
+  scylla_sam_data:
+  scylla_sas_data:
+  scylla_eas_data:
+  scylla_ocn_data:
