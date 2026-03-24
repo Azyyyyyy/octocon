@@ -15,7 +15,7 @@ public static class SettingsSocketEventHandlers
 
         var fields = await fieldRepository.ListAsync(evt.SystemId, context.CancellationToken).ConfigureAwait(false);
         var payloadJson = WebSocketEvents.SerializeSocketJson(new { fields });
-        await context.SendAsync(topic, joinRef, asArray, "fields_updated", payloadJson);
+        await context.SendAsync(topic, joinRef, asArray, SocketEventNames.Settings.FieldsUpdated, payloadJson);
     }
 
     public static async Task HandleAsync(SettingsProfileUpdatedEvent evt, SocketPushContext context, IAccountRepository accountRepository)
@@ -30,7 +30,7 @@ public static class SettingsSocketEventHandlers
         if (evt.EmitUsernameUpdated && profile?.Username is not null)
         {
             var usernamePayloadJson = WebSocketEvents.SerializeSocketJson(new { username = profile.Username });
-            await context.SendAsync(topic, joinRef, asArray, "username_updated", usernamePayloadJson);
+            await context.SendAsync(topic, joinRef, asArray, SocketEventNames.Settings.UsernameUpdated, usernamePayloadJson);
         }
 
         var selfData = new Dictionary<string, object?>
@@ -44,17 +44,32 @@ public static class SettingsSocketEventHandlers
         };
 
         var payloadJson = WebSocketEvents.SerializeSocketJson(new { data = selfData });
-        await context.SendAsync(topic, joinRef, asArray, "self_updated", payloadJson);
+        await context.SendAsync(topic, joinRef, asArray, SocketEventNames.Settings.SelfUpdated, payloadJson);
     }
 
-    public static async Task HandleAsync(SettingsSocketSignalEvent evt, SocketPushContext context)
+    public static Task HandleAsync(SettingsAccountDeletedSignalEvent evt, SocketPushContext context)
+        => HandleSignalAsync(evt.SystemId, SocketEventNames.Settings.AccountDeleted, context);
+
+    public static Task HandleAsync(SettingsAltersWipedSignalEvent evt, SocketPushContext context)
+        => HandleSignalAsync(evt.SystemId, SocketEventNames.Settings.AltersWiped, context);
+
+    public static Task HandleAsync(SettingsEncryptedDataWipedSignalEvent evt, SocketPushContext context)
+        => HandleSignalAsync(evt.SystemId, SocketEventNames.Settings.EncryptedDataWiped, context);
+
+    public static Task HandleAsync(SettingsDiscordAccountUnlinkedSignalEvent evt, SocketPushContext context)
+        => HandleSignalAsync(evt.SystemId, SocketEventNames.Settings.DiscordAccountUnlinked, context);
+
+    public static Task HandleAsync(SettingsAppleAccountUnlinkedSignalEvent evt, SocketPushContext context)
+        => HandleSignalAsync(evt.SystemId, SocketEventNames.Settings.AppleAccountUnlinked, context);
+
+    private static async Task HandleSignalAsync(string systemId, string eventName, SocketPushContext context)
     {
-        if (!context.TryGetSystemTopic(evt.SystemId, out var topic, out var joinRef, out var asArray))
+        if (!context.TryGetSystemTopic(systemId, out var topic, out var joinRef, out var asArray))
         {
             return;
         }
 
-        await context.SendAsync(topic, joinRef, asArray, evt.EventName, "{}");
+        await context.SendAsync(topic, joinRef, asArray, eventName, "{}");
     }
 
     public static async Task HandleAsync(SettingsAccountLinkedEvent evt, SocketPushContext context)
@@ -66,10 +81,10 @@ public static class SettingsSocketEventHandlers
 
         var eventName = evt.ProviderKey switch
         {
-            "discord" => "discord_account_linked",
-            "google" => "google_account_linked",
-            "apple" => "apple_account_linked",
-            _ => "account_linked"
+            "discord" => SocketEventNames.Settings.DiscordAccountLinked,
+            "google" => SocketEventNames.Settings.GoogleAccountLinked,
+            "apple" => SocketEventNames.Settings.AppleAccountLinked,
+            _ => SocketEventNames.Settings.AccountLinked
         };
 
         var payloadJson = evt.ProviderKey switch

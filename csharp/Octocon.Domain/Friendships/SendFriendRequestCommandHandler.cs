@@ -97,36 +97,26 @@ public sealed class SendFriendRequestCommandHandler : ICommandHandler<SendFriend
 
         if (outcome is SendFriendRequestOutcome.Accepted)
         {
-            await _eventBus.PublishAsync(new FriendshipSocketEvent(
+            await _eventBus.PublishAsync(new FriendshipAddedEvent(
                 command.PrincipalId,
-                "friend_added",
-                "system_id",
                 command.Payload.TargetSystemId), cancellationToken);
 
-            await _eventBus.PublishAsync(new FriendshipSocketEvent(
+            await _eventBus.PublishAsync(new FriendshipAddedEvent(
                 command.Payload.TargetSystemId,
-                "friend_added",
-                "system_id",
                 command.PrincipalId), cancellationToken);
 
-            await _eventBus.PublishAsync(new FriendshipSocketEvent(
+            await _eventBus.PublishAsync(new FriendRequestRemovedToEvent(
                 command.Payload.TargetSystemId,
-                "friend_request_removed",
-                "to",
                 command.PrincipalId), cancellationToken);
         }
         else
         {
-            await _eventBus.PublishAsync(new FriendshipSocketEvent(
+            await _eventBus.PublishAsync(new FriendRequestSentEvent(
                 command.PrincipalId,
-                "friend_request_sent",
-                "to",
                 command.Payload.TargetSystemId), cancellationToken);
 
-            await _eventBus.PublishAsync(new FriendshipSocketEvent(
+            await _eventBus.PublishAsync(new FriendRequestReceivedEvent(
                 command.Payload.TargetSystemId,
-                "friend_request_received",
-                "from",
                 command.PrincipalId), cancellationToken);
         }
 

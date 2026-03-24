@@ -72,7 +72,7 @@ public sealed class ResetEncryptionCommandHandler : ICommandHandler<ResetEncrypt
             resultJson,
             cancellationToken);
 
-        await _eventBus.PublishAsync(new SettingsSocketSignalEvent(command.PrincipalId, "encrypted_data_wiped"), cancellationToken);
+        await _eventBus.PublishAsync(new SettingsEncryptedDataWipedSignalEvent(command.PrincipalId), cancellationToken);
         return CommandExecutionResult<SettingsCommandResult>.Success(result);
     }
 

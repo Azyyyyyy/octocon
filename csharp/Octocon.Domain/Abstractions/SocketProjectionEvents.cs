@@ -1,135 +1,63 @@
 namespace Octocon.Domain.Abstractions;
 
-public sealed class AlterChangedEvent
-{
-    public AlterChangedEvent(string systemId, string eventName, int? alterId)
-    {
-        SystemId = systemId;
-        EventName = eventName;
-        AlterId = alterId;
-    }
+public sealed record AlterCreatedEvent(string SystemId, int AlterId);
 
-    public string SystemId { get; }
-    public string EventName { get; }
-    public int? AlterId { get; }
-}
+public sealed record AlterUpdatedEvent(string SystemId, int AlterId);
 
-public sealed class TagChangedEvent
-{
-    public TagChangedEvent(string systemId, string eventName, string tagId)
-    {
-        SystemId = systemId;
-        EventName = eventName;
-        TagId = tagId;
-    }
+public sealed record AlterDeletedEvent(string SystemId, int AlterId);
 
-    public string SystemId { get; }
-    public string EventName { get; }
-    public string TagId { get; }
-}
+public sealed record TagCreatedEvent(string SystemId, string TagId);
 
-public sealed class SettingsFieldsChangedEvent
-{
-    public SettingsFieldsChangedEvent(string systemId)
-    {
-        SystemId = systemId;
-    }
+public sealed record TagUpdatedEvent(string SystemId, string TagId);
 
-    public string SystemId { get; }
-}
+public sealed record TagDeletedEvent(string SystemId, string TagId);
 
-public sealed class SettingsProfileUpdatedEvent
-{
-    public SettingsProfileUpdatedEvent(string systemId, bool emitUsernameUpdated)
-    {
-        SystemId = systemId;
-        EmitUsernameUpdated = emitUsernameUpdated;
-    }
+public sealed record SettingsFieldsChangedEvent(string SystemId);
 
-    public string SystemId { get; }
-    public bool EmitUsernameUpdated { get; }
-}
+public sealed record SettingsProfileUpdatedEvent(string SystemId, bool EmitUsernameUpdated);
 
-public sealed class SettingsSocketSignalEvent
-{
-    public SettingsSocketSignalEvent(string systemId, string eventName)
-    {
-        SystemId = systemId;
-        EventName = eventName;
-    }
+public sealed record SettingsAccountDeletedSignalEvent(string SystemId);
 
-    public string SystemId { get; }
-    public string EventName { get; }
-}
+public sealed record SettingsAltersWipedSignalEvent(string SystemId);
 
-public sealed class PollChangedEvent
-{
-    public PollChangedEvent(string systemId, string eventName, string pollId)
-    {
-        SystemId = systemId;
-        EventName = eventName;
-        PollId = pollId;
-    }
+public sealed record SettingsEncryptedDataWipedSignalEvent(string SystemId);
 
-    public string SystemId { get; }
-    public string EventName { get; }
-    public string PollId { get; }
-}
+public sealed record SettingsDiscordAccountUnlinkedSignalEvent(string SystemId);
 
-public sealed class GlobalJournalChangedEvent
-{
-    public GlobalJournalChangedEvent(string systemId, string eventName, string entryId)
-    {
-        SystemId = systemId;
-        EventName = eventName;
-        EntryId = entryId;
-    }
+public sealed record SettingsAppleAccountUnlinkedSignalEvent(string SystemId);
 
-    public string SystemId { get; }
-    public string EventName { get; }
-    public string EntryId { get; }
-}
+public sealed record PollCreatedEvent(string SystemId, string PollId);
 
-public sealed class AlterJournalChangedEvent
-{
-    public AlterJournalChangedEvent(string systemId, string eventName, string entryId)
-    {
-        SystemId = systemId;
-        EventName = eventName;
-        EntryId = entryId;
-    }
+public sealed record PollUpdatedEvent(string SystemId, string PollId);
 
-    public string SystemId { get; }
-    public string EventName { get; }
-    public string EntryId { get; }
-}
+public sealed record PollDeletedEvent(string SystemId, string PollId);
 
-public sealed class FriendshipSocketEvent
-{
-    public FriendshipSocketEvent(string targetSystemId, string eventName, string payloadKey, string payloadValue)
-    {
-        TargetSystemId = targetSystemId;
-        EventName = eventName;
-        PayloadKey = payloadKey;
-        PayloadValue = payloadValue;
-    }
+public sealed record GlobalJournalEntryCreatedEvent(string SystemId, string EntryId);
 
-    public string TargetSystemId { get; }
-    public string EventName { get; }
-    public string PayloadKey { get; }
-    public string PayloadValue { get; }
-}
+public sealed record GlobalJournalEntryUpdatedEvent(string SystemId, string EntryId);
 
-public sealed class SettingsAccountLinkedEvent
-{
-    public SettingsAccountLinkedEvent(string systemId, string providerKey, string identity)
-    {
-        SystemId = systemId;
-        ProviderKey = providerKey;
-        Identity = identity;
-    }
+public sealed record GlobalJournalEntryDeletedEvent(string SystemId, string EntryId);
 
-    public string SystemId { get; }
-    public string ProviderKey { get; }
-    public string Identity { get; }
-}
+public sealed record AlterJournalEntryCreatedEvent(string SystemId, string EntryId);
+
+public sealed record AlterJournalEntryUpdatedEvent(string SystemId, string EntryId);
+
+public sealed record AlterJournalEntryDeletedEvent(string SystemId, string EntryId);
+
+public sealed record FriendshipAddedEvent(string TargetSystemId, string SystemId);
+
+public sealed record FriendshipRemovedEvent(string TargetSystemId, string SystemId);
+
+public sealed record FriendshipTrustedEvent(string TargetSystemId, string SystemId);
+
+public sealed record FriendshipUntrustedEvent(string TargetSystemId, string SystemId);
+
+public sealed record FriendRequestSentEvent(string TargetSystemId, string ToSystemId);
+
+public sealed record FriendRequestReceivedEvent(string TargetSystemId, string FromSystemId);
+
+public sealed record FriendRequestRemovedFromEvent(string TargetSystemId, string FromSystemId);
+
+public sealed record FriendRequestRemovedToEvent(string TargetSystemId, string ToSystemId);
+
+public sealed record SettingsAccountLinkedEvent(string SystemId, string ProviderKey, string Identity);

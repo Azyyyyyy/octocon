@@ -90,7 +90,7 @@ public sealed class CreateAlterCommandHandler : ICommandHandler<CreateAlterComma
         );
 
         await _eventBus.PublishAsync(
-            new AlterChangedEvent(command.PrincipalId, "alter_created", alterId.Value),
+            new AlterCreatedEvent(command.PrincipalId, alterId.Value),
             cancellationToken);
 
         return CommandExecutionResult<AlterCommandResult>.Success(result);

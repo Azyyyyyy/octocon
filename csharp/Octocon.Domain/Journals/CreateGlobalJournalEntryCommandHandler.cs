@@ -72,7 +72,7 @@ public sealed class CreateGlobalJournalEntryCommandHandler : ICommandHandler<Cre
             cancellationToken
         );
 
-        await _eventBus.PublishAsync(new GlobalJournalChangedEvent(command.PrincipalId, "global_journal_entry_created", entryId), cancellationToken);
+        await _eventBus.PublishAsync(new GlobalJournalEntryCreatedEvent(command.PrincipalId, entryId), cancellationToken);
         return CommandExecutionResult<GlobalJournalCommandResult>.Success(result);
     }
 

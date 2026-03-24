@@ -74,7 +74,7 @@ public sealed class UpdatePollCommandHandler : ICommandHandler<UpdatePollCommand
             command.PrincipalId, command.OperationId, command.IdempotencyKey,
             payloadHash, CommandSerialization.Hash(resultJson), resultJson, cancellationToken);
 
-        await _eventBus.PublishAsync(new PollChangedEvent(command.PrincipalId, "poll_updated", command.Payload.PollId), cancellationToken);
+        await _eventBus.PublishAsync(new PollUpdatedEvent(command.PrincipalId, command.Payload.PollId), cancellationToken);
         return CommandExecutionResult<PollCommandResult>.Success(result);
     }
 

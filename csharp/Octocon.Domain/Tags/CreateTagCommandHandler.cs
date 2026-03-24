@@ -96,7 +96,7 @@ public sealed class CreateTagCommandHandler : ICommandHandler<CreateTagCommand, 
         );
 
         await _eventBus.PublishAsync(
-            new TagChangedEvent(command.PrincipalId, "tag_created", tagId),
+            new TagCreatedEvent(command.PrincipalId, tagId),
             cancellationToken);
 
         return CommandExecutionResult<TagCommandResult>.Success(result);

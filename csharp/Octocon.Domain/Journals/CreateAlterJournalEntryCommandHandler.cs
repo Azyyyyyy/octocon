@@ -83,7 +83,7 @@ public sealed class CreateAlterJournalEntryCommandHandler : ICommandHandler<Crea
             cancellationToken
         );
 
-        await _eventBus.PublishAsync(new AlterJournalChangedEvent(command.PrincipalId, "alter_journal_entry_created", entryId), cancellationToken);
+        await _eventBus.PublishAsync(new AlterJournalEntryCreatedEvent(command.PrincipalId, entryId), cancellationToken);
         return CommandExecutionResult<AlterJournalCommandResult>.Success(result);
     }
 

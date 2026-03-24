@@ -83,16 +83,12 @@ public sealed class RemoveFriendshipCommandHandler : ICommandHandler<RemoveFrien
             resultJson,
             cancellationToken);
 
-        await _eventBus.PublishAsync(new FriendshipSocketEvent(
+        await _eventBus.PublishAsync(new FriendshipRemovedEvent(
             command.PrincipalId,
-            "friend_removed",
-            "system_id",
             command.Payload.FriendSystemId), cancellationToken);
 
-        await _eventBus.PublishAsync(new FriendshipSocketEvent(
+        await _eventBus.PublishAsync(new FriendshipRemovedEvent(
             command.Payload.FriendSystemId,
-            "friend_removed",
-            "system_id",
             command.PrincipalId), cancellationToken);
 
         return CommandExecutionResult<FriendshipCommandResult>.Success(result);

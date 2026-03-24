@@ -80,7 +80,7 @@ public sealed class UpdateDescriptionCommandHandler : ICommandHandler<UpdateDesc
             resultJson,
             cancellationToken);
 
-        await _eventBus.PublishAsync(new SettingsProfileUpdatedEvent(command.PrincipalId, emitUsernameUpdated: false), cancellationToken);
+        await _eventBus.PublishAsync(new SettingsProfileUpdatedEvent(command.PrincipalId, false), cancellationToken);
         return CommandExecutionResult<SettingsCommandResult>.Success(result);
     }
 

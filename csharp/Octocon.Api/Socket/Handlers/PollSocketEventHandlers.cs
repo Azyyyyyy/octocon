@@ -5,29 +5,37 @@ namespace Octocon.Api.Socket.Handlers;
 
 public static class PollSocketEventHandlers
 {
-    public static async Task HandleAsync(PollChangedEvent evt, SocketPushContext context, IPollRepository pollRepository)
+    public static async Task HandleAsync(PollCreatedEvent evt, SocketPushContext context, IPollRepository pollRepository)
+        => await HandleUpsertAsync(evt.SystemId, evt.PollId, SocketEventNames.Polls.Created, context, pollRepository);
+
+    public static async Task HandleAsync(PollUpdatedEvent evt, SocketPushContext context, IPollRepository pollRepository)
+        => await HandleUpsertAsync(evt.SystemId, evt.PollId, SocketEventNames.Polls.Updated, context, pollRepository);
+
+    public static async Task HandleAsync(PollDeletedEvent evt, SocketPushContext context)
     {
         if (!context.TryGetSystemTopic(evt.SystemId, out var topic, out var joinRef, out var asArray))
         {
             return;
         }
 
-        string payloadJson;
-        if (string.Equals(evt.EventName, "poll_deleted", StringComparison.Ordinal))
-        {
-            payloadJson = WebSocketEvents.SerializeSocketJson(new Dictionary<string, object?> { ["poll_id"] = evt.PollId });
-        }
-        else
-        {
-            var poll = await pollRepository.GetAsync(evt.SystemId, evt.PollId, context.CancellationToken).ConfigureAwait(false);
-            if (poll is null)
-            {
-                return;
-            }
+        var payloadJson = WebSocketEvents.SerializeSocketJson(new Dictionary<string, object?> { ["poll_id"] = evt.PollId });
+        await context.SendAsync(topic, joinRef, asArray, SocketEventNames.Polls.Deleted, payloadJson);
+    }
 
-            payloadJson = WebSocketEvents.SerializeSocketJson(new { poll });
+    private static async Task HandleUpsertAsync(string systemId, string pollId, string eventName, SocketPushContext context, IPollRepository pollRepository)
+    {
+        if (!context.TryGetSystemTopic(systemId, out var topic, out var joinRef, out var asArray))
+        {
+            return;
         }
 
-        await context.SendAsync(topic, joinRef, asArray, evt.EventName, payloadJson);
+        var poll = await pollRepository.GetAsync(systemId, pollId, context.CancellationToken).ConfigureAwait(false);
+        if (poll is null)
+        {
+            return;
+        }
+
+        var payloadJson = WebSocketEvents.SerializeSocketJson(new { poll });
+        await context.SendAsync(topic, joinRef, asArray, eventName, payloadJson);
     }
 }

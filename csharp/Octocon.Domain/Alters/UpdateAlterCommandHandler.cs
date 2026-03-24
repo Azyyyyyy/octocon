@@ -116,7 +116,7 @@ public sealed class UpdateAlterCommandHandler : ICommandHandler<UpdateAlterComma
         );
 
         await _eventBus.PublishAsync(
-            new AlterChangedEvent(command.PrincipalId, "alter_updated", command.Payload.AlterId),
+            new AlterUpdatedEvent(command.PrincipalId, command.Payload.AlterId),
             cancellationToken);
 
         return CommandExecutionResult<AlterCommandResult>.Success(result);

@@ -93,16 +93,12 @@ public sealed class RejectFriendRequestCommandHandler : ICommandHandler<RejectFr
             resultJson,
             cancellationToken);
 
-        await _eventBus.PublishAsync(new FriendshipSocketEvent(
+        await _eventBus.PublishAsync(new FriendRequestRemovedFromEvent(
             command.PrincipalId,
-            "friend_request_removed",
-            "from",
             command.Payload.SourceSystemId), cancellationToken);
 
-        await _eventBus.PublishAsync(new FriendshipSocketEvent(
+        await _eventBus.PublishAsync(new FriendRequestRemovedToEvent(
             command.Payload.SourceSystemId,
-            "friend_request_removed",
-            "to",
             command.PrincipalId), cancellationToken);
 
         return CommandExecutionResult<FriendshipCommandResult>.Success(result);

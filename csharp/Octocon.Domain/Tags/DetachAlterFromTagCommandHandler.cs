@@ -71,7 +71,7 @@ public sealed class DetachAlterFromTagCommandHandler : ICommandHandler<DetachAlt
             payloadHash, CommandSerialization.Hash(resultJson), resultJson, cancellationToken);
 
         await _eventBus.PublishAsync(
-            new TagChangedEvent(command.PrincipalId, "tag_updated", payload.TagId),
+            new TagUpdatedEvent(command.PrincipalId, payload.TagId),
             cancellationToken);
 
         return CommandExecutionResult<TagCommandResult>.Success(result);

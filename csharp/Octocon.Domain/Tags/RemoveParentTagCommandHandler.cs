@@ -62,7 +62,7 @@ public sealed class RemoveParentTagCommandHandler : ICommandHandler<RemoveParent
             payloadHash, CommandSerialization.Hash(resultJson), resultJson, cancellationToken);
 
         await _eventBus.PublishAsync(
-            new TagChangedEvent(command.PrincipalId, "tag_updated", tagId),
+            new TagUpdatedEvent(command.PrincipalId, tagId),
             cancellationToken);
 
         return CommandExecutionResult<TagCommandResult>.Success(result);

@@ -117,7 +117,7 @@ public sealed class UploadAvatarCommandHandler : ICommandHandler<UploadAvatarCom
 
         if (result.Accepted && result.Result is { Replay: false })
         {
-            await _eventBus.PublishAsync(new SettingsProfileUpdatedEvent(command.PrincipalId, emitUsernameUpdated: false), cancellationToken);
+            await _eventBus.PublishAsync(new SettingsProfileUpdatedEvent(command.PrincipalId, false), cancellationToken);
         }
 
         return result;
@@ -154,7 +154,7 @@ public sealed class DeleteAvatarCommandHandler : ICommandHandler<DeleteAvatarCom
 
         if (result.Accepted && result.Result is { Replay: false })
         {
-            await _eventBus.PublishAsync(new SettingsProfileUpdatedEvent(command.PrincipalId, emitUsernameUpdated: false), cancellationToken);
+            await _eventBus.PublishAsync(new SettingsProfileUpdatedEvent(command.PrincipalId, false), cancellationToken);
         }
 
         return result;
@@ -202,7 +202,7 @@ public sealed class ImportPkCommandHandler : ICommandHandler<ImportPkCommand, Se
 
         if (result.Accepted && result.Result is { Replay: false })
         {
-            await _eventBus.PublishAsync(new SettingsProfileUpdatedEvent(command.PrincipalId, emitUsernameUpdated: false), cancellationToken);
+            await _eventBus.PublishAsync(new SettingsProfileUpdatedEvent(command.PrincipalId, false), cancellationToken);
         }
 
         return result;
@@ -250,7 +250,7 @@ public sealed class ImportSpCommandHandler : ICommandHandler<ImportSpCommand, Se
 
         if (result.Accepted && result.Result is { Replay: false })
         {
-            await _eventBus.PublishAsync(new SettingsProfileUpdatedEvent(command.PrincipalId, emitUsernameUpdated: false), cancellationToken);
+            await _eventBus.PublishAsync(new SettingsProfileUpdatedEvent(command.PrincipalId, false), cancellationToken);
         }
 
         return result;
@@ -276,7 +276,7 @@ public sealed class UnlinkDiscordCommandHandler : ICommandHandler<UnlinkDiscordC
         var result = await SettingsPhaseOCommandHelper.ExecuteAsync(command, AggregateType, "discord_unlinked", "settings:unlink:discord", _idempotencyStore, _versionStore, _ => Task.FromResult(true), cancellationToken);
         if (result.Accepted && result.Result is { Replay: false })
         {
-            await _eventBus.PublishAsync(new SettingsSocketSignalEvent(command.PrincipalId, "discord_account_unlinked"), cancellationToken);
+            await _eventBus.PublishAsync(new SettingsDiscordAccountUnlinkedSignalEvent(command.PrincipalId), cancellationToken);
         }
 
         return result;
@@ -318,7 +318,7 @@ public sealed class UnlinkAppleCommandHandler : ICommandHandler<UnlinkAppleComma
         var result = await SettingsPhaseOCommandHelper.ExecuteAsync(command, AggregateType, "apple_unlinked", "settings:unlink:apple", _idempotencyStore, _versionStore, _ => Task.FromResult(true), cancellationToken);
         if (result.Accepted && result.Result is { Replay: false })
         {
-            await _eventBus.PublishAsync(new SettingsSocketSignalEvent(command.PrincipalId, "apple_account_unlinked"), cancellationToken);
+            await _eventBus.PublishAsync(new SettingsAppleAccountUnlinkedSignalEvent(command.PrincipalId), cancellationToken);
         }
 
         return result;
@@ -344,7 +344,7 @@ public sealed class DeleteAccountCommandHandler : ICommandHandler<DeleteAccountC
         var result = await SettingsPhaseOCommandHelper.ExecuteAsync(command, AggregateType, "account_deleted", "settings:account:delete", _idempotencyStore, _versionStore, _ => Task.FromResult(true), cancellationToken);
         if (result.Accepted && result.Result is { Replay: false })
         {
-            await _eventBus.PublishAsync(new SettingsSocketSignalEvent(command.PrincipalId, "account_deleted"), cancellationToken);
+            await _eventBus.PublishAsync(new SettingsAccountDeletedSignalEvent(command.PrincipalId), cancellationToken);
         }
 
         return result;
@@ -370,7 +370,7 @@ public sealed class WipeAltersCommandHandler : ICommandHandler<WipeAltersCommand
         var result = await SettingsPhaseOCommandHelper.ExecuteAsync(command, AggregateType, "alters_wiped", "settings:alters:wipe", _idempotencyStore, _versionStore, _ => Task.FromResult(true), cancellationToken);
         if (result.Accepted && result.Result is { Replay: false })
         {
-            await _eventBus.PublishAsync(new SettingsSocketSignalEvent(command.PrincipalId, "alters_wiped"), cancellationToken);
+            await _eventBus.PublishAsync(new SettingsAltersWipedSignalEvent(command.PrincipalId), cancellationToken);
         }
 
         return result;

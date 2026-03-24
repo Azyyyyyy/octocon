@@ -82,7 +82,7 @@ public sealed class DetachAlterFromGlobalJournalCommandHandler : ICommandHandler
             cancellationToken
         );
 
-        await _eventBus.PublishAsync(new GlobalJournalChangedEvent(command.PrincipalId, "global_journal_entry_updated", command.Payload.EntryId), cancellationToken);
+        await _eventBus.PublishAsync(new GlobalJournalEntryUpdatedEvent(command.PrincipalId, command.Payload.EntryId), cancellationToken);
         return CommandExecutionResult<GlobalJournalCommandResult>.Success(result);
     }
 

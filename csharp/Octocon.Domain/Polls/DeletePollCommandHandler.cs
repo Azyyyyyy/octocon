@@ -64,7 +64,7 @@ public sealed class DeletePollCommandHandler : ICommandHandler<DeletePollCommand
             command.PrincipalId, command.OperationId, command.IdempotencyKey,
             payloadHash, CommandSerialization.Hash(resultJson), resultJson, cancellationToken);
 
-        await _eventBus.PublishAsync(new PollChangedEvent(command.PrincipalId, "poll_deleted", command.Payload.PollId), cancellationToken);
+        await _eventBus.PublishAsync(new PollDeletedEvent(command.PrincipalId, command.Payload.PollId), cancellationToken);
         return CommandExecutionResult<PollCommandResult>.Success(result);
     }
 

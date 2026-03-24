@@ -83,7 +83,7 @@ public sealed class DeleteAlterCommandHandler : ICommandHandler<DeleteAlterComma
         );
 
         await _eventBus.PublishAsync(
-            new AlterChangedEvent(command.PrincipalId, "alter_deleted", command.Payload.AlterId),
+            new AlterDeletedEvent(command.PrincipalId, command.Payload.AlterId),
             cancellationToken);
 
         return CommandExecutionResult<AlterCommandResult>.Success(result);

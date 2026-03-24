@@ -84,11 +84,18 @@ public sealed class SetFriendTrustCommandHandler : ICommandHandler<SetFriendTrus
             resultJson,
             cancellationToken);
 
-        await _eventBus.PublishAsync(new FriendshipSocketEvent(
-            command.PrincipalId,
-            command.Payload.Trusted ? "friend_trusted" : "friend_untrusted",
-            "system_id",
-            command.Payload.FriendSystemId), cancellationToken);
+        if (command.Payload.Trusted)
+        {
+            await _eventBus.PublishAsync(
+                new FriendshipTrustedEvent(command.PrincipalId, command.Payload.FriendSystemId),
+                cancellationToken);
+        }
+        else
+        {
+            await _eventBus.PublishAsync(
+                new FriendshipUntrustedEvent(command.PrincipalId, command.Payload.FriendSystemId),
+                cancellationToken);
+        }
 
         return CommandExecutionResult<FriendshipCommandResult>.Success(result);
     }

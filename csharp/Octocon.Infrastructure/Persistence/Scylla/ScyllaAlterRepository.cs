@@ -183,10 +183,16 @@ public sealed class ScyllaAlterRepository : IAlterRepository
                 normalizedSystemId,
                 alterIdShort));
 
-            await session.ExecuteAsync(new SimpleStatement(
-                $"UPDATE {keyspace}.users SET primary_front = null WHERE id = ? IF primary_front = ?",
-                normalizedSystemId,
-                alterId));
+            var primaryFrontRow = (await session.ExecuteAsync(new SimpleStatement(
+                $"SELECT primary_front FROM {keyspace}.users WHERE id = ? LIMIT 1",
+                normalizedSystemId))).FirstOrDefault();
+
+            if (primaryFrontRow?.GetValue<short?>("primary_front") == alterIdShort)
+            {
+                await session.ExecuteAsync(new SimpleStatement(
+                    $"UPDATE {keyspace}.users SET primary_front = null WHERE id = ?",
+                    normalizedSystemId));
+            }
 
             var membershipRows = await session.ExecuteAsync(new SimpleStatement(
                 $"SELECT tag_id FROM {keyspace}.alter_tags WHERE user_id = ? AND alter_id = ?",

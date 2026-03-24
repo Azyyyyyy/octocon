@@ -100,7 +100,7 @@ public sealed class UpdateUsernameCommandHandler : ICommandHandler<UpdateUsernam
             cancellationToken
         );
 
-        await _eventBus.PublishAsync(new SettingsProfileUpdatedEvent(command.PrincipalId, emitUsernameUpdated: true), cancellationToken);
+        await _eventBus.PublishAsync(new SettingsProfileUpdatedEvent(command.PrincipalId, true), cancellationToken);
         return CommandExecutionResult<AccountCommandResult>.Success(result);
     }
 

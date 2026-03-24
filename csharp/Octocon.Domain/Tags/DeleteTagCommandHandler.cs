@@ -62,7 +62,7 @@ public sealed class DeleteTagCommandHandler : ICommandHandler<DeleteTagCommand, 
             payloadHash, CommandSerialization.Hash(resultJson), resultJson, cancellationToken);
 
         await _eventBus.PublishAsync(
-            new TagChangedEvent(command.PrincipalId, "tag_deleted", tagId),
+            new TagDeletedEvent(command.PrincipalId, tagId),
             cancellationToken);
 
         return CommandExecutionResult<TagCommandResult>.Success(result);

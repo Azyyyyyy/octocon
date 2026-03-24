@@ -70,7 +70,7 @@ public sealed class DeleteGlobalJournalEntryCommandHandler : ICommandHandler<Del
             cancellationToken
         );
 
-        await _eventBus.PublishAsync(new GlobalJournalChangedEvent(command.PrincipalId, "global_journal_entry_deleted", command.Payload.EntryId), cancellationToken);
+        await _eventBus.PublishAsync(new GlobalJournalEntryDeletedEvent(command.PrincipalId, command.Payload.EntryId), cancellationToken);
         return CommandExecutionResult<GlobalJournalCommandResult>.Success(result);
     }
 
