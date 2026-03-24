@@ -1179,7 +1179,7 @@ CREATE TABLE IF NOT EXISTS nam.fronts (
     time_end timestamp,
     inserted_at timestamp,
     updated_at timestamp,
-    PRIMARY KEY (user_id, id, time_start)
+    PRIMARY KEY (user_id, alter_id, id, time_start)
 );
 
 CREATE TABLE IF NOT EXISTS eur.fronts (
@@ -1191,7 +1191,7 @@ CREATE TABLE IF NOT EXISTS eur.fronts (
     time_end timestamp,
     inserted_at timestamp,
     updated_at timestamp,
-    PRIMARY KEY (user_id, id, time_start)
+    PRIMARY KEY (user_id, alter_id, id, time_start)
 );
 
 CREATE TABLE IF NOT EXISTS ocn.fronts (
@@ -1203,7 +1203,7 @@ CREATE TABLE IF NOT EXISTS ocn.fronts (
     time_end timestamp,
     inserted_at timestamp,
     updated_at timestamp,
-    PRIMARY KEY (user_id, id, time_start)
+    PRIMARY KEY (user_id, alter_id, id, time_start)
 );
 
 CREATE TABLE IF NOT EXISTS eas.fronts (
@@ -1215,7 +1215,7 @@ CREATE TABLE IF NOT EXISTS eas.fronts (
     time_end timestamp,
     inserted_at timestamp,
     updated_at timestamp,
-    PRIMARY KEY (user_id, id, time_start)
+    PRIMARY KEY (user_id, alter_id, id, time_start)
 );
 
 CREATE TABLE IF NOT EXISTS sam.fronts (
@@ -1227,7 +1227,7 @@ CREATE TABLE IF NOT EXISTS sam.fronts (
     time_end timestamp,
     inserted_at timestamp,
     updated_at timestamp,
-    PRIMARY KEY (user_id, id, time_start)
+    PRIMARY KEY (user_id, alter_id, id, time_start)
 );
 
 CREATE TABLE IF NOT EXISTS sas.fronts (
@@ -1239,7 +1239,7 @@ CREATE TABLE IF NOT EXISTS sas.fronts (
     time_end timestamp,
     inserted_at timestamp,
     updated_at timestamp,
-    PRIMARY KEY (user_id, id, time_start)
+    PRIMARY KEY (user_id, alter_id, id, time_start)
 );
 
 CREATE TABLE IF NOT EXISTS gdpr.fronts (
@@ -1251,7 +1251,7 @@ CREATE TABLE IF NOT EXISTS gdpr.fronts (
     time_end timestamp,
     inserted_at timestamp,
     updated_at timestamp,
-    PRIMARY KEY (user_id, id, time_start)
+    PRIMARY KEY (user_id, alter_id, id, time_start)
 );
 
 -- ============================================================================

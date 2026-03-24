@@ -4,18 +4,6 @@ namespace Octocon.Api.Socket.Handlers;
 
 public static class FrontingSocketEventHandlers
 {
-    public static async Task HandleAsync(FrontingStateChangedEvent evt, SocketPushContext context, IFrontingRepository frontingRepository)
-    {
-        if (!context.TryGetSystemTopic(evt.SystemId, out var topic, out var joinRef, out var asArray))
-        {
-            return;
-        }
-
-        var fronts = await frontingRepository.ListActiveAsync(evt.SystemId, context.CancellationToken).ConfigureAwait(false);
-        var payloadJson = WebSocketEvents.SerializeSocketJson(new { fronts });
-        await context.SendAsync(topic, joinRef, asArray, "fronting_changed", payloadJson);
-    }
-
     public static async Task HandleAsync(FrontingStartedEvent evt, SocketPushContext context, IFrontingRepository frontingRepository)
     {
         if (!context.TryGetSystemTopic(evt.SystemId, out var topic, out var joinRef, out var asArray))
@@ -30,7 +18,7 @@ public static class FrontingSocketEventHandlers
         }
 
         var payloadJson = WebSocketEvents.SerializeSocketJson(new { front });
-        await context.SendAsync(topic, joinRef, asArray, "fronting_started", payloadJson);
+        await context.SendAsync(topic, joinRef, asArray, SocketEventNames.Fronting.Started, payloadJson);
     }
 
     public static async Task HandleAsync(FrontingEndedEvent evt, SocketPushContext context)
@@ -41,7 +29,7 @@ public static class FrontingSocketEventHandlers
         }
 
         var payloadJson = WebSocketEvents.SerializeSocketJson(new { alter_id = evt.AlterId });
-        await context.SendAsync(topic, joinRef, asArray, "fronting_ended", payloadJson);
+        await context.SendAsync(topic, joinRef, asArray, SocketEventNames.Fronting.Ended, payloadJson);
     }
 
     public static async Task HandleAsync(FrontingSetEvent evt, SocketPushContext context, IFrontingRepository frontingRepository)
@@ -58,7 +46,7 @@ public static class FrontingSocketEventHandlers
         }
 
         var payloadJson = WebSocketEvents.SerializeSocketJson(new { front });
-        await context.SendAsync(topic, joinRef, asArray, "fronting_set", payloadJson);
+        await context.SendAsync(topic, joinRef, asArray, SocketEventNames.Fronting.Set, payloadJson);
     }
 
     public static async Task HandleAsync(FrontingBulkUpdatedEvent evt, SocketPushContext context, IFrontingRepository frontingRepository)
@@ -70,7 +58,7 @@ public static class FrontingSocketEventHandlers
 
         var fronts = await frontingRepository.ListActiveAsync(evt.SystemId, context.CancellationToken).ConfigureAwait(false);
         var payloadJson = WebSocketEvents.SerializeSocketJson(new { fronts });
-        await context.SendAsync(topic, joinRef, asArray, "fronting_bulk", payloadJson);
+    await context.SendAsync(topic, joinRef, asArray, SocketEventNames.Fronting.BulkUpdated, payloadJson);
     }
 
     public static async Task HandleAsync(FrontCommentUpdatedEvent evt, SocketPushContext context, IFrontingRepository frontingRepository)
@@ -87,7 +75,7 @@ public static class FrontingSocketEventHandlers
         }
 
         var payloadJson = WebSocketEvents.SerializeSocketJson(new { front });
-        await context.SendAsync(topic, joinRef, asArray, "front_updated", payloadJson);
+        await context.SendAsync(topic, joinRef, asArray, SocketEventNames.Fronting.CommentUpdated, payloadJson);
     }
 
     public static async Task HandleAsync(FrontingPrimaryChangedEvent evt, SocketPushContext context)
@@ -98,7 +86,7 @@ public static class FrontingSocketEventHandlers
         }
 
         var payloadJson = WebSocketEvents.SerializeSocketJson(new { alter_id = evt.AlterId });
-        await context.SendAsync(topic, joinRef, asArray, "primary_front", payloadJson);
+        await context.SendAsync(topic, joinRef, asArray, SocketEventNames.Fronting.PrimaryChanged, payloadJson);
     }
 
     public static async Task HandleAsync(FrontDeletedEvent evt, SocketPushContext context)
@@ -109,6 +97,6 @@ public static class FrontingSocketEventHandlers
         }
 
         var payloadJson = WebSocketEvents.SerializeSocketJson(new { front_id = evt.FrontId });
-        await context.SendAsync(topic, joinRef, asArray, "front_deleted", payloadJson);
+        await context.SendAsync(topic, joinRef, asArray, SocketEventNames.Fronting.Deleted, payloadJson);
     }
 }

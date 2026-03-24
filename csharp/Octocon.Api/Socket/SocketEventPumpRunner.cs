@@ -21,10 +21,10 @@ public static class SocketEventPumpRunner
         ISettingsFieldRepository settingsFieldRepository,
         IAccountRepository accountRepository,
         IPollRepository pollRepository,
-        IJournalRepository journalRepository)
+        IJournalRepository journalRepository,
+        IEncryptionStateRepository encryptionStateRepository)
     {
         return Task.WhenAll(
-            SubscribeAsync<FrontingStateChangedEvent>(eventBus, context, evt => FrontingSocketEventHandlers.HandleAsync(evt, context, frontingRepository)),
             SubscribeAsync<FrontingStartedEvent>(eventBus, context, evt => FrontingSocketEventHandlers.HandleAsync(evt, context, frontingRepository)),
             SubscribeAsync<FrontingEndedEvent>(eventBus, context, evt => FrontingSocketEventHandlers.HandleAsync(evt, context)),
             SubscribeAsync<FrontingSetEvent>(eventBus, context, evt => FrontingSocketEventHandlers.HandleAsync(evt, context, frontingRepository)),
@@ -39,7 +39,7 @@ public static class SocketEventPumpRunner
             SubscribeAsync<TagUpdatedEvent>(eventBus, context, evt => TagSocketEventHandlers.HandleAsync(evt, context, tagRepository)),
             SubscribeAsync<TagDeletedEvent>(eventBus, context, evt => TagSocketEventHandlers.HandleAsync(evt, context)),
             SubscribeAsync<SettingsFieldsChangedEvent>(eventBus, context, evt => SettingsSocketEventHandlers.HandleAsync(evt, context, settingsFieldRepository)),
-            SubscribeAsync<SettingsProfileUpdatedEvent>(eventBus, context, evt => SettingsSocketEventHandlers.HandleAsync(evt, context, accountRepository)),
+            SubscribeAsync<SettingsProfileUpdatedEvent>(eventBus, context, evt => SettingsSocketEventHandlers.HandleAsync(evt, context, accountRepository, alterRepository, frontingRepository, settingsFieldRepository, encryptionStateRepository)),
             SubscribeAsync<SettingsAccountDeletedSignalEvent>(eventBus, context, evt => SettingsSocketEventHandlers.HandleAsync(evt, context)),
             SubscribeAsync<SettingsAltersWipedSignalEvent>(eventBus, context, evt => SettingsSocketEventHandlers.HandleAsync(evt, context)),
             SubscribeAsync<SettingsEncryptedDataWipedSignalEvent>(eventBus, context, evt => SettingsSocketEventHandlers.HandleAsync(evt, context)),

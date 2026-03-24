@@ -60,6 +60,7 @@ public static async Task HandleUserSocketAsync(HttpContext context)
     var accountRepository = context.RequestServices.GetRequiredService<IAccountRepository>();
     var pollRepository = context.RequestServices.GetRequiredService<IPollRepository>();
     var journalRepository = context.RequestServices.GetRequiredService<IJournalRepository>();
+    var encryptionStateRepository = context.RequestServices.GetRequiredService<IEncryptionStateRepository>();
     var socketPushContext = new SocketPushContext(
         socket,
         joinedTopics,
@@ -77,7 +78,8 @@ public static async Task HandleUserSocketAsync(HttpContext context)
         settingsFieldRepository,
         accountRepository,
         pollRepository,
-        journalRepository);
+        journalRepository,
+        encryptionStateRepository);
 
     while (socket.State == WebSocketState.Open)
     {

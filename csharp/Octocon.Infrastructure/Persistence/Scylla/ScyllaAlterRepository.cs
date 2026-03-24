@@ -183,6 +183,11 @@ public sealed class ScyllaAlterRepository : IAlterRepository
                 normalizedSystemId,
                 alterIdShort));
 
+            await session.ExecuteAsync(new SimpleStatement(
+                $"DELETE FROM {keyspace}.fronts WHERE user_id = ? AND alter_id = ?",
+                normalizedSystemId,
+                alterIdShort));
+
             var primaryFrontRow = (await session.ExecuteAsync(new SimpleStatement(
                 $"SELECT primary_front FROM {keyspace}.users WHERE id = ? LIMIT 1",
                 normalizedSystemId))).FirstOrDefault();

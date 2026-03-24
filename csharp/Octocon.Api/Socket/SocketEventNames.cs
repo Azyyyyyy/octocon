@@ -4,6 +4,7 @@ public static class SocketEventNames
 {
     public static class Alters
     {
+        //alters_created has not been added yet
         public const string Created = "alter_created";
         public const string Updated = "alter_updated";
         public const string Deleted = "alter_deleted";
@@ -21,6 +22,22 @@ public static class SocketEventNames
         public const string Created = "poll_created";
         public const string Updated = "poll_updated";
         public const string Deleted = "poll_deleted";
+    }
+
+    //pk_import_complete
+    //pk_import_failed
+    //sp_import_complete
+    //sp_import_failed
+
+    public static class Fronting
+    {
+        public const string Started = "fronting_started";
+        public const string Ended = "fronting_ended";
+        public const string Set = "fronting_set";
+        public const string BulkUpdated = "fronting_bulk";
+        public const string CommentUpdated = "front_updated";
+        public const string PrimaryChanged = "primary_front";
+        public const string Deleted = "front_deleted";
     }
 
     public static class Journals
@@ -44,6 +61,13 @@ public static class SocketEventNames
         public const string RequestRemoved = "friend_request_removed";
     }
 
+    public static class BatchedInit {
+        public const string Alters = "batched_init_alters";
+        public const string Tags = "batched_init_tags";
+        public const string Fronts = "batched_init_fronts";
+        public const string Complete = "batched_init_complete";
+    }
+
     public static class Settings
     {
         public const string FieldsUpdated = "fields_updated";
@@ -57,6 +81,6 @@ public static class SocketEventNames
         public const string DiscordAccountLinked = "discord_account_linked";
         public const string GoogleAccountLinked = "google_account_linked";
         public const string AppleAccountLinked = "apple_account_linked";
-        public const string AccountLinked = "account_linked";
+        //google_account_unlinked has not been added
     }
 }

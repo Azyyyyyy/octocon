@@ -32,15 +32,15 @@ public static async Task SendBatchedInitAsync(
         ? frontsEl.EnumerateArray().Select(x => x.GetRawText()).ToList()
         : [];
 
-    await SendBatchedDataAsync(socket, topic, joinReference, replyAsArrayFrame, "batched_init_alters", "alters", 3000, alters, cancellationToken, sendGate);
-    await SendBatchedDataAsync(socket, topic, joinReference, replyAsArrayFrame, "batched_init_tags", "tags", 1000, tags, cancellationToken, sendGate);
-    await SendBatchedDataAsync(socket, topic, joinReference, replyAsArrayFrame, "batched_init_fronts", "fronts", 50, fronts, cancellationToken, sendGate);
+    await SendBatchedDataAsync(socket, topic, joinReference, replyAsArrayFrame, SocketEventNames.BatchedInit.Alters, "alters", 3000, alters, cancellationToken, sendGate);
+    await SendBatchedDataAsync(socket, topic, joinReference, replyAsArrayFrame, SocketEventNames.BatchedInit.Tags, "tags", 1000, tags, cancellationToken, sendGate);
+    await SendBatchedDataAsync(socket, topic, joinReference, replyAsArrayFrame, SocketEventNames.BatchedInit.Fronts, "fronts", 50, fronts, cancellationToken, sendGate);
 
     await WebSocketEvents.SendPhoenixPushAsync(
         socket,
         topic,
         joinReference,
-        eventName: "batched_init_complete",
+        eventName: SocketEventNames.BatchedInit.Complete,
         payloadJson: "{}",
         replyAsArrayFrame,
         cancellationToken,
@@ -152,16 +152,23 @@ public static async Task<string> BuildJoinInitJsonAsync(
         })
         .ToArray();
 
+    var primaryFront = fronts.FirstOrDefault(x => x.Primary)?.Front.AlterId;
+
     var system = new Dictionary<string, object?>
     {
         ["id"] = profile?.SystemId ?? systemId,
         ["username"] = profile?.Username,
         ["description"] = profile?.Description,
         ["avatar_url"] = profile?.AvatarUrl,
+        ["discord_id"] = null,
+        ["google_id"] = null,
+        ["apple_id"] = null,
+        ["email"] = null,
         // Keep parity with Elixir's SystemJSON.data_me defaults.
         ["autoproxy_mode"] = "off",
         ["show_system_tag"] = false,
         ["lifetime_alter_count"] = alters.Count,
+        ["primary_front"] = primaryFront,
         ["fields"] = fields,
         ["encryption_initialized"] = encryptionState?.Initialized ?? false
     };
