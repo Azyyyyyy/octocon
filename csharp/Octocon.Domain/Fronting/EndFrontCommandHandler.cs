@@ -98,6 +98,9 @@ public sealed class EndFrontCommandHandler : ICommandHandler<EndFrontCommand, Fr
 
         await _eventBus.PublishAsync(new FrontingStateChangedEvent(command.PrincipalId), cancellationToken);
 
+        // Emit granular event for socket layer to handle fronting_ended
+        await _eventBus.PublishAsync(new FrontingEndedEvent(command.PrincipalId, command.Payload.AlterId), cancellationToken);
+
         return CommandExecutionResult<FrontCommandResult>.Success(result);
     }
 

@@ -10,15 +10,18 @@ public sealed class ResetEncryptionCommandHandler : ICommandHandler<ResetEncrypt
     private readonly IEncryptionStateRepository _repository;
     private readonly IIdempotencyStore _idempotencyStore;
     private readonly IAggregateVersionStore _versionStore;
+    private readonly IClusterEventBus _eventBus;
 
     public ResetEncryptionCommandHandler(
         IEncryptionStateRepository repository,
         IIdempotencyStore idempotencyStore,
-        IAggregateVersionStore versionStore)
+        IAggregateVersionStore versionStore,
+        IClusterEventBus eventBus)
     {
         _repository = repository;
         _idempotencyStore = idempotencyStore;
         _versionStore = versionStore;
+        _eventBus = eventBus;
     }
 
     public async Task<CommandExecutionResult<SettingsCommandResult>> HandleAsync(
@@ -69,6 +72,7 @@ public sealed class ResetEncryptionCommandHandler : ICommandHandler<ResetEncrypt
             resultJson,
             cancellationToken);
 
+        await _eventBus.PublishAsync(new SettingsSocketSignalEvent(command.PrincipalId, "encrypted_data_wiped"), cancellationToken);
         return CommandExecutionResult<SettingsCommandResult>.Success(result);
     }
 

@@ -10,15 +10,18 @@ public sealed class DeleteGlobalJournalEntryCommandHandler : ICommandHandler<Del
     private readonly IJournalRepository _journalRepository;
     private readonly IIdempotencyStore _idempotencyStore;
     private readonly IAggregateVersionStore _versionStore;
+    private readonly IClusterEventBus _eventBus;
 
     public DeleteGlobalJournalEntryCommandHandler(
         IJournalRepository journalRepository,
         IIdempotencyStore idempotencyStore,
-        IAggregateVersionStore versionStore)
+        IAggregateVersionStore versionStore,
+        IClusterEventBus eventBus)
     {
         _journalRepository = journalRepository;
         _idempotencyStore = idempotencyStore;
         _versionStore = versionStore;
+        _eventBus = eventBus;
     }
 
     public async Task<CommandExecutionResult<GlobalJournalCommandResult>> HandleAsync(
@@ -67,6 +70,7 @@ public sealed class DeleteGlobalJournalEntryCommandHandler : ICommandHandler<Del
             cancellationToken
         );
 
+        await _eventBus.PublishAsync(new GlobalJournalChangedEvent(command.PrincipalId, "global_journal_entry_deleted", command.Payload.EntryId), cancellationToken);
         return CommandExecutionResult<GlobalJournalCommandResult>.Success(result);
     }
 

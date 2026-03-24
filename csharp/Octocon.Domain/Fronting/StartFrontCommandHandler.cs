@@ -114,6 +114,9 @@ public sealed class StartFrontCommandHandler : ICommandHandler<StartFrontCommand
 
         await _eventBus.PublishAsync(new FrontingStateChangedEvent(command.PrincipalId), cancellationToken);
 
+        // Emit granular event for socket layer to handle fronting_started
+        await _eventBus.PublishAsync(new FrontingStartedEvent(command.PrincipalId, frontId), cancellationToken);
+
         return CommandExecutionResult<FrontCommandResult>.Success(result);
     }
 

@@ -10,16 +10,19 @@ public sealed class UpdateUsernameCommandHandler : ICommandHandler<UpdateUsernam
     private readonly IAccountRepository _accountRepository;
     private readonly IIdempotencyStore _idempotencyStore;
     private readonly IAggregateVersionStore _versionStore;
+    private readonly IClusterEventBus _eventBus;
 
     public UpdateUsernameCommandHandler(
         IAccountRepository accountRepository,
         IIdempotencyStore idempotencyStore,
-        IAggregateVersionStore versionStore
+        IAggregateVersionStore versionStore,
+        IClusterEventBus eventBus
     )
     {
         _accountRepository = accountRepository;
         _idempotencyStore = idempotencyStore;
         _versionStore = versionStore;
+        _eventBus = eventBus;
     }
 
     public async Task<CommandExecutionResult<AccountCommandResult>> HandleAsync(
@@ -97,6 +100,7 @@ public sealed class UpdateUsernameCommandHandler : ICommandHandler<UpdateUsernam
             cancellationToken
         );
 
+        await _eventBus.PublishAsync(new SettingsProfileUpdatedEvent(command.PrincipalId, emitUsernameUpdated: true), cancellationToken);
         return CommandExecutionResult<AccountCommandResult>.Success(result);
     }
 

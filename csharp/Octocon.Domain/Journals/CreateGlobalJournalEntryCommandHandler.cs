@@ -10,15 +10,18 @@ public sealed class CreateGlobalJournalEntryCommandHandler : ICommandHandler<Cre
     private readonly IJournalRepository _journalRepository;
     private readonly IIdempotencyStore _idempotencyStore;
     private readonly IAggregateVersionStore _versionStore;
+    private readonly IClusterEventBus _eventBus;
 
     public CreateGlobalJournalEntryCommandHandler(
         IJournalRepository journalRepository,
         IIdempotencyStore idempotencyStore,
-        IAggregateVersionStore versionStore)
+        IAggregateVersionStore versionStore,
+        IClusterEventBus eventBus)
     {
         _journalRepository = journalRepository;
         _idempotencyStore = idempotencyStore;
         _versionStore = versionStore;
+        _eventBus = eventBus;
     }
 
     public async Task<CommandExecutionResult<GlobalJournalCommandResult>> HandleAsync(
@@ -69,6 +72,7 @@ public sealed class CreateGlobalJournalEntryCommandHandler : ICommandHandler<Cre
             cancellationToken
         );
 
+        await _eventBus.PublishAsync(new GlobalJournalChangedEvent(command.PrincipalId, "global_journal_entry_created", entryId), cancellationToken);
         return CommandExecutionResult<GlobalJournalCommandResult>.Success(result);
     }
 

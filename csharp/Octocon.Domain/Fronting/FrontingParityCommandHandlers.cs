@@ -89,6 +89,9 @@ public sealed class BulkUpdateFrontCommandHandler : ICommandHandler<BulkUpdateFr
 
         await _eventBus.PublishAsync(new FrontingStateChangedEvent(command.PrincipalId), cancellationToken);
 
+        // Emit granular event for socket layer to handle fronting_bulk
+        await _eventBus.PublishAsync(new FrontingBulkUpdatedEvent(command.PrincipalId), cancellationToken);
+
         return CommandExecutionResult<FrontCommandResult>.Success(result);
     }
 
@@ -205,6 +208,9 @@ public sealed class SetFrontCommandHandler : ICommandHandler<SetFrontCommand, Fr
             cancellationToken);
 
         await _eventBus.PublishAsync(new FrontingStateChangedEvent(command.PrincipalId), cancellationToken);
+
+        // Emit granular event for socket layer to handle fronting_set
+        await _eventBus.PublishAsync(new FrontingSetEvent(command.PrincipalId, frontId), cancellationToken);
 
         return CommandExecutionResult<FrontCommandResult>.Success(result);
     }
@@ -434,6 +440,9 @@ public sealed class UpdateFrontCommentCommandHandler : ICommandHandler<UpdateFro
             cancellationToken);
 
         await _eventBus.PublishAsync(new FrontingStateChangedEvent(command.PrincipalId), cancellationToken);
+
+        // Emit granular event for socket layer to handle front_updated
+        await _eventBus.PublishAsync(new FrontCommentUpdatedEvent(command.PrincipalId, command.Payload.FrontId), cancellationToken);
 
         return CommandExecutionResult<FrontCommandResult>.Success(result);
     }

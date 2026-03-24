@@ -1,7 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Mvc;
-using Octocon.Api.Socket;
 using Octocon.Domain.Abstractions;
 using Octocon.Contracts.Operations;
 using Octocon.Domain.Accounts;
@@ -179,26 +178,9 @@ public sealed class AuthLinkController : ControllerBase
 
     private async Task<IActionResult> RedirectWithSocketEventAsync(string systemId, string providerKey, string identity)
     {
-        var eventName = providerKey switch
-        {
-            "discord" => "discord_account_linked",
-            "google" => "google_account_linked",
-            "apple" => "apple_account_linked",
-            _ => "account_linked"
-        };
-
-        object payload = providerKey switch
-        {
-            "discord" => new { discord_id = identity },
-            "google" => new { email = identity },
-            "apple" => new { apple_id = identity },
-            _ => new { }
-        };
-
-        await _eventBus.PublishAsync(new SocketRawPushEvent(
-            systemId,
-            eventName,
-            System.Text.Json.JsonSerializer.Serialize(payload)), HttpContext.RequestAborted);
+        await _eventBus.PublishAsync(
+            new SettingsAccountLinkedEvent(systemId, providerKey, identity),
+            HttpContext.RequestAborted);
 
         return Redirect($"{_apiSettings.DeepEndpointAddress}/link_success/{providerKey}");
     }

@@ -10,15 +10,18 @@ public sealed class CreatePollCommandHandler : ICommandHandler<CreatePollCommand
     private readonly IPollRepository _pollRepository;
     private readonly IIdempotencyStore _idempotencyStore;
     private readonly IAggregateVersionStore _versionStore;
+    private readonly IClusterEventBus _eventBus;
 
     public CreatePollCommandHandler(
         IPollRepository pollRepository,
         IIdempotencyStore idempotencyStore,
-        IAggregateVersionStore versionStore)
+        IAggregateVersionStore versionStore,
+        IClusterEventBus eventBus)
     {
         _pollRepository = pollRepository;
         _idempotencyStore = idempotencyStore;
         _versionStore = versionStore;
+        _eventBus = eventBus;
     }
 
     public async Task<CommandExecutionResult<PollCommandResult>> HandleAsync(
@@ -71,6 +74,7 @@ public sealed class CreatePollCommandHandler : ICommandHandler<CreatePollCommand
             command.PrincipalId, command.OperationId, command.IdempotencyKey,
             payloadHash, CommandSerialization.Hash(resultJson), resultJson, cancellationToken);
 
+        await _eventBus.PublishAsync(new PollChangedEvent(command.PrincipalId, "poll_created", pollId), cancellationToken);
         return CommandExecutionResult<PollCommandResult>.Success(result);
     }
 

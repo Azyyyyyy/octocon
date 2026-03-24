@@ -12,17 +12,20 @@ public sealed class CreateAlterJournalEntryCommandHandler : ICommandHandler<Crea
     private readonly IAlterRepository _alterRepository;
     private readonly IIdempotencyStore _idempotencyStore;
     private readonly IAggregateVersionStore _versionStore;
+    private readonly IClusterEventBus _eventBus;
 
     public CreateAlterJournalEntryCommandHandler(
         IJournalRepository journalRepository,
         IAlterRepository alterRepository,
         IIdempotencyStore idempotencyStore,
-        IAggregateVersionStore versionStore)
+        IAggregateVersionStore versionStore,
+        IClusterEventBus eventBus)
     {
         _journalRepository = journalRepository;
         _alterRepository = alterRepository;
         _idempotencyStore = idempotencyStore;
         _versionStore = versionStore;
+        _eventBus = eventBus;
     }
 
     public async Task<CommandExecutionResult<AlterJournalCommandResult>> HandleAsync(
@@ -80,6 +83,7 @@ public sealed class CreateAlterJournalEntryCommandHandler : ICommandHandler<Crea
             cancellationToken
         );
 
+        await _eventBus.PublishAsync(new AlterJournalChangedEvent(command.PrincipalId, "alter_journal_entry_created", entryId), cancellationToken);
         return CommandExecutionResult<AlterJournalCommandResult>.Success(result);
     }
 

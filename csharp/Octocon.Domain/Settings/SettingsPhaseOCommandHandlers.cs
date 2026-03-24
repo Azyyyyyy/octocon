@@ -80,12 +80,14 @@ public sealed class UploadAvatarCommandHandler : ICommandHandler<UploadAvatarCom
     private readonly IAccountRepository _accountRepository;
     private readonly IIdempotencyStore _idempotencyStore;
     private readonly IAggregateVersionStore _versionStore;
+    private readonly IClusterEventBus _eventBus;
 
-    public UploadAvatarCommandHandler(IAccountRepository accountRepository, IIdempotencyStore idempotencyStore, IAggregateVersionStore versionStore)
+    public UploadAvatarCommandHandler(IAccountRepository accountRepository, IIdempotencyStore idempotencyStore, IAggregateVersionStore versionStore, IClusterEventBus eventBus)
     {
         _accountRepository = accountRepository;
         _idempotencyStore = idempotencyStore;
         _versionStore = versionStore;
+        _eventBus = eventBus;
     }
 
     public Task<CommandExecutionResult<SettingsCommandResult>> HandleAsync(CommandEnvelope<UploadAvatarCommand> command, CancellationToken cancellationToken = default)
@@ -96,7 +98,14 @@ public sealed class UploadAvatarCommandHandler : ICommandHandler<UploadAvatarCom
                 new ConflictResult(ConflictCode.ConflictInvariant, command.OperationId, "settings:avatar_invalid", null, "manual_merge_required", null)));
         }
 
-        return SettingsPhaseOCommandHelper.ExecuteAsync(
+        return ExecuteAndPublishAsync(command, cancellationToken);
+    }
+
+    private async Task<CommandExecutionResult<SettingsCommandResult>> ExecuteAndPublishAsync(
+        CommandEnvelope<UploadAvatarCommand> command,
+        CancellationToken cancellationToken)
+    {
+        var result = await SettingsPhaseOCommandHelper.ExecuteAsync(
             command,
             AggregateType,
             "avatar_uploaded",
@@ -105,6 +114,13 @@ public sealed class UploadAvatarCommandHandler : ICommandHandler<UploadAvatarCom
             _versionStore,
             ct => _accountRepository.UpdateAvatarAsync(command.PrincipalId, command.Payload.AvatarUrl, ct),
             cancellationToken);
+
+        if (result.Accepted && result.Result is { Replay: false })
+        {
+            await _eventBus.PublishAsync(new SettingsProfileUpdatedEvent(command.PrincipalId, emitUsernameUpdated: false), cancellationToken);
+        }
+
+        return result;
     }
 }
 
@@ -114,16 +130,19 @@ public sealed class DeleteAvatarCommandHandler : ICommandHandler<DeleteAvatarCom
     private readonly IAccountRepository _accountRepository;
     private readonly IIdempotencyStore _idempotencyStore;
     private readonly IAggregateVersionStore _versionStore;
+    private readonly IClusterEventBus _eventBus;
 
-    public DeleteAvatarCommandHandler(IAccountRepository accountRepository, IIdempotencyStore idempotencyStore, IAggregateVersionStore versionStore)
+    public DeleteAvatarCommandHandler(IAccountRepository accountRepository, IIdempotencyStore idempotencyStore, IAggregateVersionStore versionStore, IClusterEventBus eventBus)
     {
         _accountRepository = accountRepository;
         _idempotencyStore = idempotencyStore;
         _versionStore = versionStore;
+        _eventBus = eventBus;
     }
 
-    public Task<CommandExecutionResult<SettingsCommandResult>> HandleAsync(CommandEnvelope<DeleteAvatarCommand> command, CancellationToken cancellationToken = default) =>
-        SettingsPhaseOCommandHelper.ExecuteAsync(
+    public async Task<CommandExecutionResult<SettingsCommandResult>> HandleAsync(CommandEnvelope<DeleteAvatarCommand> command, CancellationToken cancellationToken = default)
+    {
+        var result = await SettingsPhaseOCommandHelper.ExecuteAsync(
             command,
             AggregateType,
             "avatar_deleted",
@@ -132,6 +151,14 @@ public sealed class DeleteAvatarCommandHandler : ICommandHandler<DeleteAvatarCom
             _versionStore,
             ct => _accountRepository.ClearAvatarAsync(command.PrincipalId, ct),
             cancellationToken);
+
+        if (result.Accepted && result.Result is { Replay: false })
+        {
+            await _eventBus.PublishAsync(new SettingsProfileUpdatedEvent(command.PrincipalId, emitUsernameUpdated: false), cancellationToken);
+        }
+
+        return result;
+    }
 }
 
 public sealed class ImportPkCommandHandler : ICommandHandler<ImportPkCommand, SettingsCommandResult>
@@ -139,11 +166,13 @@ public sealed class ImportPkCommandHandler : ICommandHandler<ImportPkCommand, Se
     private const string AggregateType = "settings";
     private readonly IIdempotencyStore _idempotencyStore;
     private readonly IAggregateVersionStore _versionStore;
+    private readonly IClusterEventBus _eventBus;
 
-    public ImportPkCommandHandler(IIdempotencyStore idempotencyStore, IAggregateVersionStore versionStore)
+    public ImportPkCommandHandler(IIdempotencyStore idempotencyStore, IAggregateVersionStore versionStore, IClusterEventBus eventBus)
     {
         _idempotencyStore = idempotencyStore;
         _versionStore = versionStore;
+        _eventBus = eventBus;
     }
 
     public Task<CommandExecutionResult<SettingsCommandResult>> HandleAsync(CommandEnvelope<ImportPkCommand> command, CancellationToken cancellationToken = default)
@@ -154,7 +183,14 @@ public sealed class ImportPkCommandHandler : ICommandHandler<ImportPkCommand, Se
                 new ConflictResult(ConflictCode.ConflictInvariant, command.OperationId, "settings:import_pk_invalid", null, "manual_merge_required", null)));
         }
 
-        return SettingsPhaseOCommandHelper.ExecuteAsync(
+        return ExecuteAndPublishAsync(command, cancellationToken);
+    }
+
+    private async Task<CommandExecutionResult<SettingsCommandResult>> ExecuteAndPublishAsync(
+        CommandEnvelope<ImportPkCommand> command,
+        CancellationToken cancellationToken)
+    {
+        var result = await SettingsPhaseOCommandHelper.ExecuteAsync(
             command,
             AggregateType,
             "pk_imported",
@@ -163,6 +199,13 @@ public sealed class ImportPkCommandHandler : ICommandHandler<ImportPkCommand, Se
             _versionStore,
             _ => Task.FromResult(true),
             cancellationToken);
+
+        if (result.Accepted && result.Result is { Replay: false })
+        {
+            await _eventBus.PublishAsync(new SettingsProfileUpdatedEvent(command.PrincipalId, emitUsernameUpdated: false), cancellationToken);
+        }
+
+        return result;
     }
 }
 
@@ -171,11 +214,13 @@ public sealed class ImportSpCommandHandler : ICommandHandler<ImportSpCommand, Se
     private const string AggregateType = "settings";
     private readonly IIdempotencyStore _idempotencyStore;
     private readonly IAggregateVersionStore _versionStore;
+    private readonly IClusterEventBus _eventBus;
 
-    public ImportSpCommandHandler(IIdempotencyStore idempotencyStore, IAggregateVersionStore versionStore)
+    public ImportSpCommandHandler(IIdempotencyStore idempotencyStore, IAggregateVersionStore versionStore, IClusterEventBus eventBus)
     {
         _idempotencyStore = idempotencyStore;
         _versionStore = versionStore;
+        _eventBus = eventBus;
     }
 
     public Task<CommandExecutionResult<SettingsCommandResult>> HandleAsync(CommandEnvelope<ImportSpCommand> command, CancellationToken cancellationToken = default)
@@ -186,7 +231,14 @@ public sealed class ImportSpCommandHandler : ICommandHandler<ImportSpCommand, Se
                 new ConflictResult(ConflictCode.ConflictInvariant, command.OperationId, "settings:import_sp_invalid", null, "manual_merge_required", null)));
         }
 
-        return SettingsPhaseOCommandHelper.ExecuteAsync(
+        return ExecuteAndPublishAsync(command, cancellationToken);
+    }
+
+    private async Task<CommandExecutionResult<SettingsCommandResult>> ExecuteAndPublishAsync(
+        CommandEnvelope<ImportSpCommand> command,
+        CancellationToken cancellationToken)
+    {
+        var result = await SettingsPhaseOCommandHelper.ExecuteAsync(
             command,
             AggregateType,
             "sp_imported",
@@ -195,6 +247,13 @@ public sealed class ImportSpCommandHandler : ICommandHandler<ImportSpCommand, Se
             _versionStore,
             _ => Task.FromResult(true),
             cancellationToken);
+
+        if (result.Accepted && result.Result is { Replay: false })
+        {
+            await _eventBus.PublishAsync(new SettingsProfileUpdatedEvent(command.PrincipalId, emitUsernameUpdated: false), cancellationToken);
+        }
+
+        return result;
     }
 }
 
@@ -203,15 +262,25 @@ public sealed class UnlinkDiscordCommandHandler : ICommandHandler<UnlinkDiscordC
     private const string AggregateType = "settings";
     private readonly IIdempotencyStore _idempotencyStore;
     private readonly IAggregateVersionStore _versionStore;
+    private readonly IClusterEventBus _eventBus;
 
-    public UnlinkDiscordCommandHandler(IIdempotencyStore idempotencyStore, IAggregateVersionStore versionStore)
+    public UnlinkDiscordCommandHandler(IIdempotencyStore idempotencyStore, IAggregateVersionStore versionStore, IClusterEventBus eventBus)
     {
         _idempotencyStore = idempotencyStore;
         _versionStore = versionStore;
+        _eventBus = eventBus;
     }
 
-    public Task<CommandExecutionResult<SettingsCommandResult>> HandleAsync(CommandEnvelope<UnlinkDiscordCommand> command, CancellationToken cancellationToken = default) =>
-        SettingsPhaseOCommandHelper.ExecuteAsync(command, AggregateType, "discord_unlinked", "settings:unlink:discord", _idempotencyStore, _versionStore, _ => Task.FromResult(true), cancellationToken);
+    public async Task<CommandExecutionResult<SettingsCommandResult>> HandleAsync(CommandEnvelope<UnlinkDiscordCommand> command, CancellationToken cancellationToken = default)
+    {
+        var result = await SettingsPhaseOCommandHelper.ExecuteAsync(command, AggregateType, "discord_unlinked", "settings:unlink:discord", _idempotencyStore, _versionStore, _ => Task.FromResult(true), cancellationToken);
+        if (result.Accepted && result.Result is { Replay: false })
+        {
+            await _eventBus.PublishAsync(new SettingsSocketSignalEvent(command.PrincipalId, "discord_account_unlinked"), cancellationToken);
+        }
+
+        return result;
+    }
 }
 
 public sealed class UnlinkEmailCommandHandler : ICommandHandler<UnlinkEmailCommand, SettingsCommandResult>
@@ -235,15 +304,25 @@ public sealed class UnlinkAppleCommandHandler : ICommandHandler<UnlinkAppleComma
     private const string AggregateType = "settings";
     private readonly IIdempotencyStore _idempotencyStore;
     private readonly IAggregateVersionStore _versionStore;
+    private readonly IClusterEventBus _eventBus;
 
-    public UnlinkAppleCommandHandler(IIdempotencyStore idempotencyStore, IAggregateVersionStore versionStore)
+    public UnlinkAppleCommandHandler(IIdempotencyStore idempotencyStore, IAggregateVersionStore versionStore, IClusterEventBus eventBus)
     {
         _idempotencyStore = idempotencyStore;
         _versionStore = versionStore;
+        _eventBus = eventBus;
     }
 
-    public Task<CommandExecutionResult<SettingsCommandResult>> HandleAsync(CommandEnvelope<UnlinkAppleCommand> command, CancellationToken cancellationToken = default) =>
-        SettingsPhaseOCommandHelper.ExecuteAsync(command, AggregateType, "apple_unlinked", "settings:unlink:apple", _idempotencyStore, _versionStore, _ => Task.FromResult(true), cancellationToken);
+    public async Task<CommandExecutionResult<SettingsCommandResult>> HandleAsync(CommandEnvelope<UnlinkAppleCommand> command, CancellationToken cancellationToken = default)
+    {
+        var result = await SettingsPhaseOCommandHelper.ExecuteAsync(command, AggregateType, "apple_unlinked", "settings:unlink:apple", _idempotencyStore, _versionStore, _ => Task.FromResult(true), cancellationToken);
+        if (result.Accepted && result.Result is { Replay: false })
+        {
+            await _eventBus.PublishAsync(new SettingsSocketSignalEvent(command.PrincipalId, "apple_account_unlinked"), cancellationToken);
+        }
+
+        return result;
+    }
 }
 
 public sealed class DeleteAccountCommandHandler : ICommandHandler<DeleteAccountCommand, SettingsCommandResult>
@@ -251,15 +330,25 @@ public sealed class DeleteAccountCommandHandler : ICommandHandler<DeleteAccountC
     private const string AggregateType = "settings";
     private readonly IIdempotencyStore _idempotencyStore;
     private readonly IAggregateVersionStore _versionStore;
+    private readonly IClusterEventBus _eventBus;
 
-    public DeleteAccountCommandHandler(IIdempotencyStore idempotencyStore, IAggregateVersionStore versionStore)
+    public DeleteAccountCommandHandler(IIdempotencyStore idempotencyStore, IAggregateVersionStore versionStore, IClusterEventBus eventBus)
     {
         _idempotencyStore = idempotencyStore;
         _versionStore = versionStore;
+        _eventBus = eventBus;
     }
 
-    public Task<CommandExecutionResult<SettingsCommandResult>> HandleAsync(CommandEnvelope<DeleteAccountCommand> command, CancellationToken cancellationToken = default) =>
-        SettingsPhaseOCommandHelper.ExecuteAsync(command, AggregateType, "account_deleted", "settings:account:delete", _idempotencyStore, _versionStore, _ => Task.FromResult(true), cancellationToken);
+    public async Task<CommandExecutionResult<SettingsCommandResult>> HandleAsync(CommandEnvelope<DeleteAccountCommand> command, CancellationToken cancellationToken = default)
+    {
+        var result = await SettingsPhaseOCommandHelper.ExecuteAsync(command, AggregateType, "account_deleted", "settings:account:delete", _idempotencyStore, _versionStore, _ => Task.FromResult(true), cancellationToken);
+        if (result.Accepted && result.Result is { Replay: false })
+        {
+            await _eventBus.PublishAsync(new SettingsSocketSignalEvent(command.PrincipalId, "account_deleted"), cancellationToken);
+        }
+
+        return result;
+    }
 }
 
 public sealed class WipeAltersCommandHandler : ICommandHandler<WipeAltersCommand, SettingsCommandResult>
@@ -267,15 +356,25 @@ public sealed class WipeAltersCommandHandler : ICommandHandler<WipeAltersCommand
     private const string AggregateType = "settings";
     private readonly IIdempotencyStore _idempotencyStore;
     private readonly IAggregateVersionStore _versionStore;
+    private readonly IClusterEventBus _eventBus;
 
-    public WipeAltersCommandHandler(IIdempotencyStore idempotencyStore, IAggregateVersionStore versionStore)
+    public WipeAltersCommandHandler(IIdempotencyStore idempotencyStore, IAggregateVersionStore versionStore, IClusterEventBus eventBus)
     {
         _idempotencyStore = idempotencyStore;
         _versionStore = versionStore;
+        _eventBus = eventBus;
     }
 
-    public Task<CommandExecutionResult<SettingsCommandResult>> HandleAsync(CommandEnvelope<WipeAltersCommand> command, CancellationToken cancellationToken = default) =>
-        SettingsPhaseOCommandHelper.ExecuteAsync(command, AggregateType, "alters_wiped", "settings:alters:wipe", _idempotencyStore, _versionStore, _ => Task.FromResult(true), cancellationToken);
+    public async Task<CommandExecutionResult<SettingsCommandResult>> HandleAsync(CommandEnvelope<WipeAltersCommand> command, CancellationToken cancellationToken = default)
+    {
+        var result = await SettingsPhaseOCommandHelper.ExecuteAsync(command, AggregateType, "alters_wiped", "settings:alters:wipe", _idempotencyStore, _versionStore, _ => Task.FromResult(true), cancellationToken);
+        if (result.Accepted && result.Result is { Replay: false })
+        {
+            await _eventBus.PublishAsync(new SettingsSocketSignalEvent(command.PrincipalId, "alters_wiped"), cancellationToken);
+        }
+
+        return result;
+    }
 }
 
 public sealed class CreateFieldCommandHandler : ICommandHandler<CreateFieldCommand, SettingsCommandResult>

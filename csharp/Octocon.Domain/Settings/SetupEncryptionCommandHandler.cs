@@ -12,15 +12,18 @@ public sealed class SetupEncryptionCommandHandler : ICommandHandler<SetupEncrypt
     private readonly IEncryptionStateRepository _repository;
     private readonly IIdempotencyStore _idempotencyStore;
     private readonly IAggregateVersionStore _versionStore;
+    private readonly IClusterEventBus _eventBus;
 
     public SetupEncryptionCommandHandler(
         IEncryptionStateRepository repository,
         IIdempotencyStore idempotencyStore,
-        IAggregateVersionStore versionStore)
+        IAggregateVersionStore versionStore,
+        IClusterEventBus eventBus)
     {
         _repository = repository;
         _idempotencyStore = idempotencyStore;
         _versionStore = versionStore;
+        _eventBus = eventBus;
     }
 
     public async Task<CommandExecutionResult<EncryptionCommandResult>> HandleAsync(
@@ -77,6 +80,7 @@ public sealed class SetupEncryptionCommandHandler : ICommandHandler<SetupEncrypt
             resultJson,
             cancellationToken);
 
+        await _eventBus.PublishAsync(new SettingsProfileUpdatedEvent(command.PrincipalId, emitUsernameUpdated: false), cancellationToken);
         return CommandExecutionResult<EncryptionCommandResult>.Success(result);
     }
 

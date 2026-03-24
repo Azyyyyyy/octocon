@@ -10,15 +10,18 @@ public sealed class SetAlterJournalLockedCommandHandler : ICommandHandler<SetAlt
     private readonly IJournalRepository _journalRepository;
     private readonly IIdempotencyStore _idempotencyStore;
     private readonly IAggregateVersionStore _versionStore;
+    private readonly IClusterEventBus _eventBus;
 
     public SetAlterJournalLockedCommandHandler(
         IJournalRepository journalRepository,
         IIdempotencyStore idempotencyStore,
-        IAggregateVersionStore versionStore)
+        IAggregateVersionStore versionStore,
+        IClusterEventBus eventBus)
     {
         _journalRepository = journalRepository;
         _idempotencyStore = idempotencyStore;
         _versionStore = versionStore;
+        _eventBus = eventBus;
     }
 
     public async Task<CommandExecutionResult<AlterJournalCommandResult>> HandleAsync(
@@ -68,6 +71,7 @@ public sealed class SetAlterJournalLockedCommandHandler : ICommandHandler<SetAlt
             cancellationToken
         );
 
+        await _eventBus.PublishAsync(new AlterJournalChangedEvent(command.PrincipalId, "alter_journal_entry_updated", command.Payload.EntryId), cancellationToken);
         return CommandExecutionResult<AlterJournalCommandResult>.Success(result);
     }
 
@@ -98,15 +102,18 @@ public sealed class SetAlterJournalPinnedCommandHandler : ICommandHandler<SetAlt
     private readonly IJournalRepository _journalRepository;
     private readonly IIdempotencyStore _idempotencyStore;
     private readonly IAggregateVersionStore _versionStore;
+    private readonly IClusterEventBus _eventBus;
 
     public SetAlterJournalPinnedCommandHandler(
         IJournalRepository journalRepository,
         IIdempotencyStore idempotencyStore,
-        IAggregateVersionStore versionStore)
+        IAggregateVersionStore versionStore,
+        IClusterEventBus eventBus)
     {
         _journalRepository = journalRepository;
         _idempotencyStore = idempotencyStore;
         _versionStore = versionStore;
+        _eventBus = eventBus;
     }
 
     public async Task<CommandExecutionResult<AlterJournalCommandResult>> HandleAsync(
@@ -156,6 +163,7 @@ public sealed class SetAlterJournalPinnedCommandHandler : ICommandHandler<SetAlt
             cancellationToken
         );
 
+        await _eventBus.PublishAsync(new AlterJournalChangedEvent(command.PrincipalId, "alter_journal_entry_updated", command.Payload.EntryId), cancellationToken);
         return CommandExecutionResult<AlterJournalCommandResult>.Success(result);
     }
 

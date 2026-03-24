@@ -11,15 +11,18 @@ public sealed class UpdateDescriptionCommandHandler : ICommandHandler<UpdateDesc
     private readonly IAccountRepository _accountRepository;
     private readonly IIdempotencyStore _idempotencyStore;
     private readonly IAggregateVersionStore _versionStore;
+    private readonly IClusterEventBus _eventBus;
 
     public UpdateDescriptionCommandHandler(
         IAccountRepository accountRepository,
         IIdempotencyStore idempotencyStore,
-        IAggregateVersionStore versionStore)
+        IAggregateVersionStore versionStore,
+        IClusterEventBus eventBus)
     {
         _accountRepository = accountRepository;
         _idempotencyStore = idempotencyStore;
         _versionStore = versionStore;
+        _eventBus = eventBus;
     }
 
     public async Task<CommandExecutionResult<SettingsCommandResult>> HandleAsync(
@@ -77,6 +80,7 @@ public sealed class UpdateDescriptionCommandHandler : ICommandHandler<UpdateDesc
             resultJson,
             cancellationToken);
 
+        await _eventBus.PublishAsync(new SettingsProfileUpdatedEvent(command.PrincipalId, emitUsernameUpdated: false), cancellationToken);
         return CommandExecutionResult<SettingsCommandResult>.Success(result);
     }
 

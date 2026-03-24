@@ -57,6 +57,9 @@ public static async Task HandleUserSocketAsync(HttpContext context)
     var alterRepository = context.RequestServices.GetRequiredService<IAlterRepository>();
     var tagRepository = context.RequestServices.GetRequiredService<ITagRepository>();
     var settingsFieldRepository = context.RequestServices.GetRequiredService<ISettingsFieldRepository>();
+    var accountRepository = context.RequestServices.GetRequiredService<IAccountRepository>();
+    var pollRepository = context.RequestServices.GetRequiredService<IPollRepository>();
+    var journalRepository = context.RequestServices.GetRequiredService<IJournalRepository>();
     var frontingPushTask = WebSocketEvents.PumpFrontingPushesAsync(
         socket,
         eventBus,
@@ -66,6 +69,64 @@ public static async Task HandleUserSocketAsync(HttpContext context)
         topicReplyAsArrayFrame,
         sendGate,
         pushCts.Token);
+
+    var frontingStartedPushTask = WebSocketEvents.PumpFrontingStartedPushesAsync(
+        socket,
+        eventBus,
+        frontingRepository,
+        joinedTopics,
+        topicJoinReference,
+        topicReplyAsArrayFrame,
+        sendGate,
+        pushCts.Token);
+
+    var frontingEndedPushTask = WebSocketEvents.PumpFrontingEndedPushesAsync(
+        socket,
+        eventBus,
+        joinedTopics,
+        topicJoinReference,
+        topicReplyAsArrayFrame,
+        sendGate,
+        pushCts.Token);
+
+    var frontingSetPushTask = WebSocketEvents.PumpFrontingSetPushesAsync(
+        socket,
+        eventBus,
+        frontingRepository,
+        joinedTopics,
+        topicJoinReference,
+        topicReplyAsArrayFrame,
+        sendGate,
+        pushCts.Token);
+
+    var frontingBulkPushTask = WebSocketEvents.PumpFrontingBulkUpdatedPushesAsync(
+        socket,
+        eventBus,
+        frontingRepository,
+        joinedTopics,
+        topicJoinReference,
+        topicReplyAsArrayFrame,
+        sendGate,
+        pushCts.Token);
+
+    var frontCommentUpdatedPushTask = WebSocketEvents.PumpFrontCommentUpdatedPushesAsync(
+        socket,
+        eventBus,
+        frontingRepository,
+        joinedTopics,
+        topicJoinReference,
+        topicReplyAsArrayFrame,
+        sendGate,
+        pushCts.Token);
+
+        var frontingPrimaryTask = WebSocketEvents.PumpFrontingPrimaryChangedPushesAsync(
+            socket,
+            eventBus,
+            joinedTopics,
+            topicJoinReference,
+            topicReplyAsArrayFrame,
+            sendGate,
+            pushCts.Token);
 
     var frontDeletedTask = WebSocketEvents.PumpFrontDeletedPushesAsync(
         socket,
@@ -102,6 +163,23 @@ public static async Task HandleUserSocketAsync(HttpContext context)
         topicReplyAsArrayFrame,
         sendGate,
         pushCts.Token);
+    var settingsProfilePushTask = WebSocketEvents.PumpSettingsProfilePushesAsync(
+        socket,
+        eventBus,
+        accountRepository,
+        joinedTopics,
+        topicJoinReference,
+        topicReplyAsArrayFrame,
+        sendGate,
+        pushCts.Token);
+    var settingsSignalPushTask = WebSocketEvents.PumpSettingsSignalPushesAsync(
+        socket,
+        eventBus,
+        joinedTopics,
+        topicJoinReference,
+        topicReplyAsArrayFrame,
+        sendGate,
+        pushCts.Token);
     var friendshipPushTask = WebSocketEvents.PumpFriendshipPushesAsync(
         socket,
         eventBus,
@@ -110,7 +188,34 @@ public static async Task HandleUserSocketAsync(HttpContext context)
         topicReplyAsArrayFrame,
         sendGate,
         pushCts.Token);
-    var rawPushTask = WebSocketEvents.PumpRawPushesAsync(
+    var pollPushTask = WebSocketEvents.PumpPollPushesAsync(
+        socket,
+        eventBus,
+        pollRepository,
+        joinedTopics,
+        topicJoinReference,
+        topicReplyAsArrayFrame,
+        sendGate,
+        pushCts.Token);
+    var globalJournalPushTask = WebSocketEvents.PumpGlobalJournalPushesAsync(
+        socket,
+        eventBus,
+        journalRepository,
+        joinedTopics,
+        topicJoinReference,
+        topicReplyAsArrayFrame,
+        sendGate,
+        pushCts.Token);
+    var alterJournalPushTask = WebSocketEvents.PumpAlterJournalPushesAsync(
+        socket,
+        eventBus,
+        journalRepository,
+        joinedTopics,
+        topicJoinReference,
+        topicReplyAsArrayFrame,
+        sendGate,
+        pushCts.Token);
+    var accountLinkedPushTask = WebSocketEvents.PumpSettingsAccountLinkedPushesAsync(
         socket,
         eventBus,
         joinedTopics,
@@ -381,7 +486,25 @@ public static async Task HandleUserSocketAsync(HttpContext context)
     pushCts.Cancel();
     try
     {
-        await Task.WhenAll(frontingPushTask, alterPushTask, tagPushTask, fieldsPushTask, friendshipPushTask, rawPushTask, frontDeletedTask);
+        await Task.WhenAll(
+            frontingPushTask,
+            frontingStartedPushTask,
+            frontingEndedPushTask,
+            frontingSetPushTask,
+            frontingBulkPushTask,
+            frontCommentUpdatedPushTask,
+            frontingPrimaryTask,
+            frontDeletedTask,
+            alterPushTask,
+            tagPushTask,
+            fieldsPushTask,
+            settingsProfilePushTask,
+            settingsSignalPushTask,
+            friendshipPushTask,
+            pollPushTask,
+            globalJournalPushTask,
+            alterJournalPushTask,
+            accountLinkedPushTask);
     }
     catch (OperationCanceledException)
     {
@@ -466,16 +589,6 @@ static async Task<object> HandleEndpointProxyAsync(
     using var httpClient = new HttpClient();
     using var response = await httpClient.SendAsync(request, websocketContext.RequestAborted);
     var responseBody = await response.Content.ReadAsStringAsync(websocketContext.RequestAborted);
-
-    await WebSocketEvents.PublishRelayDomainEventsAsync(
-        websocketContext,
-        joinedSystemId,
-        method,
-        path,
-        (int)response.StatusCode,
-        responseBody,
-        requestBodyJson,
-        websocketContext.RequestAborted);
 
     return new
     {

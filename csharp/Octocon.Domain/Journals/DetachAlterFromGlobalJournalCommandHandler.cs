@@ -12,17 +12,20 @@ public sealed class DetachAlterFromGlobalJournalCommandHandler : ICommandHandler
     private readonly IAlterRepository _alterRepository;
     private readonly IIdempotencyStore _idempotencyStore;
     private readonly IAggregateVersionStore _versionStore;
+    private readonly IClusterEventBus _eventBus;
 
     public DetachAlterFromGlobalJournalCommandHandler(
         IJournalRepository journalRepository,
         IAlterRepository alterRepository,
         IIdempotencyStore idempotencyStore,
-        IAggregateVersionStore versionStore)
+        IAggregateVersionStore versionStore,
+        IClusterEventBus eventBus)
     {
         _journalRepository = journalRepository;
         _alterRepository = alterRepository;
         _idempotencyStore = idempotencyStore;
         _versionStore = versionStore;
+        _eventBus = eventBus;
     }
 
     public async Task<CommandExecutionResult<GlobalJournalCommandResult>> HandleAsync(
@@ -79,6 +82,7 @@ public sealed class DetachAlterFromGlobalJournalCommandHandler : ICommandHandler
             cancellationToken
         );
 
+        await _eventBus.PublishAsync(new GlobalJournalChangedEvent(command.PrincipalId, "global_journal_entry_updated", command.Payload.EntryId), cancellationToken);
         return CommandExecutionResult<GlobalJournalCommandResult>.Success(result);
     }
 
