@@ -60,169 +60,24 @@ public static async Task HandleUserSocketAsync(HttpContext context)
     var accountRepository = context.RequestServices.GetRequiredService<IAccountRepository>();
     var pollRepository = context.RequestServices.GetRequiredService<IPollRepository>();
     var journalRepository = context.RequestServices.GetRequiredService<IJournalRepository>();
-    var frontingPushTask = WebSocketEvents.PumpFrontingPushesAsync(
+    var socketPushContext = new SocketPushContext(
         socket,
+        joinedTopics,
+        topicJoinReference,
+        topicReplyAsArrayFrame,
+        sendGate,
+        pushCts.Token);
+
+    var socketPushTask = SocketEventPumpRunner.RunAllAsync(
         eventBus,
+        socketPushContext,
         frontingRepository,
-        joinedTopics,
-        topicJoinReference,
-        topicReplyAsArrayFrame,
-        sendGate,
-        pushCts.Token);
-
-    var frontingStartedPushTask = WebSocketEvents.PumpFrontingStartedPushesAsync(
-        socket,
-        eventBus,
-        frontingRepository,
-        joinedTopics,
-        topicJoinReference,
-        topicReplyAsArrayFrame,
-        sendGate,
-        pushCts.Token);
-
-    var frontingEndedPushTask = WebSocketEvents.PumpFrontingEndedPushesAsync(
-        socket,
-        eventBus,
-        joinedTopics,
-        topicJoinReference,
-        topicReplyAsArrayFrame,
-        sendGate,
-        pushCts.Token);
-
-    var frontingSetPushTask = WebSocketEvents.PumpFrontingSetPushesAsync(
-        socket,
-        eventBus,
-        frontingRepository,
-        joinedTopics,
-        topicJoinReference,
-        topicReplyAsArrayFrame,
-        sendGate,
-        pushCts.Token);
-
-    var frontingBulkPushTask = WebSocketEvents.PumpFrontingBulkUpdatedPushesAsync(
-        socket,
-        eventBus,
-        frontingRepository,
-        joinedTopics,
-        topicJoinReference,
-        topicReplyAsArrayFrame,
-        sendGate,
-        pushCts.Token);
-
-    var frontCommentUpdatedPushTask = WebSocketEvents.PumpFrontCommentUpdatedPushesAsync(
-        socket,
-        eventBus,
-        frontingRepository,
-        joinedTopics,
-        topicJoinReference,
-        topicReplyAsArrayFrame,
-        sendGate,
-        pushCts.Token);
-
-        var frontingPrimaryTask = WebSocketEvents.PumpFrontingPrimaryChangedPushesAsync(
-            socket,
-            eventBus,
-            joinedTopics,
-            topicJoinReference,
-            topicReplyAsArrayFrame,
-            sendGate,
-            pushCts.Token);
-
-    var frontDeletedTask = WebSocketEvents.PumpFrontDeletedPushesAsync(
-        socket,
-        eventBus,
-        joinedTopics,
-        topicJoinReference,
-        topicReplyAsArrayFrame,
-        sendGate,
-        pushCts.Token);
-    var alterPushTask = WebSocketEvents.PumpAlterPushesAsync(
-        socket,
-        eventBus,
         alterRepository,
-        joinedTopics,
-        topicJoinReference,
-        topicReplyAsArrayFrame,
-        sendGate,
-        pushCts.Token);
-    var tagPushTask = WebSocketEvents.PumpTagPushesAsync(
-        socket,
-        eventBus,
         tagRepository,
-        joinedTopics,
-        topicJoinReference,
-        topicReplyAsArrayFrame,
-        sendGate,
-        pushCts.Token);
-    var fieldsPushTask = WebSocketEvents.PumpSettingsFieldsPushesAsync(
-        socket,
-        eventBus,
         settingsFieldRepository,
-        joinedTopics,
-        topicJoinReference,
-        topicReplyAsArrayFrame,
-        sendGate,
-        pushCts.Token);
-    var settingsProfilePushTask = WebSocketEvents.PumpSettingsProfilePushesAsync(
-        socket,
-        eventBus,
         accountRepository,
-        joinedTopics,
-        topicJoinReference,
-        topicReplyAsArrayFrame,
-        sendGate,
-        pushCts.Token);
-    var settingsSignalPushTask = WebSocketEvents.PumpSettingsSignalPushesAsync(
-        socket,
-        eventBus,
-        joinedTopics,
-        topicJoinReference,
-        topicReplyAsArrayFrame,
-        sendGate,
-        pushCts.Token);
-    var friendshipPushTask = WebSocketEvents.PumpFriendshipPushesAsync(
-        socket,
-        eventBus,
-        joinedTopics,
-        topicJoinReference,
-        topicReplyAsArrayFrame,
-        sendGate,
-        pushCts.Token);
-    var pollPushTask = WebSocketEvents.PumpPollPushesAsync(
-        socket,
-        eventBus,
         pollRepository,
-        joinedTopics,
-        topicJoinReference,
-        topicReplyAsArrayFrame,
-        sendGate,
-        pushCts.Token);
-    var globalJournalPushTask = WebSocketEvents.PumpGlobalJournalPushesAsync(
-        socket,
-        eventBus,
-        journalRepository,
-        joinedTopics,
-        topicJoinReference,
-        topicReplyAsArrayFrame,
-        sendGate,
-        pushCts.Token);
-    var alterJournalPushTask = WebSocketEvents.PumpAlterJournalPushesAsync(
-        socket,
-        eventBus,
-        journalRepository,
-        joinedTopics,
-        topicJoinReference,
-        topicReplyAsArrayFrame,
-        sendGate,
-        pushCts.Token);
-    var accountLinkedPushTask = WebSocketEvents.PumpSettingsAccountLinkedPushesAsync(
-        socket,
-        eventBus,
-        joinedTopics,
-        topicJoinReference,
-        topicReplyAsArrayFrame,
-        sendGate,
-        pushCts.Token);
+        journalRepository);
 
     while (socket.State == WebSocketState.Open)
     {
@@ -486,25 +341,7 @@ public static async Task HandleUserSocketAsync(HttpContext context)
     pushCts.Cancel();
     try
     {
-        await Task.WhenAll(
-            frontingPushTask,
-            frontingStartedPushTask,
-            frontingEndedPushTask,
-            frontingSetPushTask,
-            frontingBulkPushTask,
-            frontCommentUpdatedPushTask,
-            frontingPrimaryTask,
-            frontDeletedTask,
-            alterPushTask,
-            tagPushTask,
-            fieldsPushTask,
-            settingsProfilePushTask,
-            settingsSignalPushTask,
-            friendshipPushTask,
-            pollPushTask,
-            globalJournalPushTask,
-            alterJournalPushTask,
-            accountLinkedPushTask);
+        await socketPushTask;
     }
     catch (OperationCanceledException)
     {
