@@ -74,10 +74,10 @@ public sealed class ScyllaFriendshipRepository : IFriendshipRepository
                 var profile = await GetFriendProfileAsync(session, friendId);
                 var fronting = await GetFrontingAsync(session, friendId);
 
-                result.Add(new FriendshipReadModel(profile, level, since, fronting));
+                result.Add(new FriendshipReadModel(profile, new FriendshipModel(level, since), fronting));
             }
 
-            return result.OrderByDescending(x => x.Since).ToList();
+            return result.OrderByDescending(x => x.Friendship.Since).ToList();
         }, _options, cancellationToken);
     }
 
@@ -100,14 +100,16 @@ public sealed class ScyllaFriendshipRepository : IFriendshipRepository
                 return null;
             }
 
+            var friendId = row.GetValue<string>("friend_id");
             var since = row.GetValue<DateTimeOffset?>("since") ?? DateTimeOffset.UtcNow;
             var profile = await GetFriendProfileAsync(session, normalizedFriendSystemId);
             var fronting = await GetFrontingAsync(session, normalizedFriendSystemId);
 
             return new FriendshipReadModel(
                 profile,
-                ToDomainLevel(row.GetValue<short>("level")),
-                since,
+                new FriendshipModel(
+                    ToDomainLevel(row.GetValue<short>("level")),
+                    since),
                 fronting);
         }, _options, cancellationToken);
     }
@@ -184,7 +186,7 @@ public sealed class ScyllaFriendshipRepository : IFriendshipRepository
             {
                 var sourceSystemId = row.GetValue<string>("from_id");
                 var profile = await GetFriendProfileAsync(session, sourceSystemId);
-                incoming.Add(new FriendRequestReadModel(profile, row.GetValue<DateTimeOffset?>("date_sent") ?? DateTimeOffset.UtcNow));
+                incoming.Add(new FriendRequestReadModel(profile, new FriendshipRequestModel(row.GetValue<DateTimeOffset?>("date_sent") ?? DateTimeOffset.UtcNow)));
             }
 
             var outgoing = new List<FriendRequestReadModel>();
@@ -192,12 +194,12 @@ public sealed class ScyllaFriendshipRepository : IFriendshipRepository
             {
                 var targetSystemId = row.GetValue<string>("to_id");
                 var profile = await GetFriendProfileAsync(session, targetSystemId);
-                outgoing.Add(new FriendRequestReadModel(profile, row.GetValue<DateTimeOffset?>("date_sent") ?? DateTimeOffset.UtcNow));
+                outgoing.Add(new FriendRequestReadModel(profile, new FriendshipRequestModel(row.GetValue<DateTimeOffset?>("date_sent") ?? DateTimeOffset.UtcNow)));
             }
 
             return new FriendRequestIndexReadModel(
-                incoming.OrderByDescending(x => x.DateSent).ToList(),
-                outgoing.OrderByDescending(x => x.DateSent).ToList());
+                incoming.OrderByDescending(x => x.Request.DateSent).ToList(),
+                outgoing.OrderByDescending(x => x.Request.DateSent).ToList());
         }, _options, cancellationToken);
     }
 

@@ -41,7 +41,7 @@ public sealed class ScyllaUserRegistryRegionContext : IRegionContext
             return CurrentRegion;
 
         // Strip legacy region prefix "nam:abcdefg" → "abcdefg" before cache lookup.
-        var raw = StripRegionPrefix(systemId);
+        var raw = StripRegionPrefix(systemId, out var prefix);
 
         if (_cache.TryGetValue(raw, out var cached))
             return cached;
@@ -53,7 +53,7 @@ public sealed class ScyllaUserRegistryRegionContext : IRegionContext
         // context that an ASP.NET request would occupy.
         try
         {
-            var region = LookupAsync(raw).GetAwaiter().GetResult();
+            var region = LookupAsync(raw, prefix).GetAwaiter().GetResult();
             if (!string.IsNullOrWhiteSpace(region))
             {
                 StoreInCache(raw, region);
@@ -85,12 +85,12 @@ public sealed class ScyllaUserRegistryRegionContext : IRegionContext
         if (string.IsNullOrWhiteSpace(systemId))
             return CurrentRegion;
 
-        var raw = StripRegionPrefix(systemId);
+        var raw = StripRegionPrefix(systemId, out var prefix);
 
         if (_cache.TryGetValue(raw, out var cached))
             return cached;
 
-        var region = await LookupAsync(raw, cancellationToken);
+        var region = await LookupAsync(raw, prefix, cancellationToken);
         if (!string.IsNullOrWhiteSpace(region))
         {
             StoreInCache(raw, region);
@@ -107,7 +107,7 @@ public sealed class ScyllaUserRegistryRegionContext : IRegionContext
         if (string.IsNullOrWhiteSpace(systemId) || string.IsNullOrWhiteSpace(region))
             return;
 
-        StoreInCache(StripRegionPrefix(systemId), region.ToLowerInvariant());
+        StoreInCache(StripRegionPrefix(systemId, out var prefix), region.ToLowerInvariant());
     }
 
     // ------------------------------------------------------------------
@@ -116,15 +116,32 @@ public sealed class ScyllaUserRegistryRegionContext : IRegionContext
 
     private async Task<string?> LookupAsync(
         string normalizedSystemId,
+        string? prefix,
         CancellationToken cancellationToken = default)
     {
         return await DatabaseTransientRetry.ExecuteScyllaAsync(async () =>
         {
             var session = await _sessionProvider.GetSessionAsync(cancellationToken);
+            SimpleStatement query;
 
-            var query = new SimpleStatement(
-                "SELECT region FROM global.user_registry WHERE user_id = ? LIMIT 1",
-                normalizedSystemId);
+            if (prefix == "username")
+            {
+                query = new SimpleStatement(
+                    "SELECT region FROM global.user_registry WHERE username = ? LIMIT 1",
+                    normalizedSystemId);
+            }
+            else if (prefix == "discord")
+            {
+                query = new SimpleStatement(
+                    "SELECT region FROM global.user_registry WHERE discord_id = ? LIMIT 1",
+                    normalizedSystemId);
+            }
+            else 
+            {
+                query = new SimpleStatement(
+                    "SELECT region FROM global.user_registry WHERE user_id = ? LIMIT 1",
+                    normalizedSystemId);                
+            }
 
             var row = (await session.ExecuteAsync(query)).FirstOrDefault();
             return row?.GetValue<string>("region");
@@ -143,11 +160,16 @@ public sealed class ScyllaUserRegistryRegionContext : IRegionContext
         _cache[key] = region;
     }
 
-    private static string StripRegionPrefix(string systemId)
+    private static string StripRegionPrefix(string systemId, out string prefix)
     {
         var separator = systemId.IndexOf(':');
-        return separator > 0 && separator < systemId.Length - 1
-            ? systemId[(separator + 1)..]
-            : systemId;
+        if (separator > 0 && separator < systemId.Length - 1)
+        {
+            prefix = systemId[..separator].ToLowerInvariant();
+            return systemId[(separator + 1)..];
+        }
+
+        prefix = null!;
+        return systemId;
     }
 }

@@ -1,7 +1,7 @@
 namespace Octocon.Domain.Friendships;
 
 public sealed record FriendProfileReadModel(
-    string SystemId,
+    string Id,
     string? Username,
     string? AvatarUrl,
     string? Description,
@@ -16,15 +16,23 @@ public sealed record FriendFrontingReadModel(
     bool Primary
 );
 
+public record FriendshipModel(
+    string Level,
+    DateTimeOffset Since
+);
+
 public sealed record FriendshipReadModel(
     FriendProfileReadModel Friend,
-    string Level,
-    DateTimeOffset Since,
+    FriendshipModel Friendship,
     IReadOnlyList<FriendFrontingReadModel> Fronting
 );
 
 public sealed record FriendRequestReadModel(
     FriendProfileReadModel System,
+    FriendshipRequestModel Request
+);
+
+public sealed record FriendshipRequestModel(
     DateTimeOffset DateSent
 );
 

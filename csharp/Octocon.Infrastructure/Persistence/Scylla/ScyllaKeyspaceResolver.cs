@@ -20,9 +20,13 @@ public sealed class ScyllaKeyspaceResolver : IScyllaKeyspaceResolver
 
     public string ResolveRegionalKeyspace(string systemId)
     {
-        // Accept legacy scoped IDs like "nam:abcdefg" and canonical raw IDs.
         var explicitRegion = ExtractRegionPrefix(systemId);
-        return explicitRegion ?? _regionContext.ResolveUserRegion(systemId);
+        if (explicitRegion is not null and not ("id" or "username" or "discord"))
+        {
+            return explicitRegion;
+        }
+
+        return _regionContext.ResolveUserRegion(systemId);
     }
 
     public string ResolveGlobalKeyspace() => "global";

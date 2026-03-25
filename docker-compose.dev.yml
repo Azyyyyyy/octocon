@@ -32,9 +32,15 @@ services:
     volumes:
       - ./dev/scylla/cassandra-rackdc.eur.properties:/etc/scylla/cassandra-rackdc.properties
       - scylla_eur_data:/var/lib/scylla
+    healthcheck:
+      test: ["CMD", "/bin/bash", "-c", "cqlsh --execute='describe keyspaces'"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
     logging: *default-log-rotation
     depends_on:
-      - scylla-nam
+      scylla-nam:
+        condition: service_healthy
     networks:
       octo_network:
         ipv4_address: 172.18.1.2
@@ -46,10 +52,15 @@ services:
     volumes:
       - ./dev/scylla/cassandra-rackdc.sam.properties:/etc/scylla/cassandra-rackdc.properties
       - scylla_sam_data:/var/lib/scylla
+    healthcheck:
+      test: ["CMD", "/bin/bash", "-c", "cqlsh --execute='describe keyspaces'"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
     logging: *default-log-rotation
     depends_on:
-      - scylla-nam
-      - scylla-eur
+      scylla-eur:
+        condition: service_healthy
     networks:
       octo_network:
         ipv4_address: 172.18.1.3
@@ -61,11 +72,15 @@ services:
     volumes:
       - ./dev/scylla/cassandra-rackdc.sas.properties:/etc/scylla/cassandra-rackdc.properties
       - scylla_sas_data:/var/lib/scylla
+    healthcheck:
+      test: ["CMD", "/bin/bash", "-c", "cqlsh --execute='describe keyspaces'"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
     logging: *default-log-rotation
     depends_on:
-      - scylla-nam
-      - scylla-eur
-      - scylla-sam
+      scylla-sam:
+        condition: service_healthy
     networks:
       octo_network:
         ipv4_address: 172.18.1.4
@@ -77,12 +92,15 @@ services:
     volumes:
       - ./dev/scylla/cassandra-rackdc.eas.properties:/etc/scylla/cassandra-rackdc.properties
       - scylla_eas_data:/var/lib/scylla
+    healthcheck:
+      test: ["CMD", "/bin/bash", "-c", "cqlsh --execute='describe keyspaces'"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
     logging: *default-log-rotation
     depends_on:
-      - scylla-nam
-      - scylla-eur
-      - scylla-sam
-      - scylla-sas
+      scylla-sas:
+        condition: service_healthy
     networks:
       octo_network:
         ipv4_address: 172.18.1.5
@@ -96,11 +114,8 @@ services:
       - scylla_ocn_data:/var/lib/scylla
     logging: *default-log-rotation
     depends_on:
-      - scylla-nam
-      - scylla-eur
-      - scylla-sam
-      - scylla-sas
-      - scylla-eas
+      scylla-eas:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "/bin/bash", "-c", "cqlsh --execute='describe keyspaces'"]
       interval: 15s

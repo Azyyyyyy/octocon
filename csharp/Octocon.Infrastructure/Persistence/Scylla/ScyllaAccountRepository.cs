@@ -263,37 +263,39 @@ public sealed class ScyllaAccountRepository : IAccountRepository
             );
 
             var row = (await session.ExecuteAsync(query)).FirstOrDefault();
-                if (row is not null)
-                {
-                    var userId = row.GetValue<string>("user_id");
-                    var region = row.GetValue<string?>("region") ?? _options.DefaultRegion;
-                    return $"{region}:{userId}";
-                }
+            if (row is not null)
+            {
+                var userId = row.GetValue<string>("user_id");
+                var region = row.GetValue<string?>("region") ?? _options.DefaultRegion;
+                return $"{region}:{userId}";
+            }
 
-                // User doesn't exist; auto-create new account
-                var newRegion = _options.DefaultRegion;
-                var newUserId = Guid.NewGuid().ToString("N");
-                var keyspace = _keyspaceResolver.ResolveRegionalKeyspace($"{newRegion}:{newUserId}");
+            const string idChars = "abcdefghijklmnopqrstuvwxyz";
 
-                // Insert into regional users table
-                var userInsert = new SimpleStatement(
-                    $"INSERT INTO {keyspace}.users (id, {columnName}, inserted_at, updated_at) VALUES (?, ?, toTimestamp(now()), toTimestamp(now()))",
-                    newUserId,
-                    value
-                );
+            // User doesn't exist; auto-create new account
+            var newRegion = _options.DefaultRegion; //TODO: Maybe look into geoip-based region resolution here instead of just defaulting?
+            var newUserId = Random.Shared.GetString(idChars, 7);
+            var keyspace = newRegion; // ResolveRegionalKeyspace would just return the newRegion
 
-                // Insert into global user registry
-                var registryInsert = new SimpleStatement(
-                    $"INSERT INTO global.user_registry (user_id, {columnName}, region, inserted_at, updated_at) VALUES (?, ?, ?, toTimestamp(now()), toTimestamp(now()))",
-                    newUserId,
-                    value,
-                    newRegion
-                );
+            // Insert into regional users table
+            var userInsert = new SimpleStatement(
+                $"INSERT INTO {keyspace}.users (id, {columnName}, inserted_at, updated_at) VALUES (?, ?, toTimestamp(now()), toTimestamp(now()))",
+                newUserId,
+                value
+            );
 
-                await session.ExecuteAsync(userInsert);
-                await session.ExecuteAsync(registryInsert);
+            // Insert into global user registry
+            var registryInsert = new SimpleStatement(
+                $"INSERT INTO global.user_registry (user_id, {columnName}, region, inserted_at, updated_at) VALUES (?, ?, ?, toTimestamp(now()), toTimestamp(now()))",
+                newUserId,
+                value,
+                newRegion
+            );
 
-                return $"{newRegion}:{newUserId}";
+            await session.ExecuteAsync(userInsert);
+            await session.ExecuteAsync(registryInsert);
+
+            return $"{newRegion}:{newUserId}";
         }, _options, cancellationToken);
     }
 

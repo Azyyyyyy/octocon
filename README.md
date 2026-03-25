@@ -3,7 +3,7 @@
 **Octocon is the modern, all-in-one toolkit for people with DID and OSDD to manage their disorder and express themselves.**
 
 > [!WARNING]  
-> This branch is currently heavily AI generated and only gets the Octocon client loaded up to the Alters page.
+> This branch is currently heavily AI generated. It successfully handles basic alter management within the Octocon client but a lot of features are not yet back online!
 > A lot of work is pending to get a new backend built with love and care, please be patient <3
 
 > [!NOTE]
