@@ -119,7 +119,6 @@ public sealed class FrontingController : OctoconControllerBase
         return result is OkObjectResult ? NoContent() : result;
     }
 
-    //TODO: To ensure route works as expected
     [HttpPost("set")]
     public async Task<IActionResult> Set([FromBody] FrontSetRequest req, CancellationToken ct)
     {
@@ -250,7 +249,6 @@ public sealed class FrontingController : OctoconControllerBase
         return result is OkObjectResult ? NoContent() : result;
     }
 
-    //TODO: To ensure route works as expected
     [HttpPost("{id}/comment")]
     public async Task<IActionResult> UpdateComment(string id, [FromBody] FrontCommentRequest req, CancellationToken ct)
     {

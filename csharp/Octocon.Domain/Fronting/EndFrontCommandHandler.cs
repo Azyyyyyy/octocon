@@ -77,6 +77,10 @@ public sealed class EndFrontCommandHandler : ICommandHandler<EndFrontCommand, Fr
             return await RejectStaleVersion(command, cancellationToken);
         }
 
+        var activeFronts = await _frontingRepository.ListActiveAsync(command.PrincipalId, cancellationToken);
+        var endedFrontWasPrimary = activeFronts.Any(front =>
+            front.Alter.Id == command.Payload.AlterId && front.Primary);
+
         var ended = await _frontingRepository.EndAsync(command.PrincipalId, command.Payload.AlterId, cancellationToken);
         if (!ended)
         {
@@ -100,6 +104,11 @@ public sealed class EndFrontCommandHandler : ICommandHandler<EndFrontCommand, Fr
 
         // Emit granular event for socket layer to handle fronting_ended
         await _eventBus.PublishAsync(new FrontingEndedEvent(command.PrincipalId, command.Payload.AlterId), cancellationToken);
+
+        if (endedFrontWasPrimary)
+        {
+            await _eventBus.PublishAsync(new FrontingPrimaryChangedEvent(command.PrincipalId, null), cancellationToken);
+        }
 
         return CommandExecutionResult<FrontCommandResult>.Success(result);
     }

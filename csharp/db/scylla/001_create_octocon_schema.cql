@@ -1425,38 +1425,38 @@ CREATE TABLE IF NOT EXISTS global.aggregate_versions_by_region (
 
 CREATE MATERIALIZED VIEW IF NOT EXISTS nam.fronts_by_time AS
     SELECT * FROM nam.fronts
-    WHERE user_id IS NOT NULL AND time_start IS NOT NULL AND time_end IS NOT NULL AND id IS NOT NULL
-    PRIMARY KEY (user_id, time_start, time_end, id);
+    WHERE user_id IS NOT NULL AND time_start IS NOT NULL AND time_end IS NOT NULL AND id IS NOT NULL AND alter_id IS NOT NULL
+    PRIMARY KEY (user_id, time_start, time_end, id, alter_id);
 
 CREATE MATERIALIZED VIEW IF NOT EXISTS eur.fronts_by_time AS
     SELECT * FROM eur.fronts
-    WHERE user_id IS NOT NULL AND time_start IS NOT NULL AND time_end IS NOT NULL AND id IS NOT NULL
-    PRIMARY KEY (user_id, time_start, time_end, id);
+    WHERE user_id IS NOT NULL AND time_start IS NOT NULL AND time_end IS NOT NULL AND id IS NOT NULL AND alter_id IS NOT NULL
+    PRIMARY KEY (user_id, time_start, time_end, id, alter_id);
 
 CREATE MATERIALIZED VIEW IF NOT EXISTS ocn.fronts_by_time AS
     SELECT * FROM ocn.fronts
-    WHERE user_id IS NOT NULL AND time_start IS NOT NULL AND time_end IS NOT NULL AND id IS NOT NULL
-    PRIMARY KEY (user_id, time_start, time_end, id);
+    WHERE user_id IS NOT NULL AND time_start IS NOT NULL AND time_end IS NOT NULL AND id IS NOT NULL AND alter_id IS NOT NULL
+    PRIMARY KEY (user_id, time_start, time_end, id, alter_id);
 
 CREATE MATERIALIZED VIEW IF NOT EXISTS eas.fronts_by_time AS
     SELECT * FROM eas.fronts
-    WHERE user_id IS NOT NULL AND time_start IS NOT NULL AND time_end IS NOT NULL AND id IS NOT NULL
-    PRIMARY KEY (user_id, time_start, time_end, id);
+    WHERE user_id IS NOT NULL AND time_start IS NOT NULL AND time_end IS NOT NULL AND id IS NOT NULL AND alter_id IS NOT NULL
+    PRIMARY KEY (user_id, time_start, time_end, id, alter_id);
 
 CREATE MATERIALIZED VIEW IF NOT EXISTS sam.fronts_by_time AS
     SELECT * FROM sam.fronts
-    WHERE user_id IS NOT NULL AND time_start IS NOT NULL AND time_end IS NOT NULL AND id IS NOT NULL
-    PRIMARY KEY (user_id, time_start, time_end, id);
+    WHERE user_id IS NOT NULL AND time_start IS NOT NULL AND time_end IS NOT NULL AND id IS NOT NULL AND alter_id IS NOT NULL
+    PRIMARY KEY (user_id, time_start, time_end, id, alter_id);
 
 CREATE MATERIALIZED VIEW IF NOT EXISTS sas.fronts_by_time AS
     SELECT * FROM sas.fronts
-    WHERE user_id IS NOT NULL AND time_start IS NOT NULL AND time_end IS NOT NULL AND id IS NOT NULL
-    PRIMARY KEY (user_id, time_start, time_end, id);
+    WHERE user_id IS NOT NULL AND time_start IS NOT NULL AND time_end IS NOT NULL AND id IS NOT NULL AND alter_id IS NOT NULL
+    PRIMARY KEY (user_id, time_start, time_end, id, alter_id);
 
 CREATE MATERIALIZED VIEW IF NOT EXISTS gdpr.fronts_by_time AS
     SELECT * FROM gdpr.fronts
-    WHERE user_id IS NOT NULL AND time_start IS NOT NULL AND time_end IS NOT NULL AND id IS NOT NULL
-    PRIMARY KEY (user_id, time_start, time_end, id);
+    WHERE user_id IS NOT NULL AND time_start IS NOT NULL AND time_end IS NOT NULL AND id IS NOT NULL AND alter_id IS NOT NULL
+    PRIMARY KEY (user_id, time_start, time_end, id, alter_id);
 
 -- ============================================================================
 -- METRICS KEYSPACE

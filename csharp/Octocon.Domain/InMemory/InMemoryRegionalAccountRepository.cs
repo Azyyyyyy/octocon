@@ -99,62 +99,62 @@ public sealed class InMemoryRegionalAccountRepository : IAccountRepository
 
     public Task<string?> FindSystemIdByDiscordIdAsync(string discordId, CancellationToken cancellationToken = default)
     {
-            if (string.IsNullOrWhiteSpace(discordId))
-            {
-                return Task.FromResult<string?>(null);
-            }
+        if (string.IsNullOrWhiteSpace(discordId))
+        {
+            return Task.FromResult<string?>(null);
+        }
 
-            if (_systemByDiscord.TryGetValue(discordId, out var scopedSystemId))
-            {
-                return Task.FromResult<string?>(scopedSystemId);
-            }
+        if (_systemByDiscord.TryGetValue(discordId, out var scopedSystemId))
+        {
+            return Task.FromResult<string?>(scopedSystemId);
+        }
 
-            // Auto-create new system
-            var newSystemId = Guid.NewGuid().ToString("N");
-            var scopedNewSystemId = _regionContext.ResolveUserRegion(newSystemId) + ":" + newSystemId;
-            _discordBySystem[newSystemId] = discordId;
-            _systemByDiscord[discordId] = scopedNewSystemId;
-            return Task.FromResult<string?>(scopedNewSystemId);
+        // Auto-create new system
+        var newSystemId = Guid.NewGuid().ToString("N");
+        var scopedNewSystemId = _regionContext.ResolveUserRegion(newSystemId) + ":" + newSystemId;
+        _discordBySystem[newSystemId] = discordId;
+        _systemByDiscord[discordId] = scopedNewSystemId;
+        return Task.FromResult<string?>(scopedNewSystemId);
     }
 
     public Task<string?> FindSystemIdByEmailAsync(string email, CancellationToken cancellationToken = default)
     {
-            if (string.IsNullOrWhiteSpace(email))
-            {
-                return Task.FromResult<string?>(null);
-            }
+        if (string.IsNullOrWhiteSpace(email))
+        {
+            return Task.FromResult<string?>(null);
+        }
 
-            if (_systemByEmail.TryGetValue(email, out var scopedSystemId))
-            {
-                return Task.FromResult<string?>(scopedSystemId);
-            }
+        if (_systemByEmail.TryGetValue(email, out var scopedSystemId))
+        {
+            return Task.FromResult<string?>(scopedSystemId);
+        }
 
-            // Auto-create new system
-            var newSystemId = Guid.NewGuid().ToString("N");
-            var scopedNewSystemId = _regionContext.ResolveUserRegion(newSystemId) + ":" + newSystemId;
-            _emailBySystem[newSystemId] = email;
-            _systemByEmail[email] = scopedNewSystemId;
-            return Task.FromResult<string?>(scopedNewSystemId);
+        // Auto-create new system
+        var newSystemId = Guid.NewGuid().ToString("N");
+        var scopedNewSystemId = _regionContext.ResolveUserRegion(newSystemId) + ":" + newSystemId;
+        _emailBySystem[newSystemId] = email;
+        _systemByEmail[email] = scopedNewSystemId;
+        return Task.FromResult<string?>(scopedNewSystemId);
     }
 
     public Task<string?> FindSystemIdByAppleIdAsync(string appleId, CancellationToken cancellationToken = default)
     {
-            if (string.IsNullOrWhiteSpace(appleId))
-            {
-                return Task.FromResult<string?>(null);
-            }
+        if (string.IsNullOrWhiteSpace(appleId))
+        {
+            return Task.FromResult<string?>(null);
+        }
 
-            if (_systemByApple.TryGetValue(appleId, out var scopedSystemId))
-            {
-                return Task.FromResult<string?>(scopedSystemId);
-            }
+        if (_systemByApple.TryGetValue(appleId, out var scopedSystemId))
+        {
+            return Task.FromResult<string?>(scopedSystemId);
+        }
 
-            // Auto-create new system
-            var newSystemId = Guid.NewGuid().ToString("N");
-            var scopedNewSystemId = _regionContext.ResolveUserRegion(newSystemId) + ":" + newSystemId;
-            _appleBySystem[newSystemId] = appleId;
-            _systemByApple[appleId] = scopedNewSystemId;
-            return Task.FromResult<string?>(scopedNewSystemId);
+        // Auto-create new system
+        var newSystemId = Guid.NewGuid().ToString("N");
+        var scopedNewSystemId = _regionContext.ResolveUserRegion(newSystemId) + ":" + newSystemId;
+        _appleBySystem[newSystemId] = appleId;
+        _systemByApple[appleId] = scopedNewSystemId;
+        return Task.FromResult<string?>(scopedNewSystemId);
     }
 
     public Task<AccountLinkResult> LinkDiscordToUserAsync(string systemId, string discordId, CancellationToken cancellationToken = default)
