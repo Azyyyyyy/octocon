@@ -23,7 +23,7 @@ public sealed class InMemoryTagRepository : ITagRepository
     private readonly IFriendshipRepository? _friendships;
     private readonly ConcurrentDictionary<string, ConcurrentDictionary<string, TagState>> _bySystem = new();
    // Key: "{systemKey}:{tagId}"  Value: set of alter IDs (dict used as concurrent set)
-   private readonly ConcurrentDictionary<string, ConcurrentDictionary<int, bool>> _alterMemberships = new();
+   private readonly ConcurrentDictionary<string, ConcurrentDictionary<BareAlter, bool>> _alterMemberships = new();
 
     public InMemoryTagRepository(IRegionContext regionContext)
     {
@@ -97,8 +97,8 @@ public sealed class InMemoryTagRepository : ITagRepository
                return Task.FromResult(false);
 
            var memberKey = $"{systemKey}:{tagId}";
-           var members = _alterMemberships.GetOrAdd(memberKey, _ => new ConcurrentDictionary<int, bool>());
-           members[alterId] = true;
+           var members = _alterMemberships.GetOrAdd(memberKey, _ => new ConcurrentDictionary<BareAlter, bool>());
+           members[new BareAlter(alterId, "", null, null, null, null, null!)] = true;
            return Task.FromResult(true);
        }
 
@@ -109,7 +109,7 @@ public sealed class InMemoryTagRepository : ITagRepository
            if (!_alterMemberships.TryGetValue(memberKey, out var members))
                return Task.FromResult(false);
 
-           return Task.FromResult(members.TryRemove(alterId, out _));
+           return Task.FromResult(members.Remove(members.FirstOrDefault(x => x.Key.Id == alterId).Key, out _));
        }
 
        public Task<string?> GetParentIdAsync(string systemId, string tagId, CancellationToken cancellationToken = default)
@@ -144,15 +144,15 @@ public sealed class InMemoryTagRepository : ITagRepository
            return Task.FromResult(true);
        }
 
-       public Task<IReadOnlyList<TagPublicReadModel>> ListAsync(string systemId, CancellationToken cancellationToken = default)
+       public Task<IReadOnlyList<TagReadModel>> ListAsync(string systemId, CancellationToken cancellationToken = default)
        {
            var systemKey = GetSystemKey(systemId);
            if (!_bySystem.TryGetValue(systemKey, out var store))
-               return Task.FromResult<IReadOnlyList<TagPublicReadModel>>(Array.Empty<TagPublicReadModel>());
+               return Task.FromResult<IReadOnlyList<TagReadModel>>(Array.Empty<TagReadModel>());
 
            var rows = store.Values
                .OrderBy(x => x.TagId)
-               .Select(x => new TagPublicReadModel(
+               .Select(x => new TagReadModel(
                    x.TagId,
                    x.Name,
                    x.Color,
@@ -165,7 +165,7 @@ public sealed class InMemoryTagRepository : ITagRepository
                    systemId))
                .ToArray();
 
-           return Task.FromResult<IReadOnlyList<TagPublicReadModel>>(rows);
+           return Task.FromResult<IReadOnlyList<TagReadModel>>(rows);
        }
 
        public async Task<IReadOnlyList<TagPublicReadModel>> ListGuardedAsync(
@@ -187,7 +187,7 @@ public sealed class InMemoryTagRepository : ITagRepository
                    x.Color,
                    x.Description,
                    x.ParentTagId,
-                   GetAlterIds(systemKey, x.TagId),
+                   GetAlters(systemKey, x.TagId),
                    x.InsertedAt,
                    x.UpdatedAt,
                    ParseVisibilityLevel(x.SecurityLevel),
@@ -197,13 +197,13 @@ public sealed class InMemoryTagRepository : ITagRepository
            return rows;
        }
 
-       public Task<TagPublicReadModel?> GetAsync(string systemId, string tagId, CancellationToken cancellationToken = default)
+       public Task<TagReadModel?> GetAsync(string systemId, string tagId, CancellationToken cancellationToken = default)
        {
            var systemKey = GetSystemKey(systemId);
            if (!_bySystem.TryGetValue(systemKey, out var store) || !store.TryGetValue(tagId, out var tag))
-               return Task.FromResult<TagPublicReadModel?>(null);
+               return Task.FromResult<TagReadModel?>(null);
 
-           return Task.FromResult<TagPublicReadModel?>(new TagPublicReadModel(
+           return Task.FromResult<TagReadModel?>(new TagReadModel(
                tag.TagId,
                tag.Name,
                tag.Color,
@@ -240,7 +240,7 @@ public sealed class InMemoryTagRepository : ITagRepository
                tag.Color,
                tag.Description,
                tag.ParentTagId,
-               GetAlterIds(systemKey, tag.TagId),
+               GetAlters(systemKey, tag.TagId),
                tag.InsertedAt,
                tag.UpdatedAt,
                ParseVisibilityLevel(tag.SecurityLevel),
@@ -253,7 +253,16 @@ public sealed class InMemoryTagRepository : ITagRepository
         if (!_alterMemberships.TryGetValue(memberKey, out var members))
             return Array.Empty<int>();
 
-        return members.Keys.OrderBy(x => x).ToArray();
+        return members.Keys.OrderBy(x => x.Id).Select(x => x.Id).ToArray();
+    }
+
+    private IReadOnlyList<BareAlter> GetAlters(string systemKey, string tagId)
+    {
+        var memberKey = $"{systemKey}:{tagId}";
+        if (!_alterMemberships.TryGetValue(memberKey, out var members))
+            return Array.Empty<BareAlter>();
+
+        return members.Keys.OrderBy(x => x.Id).ToArray();
     }
 
     private string GetSystemKey(string systemId)

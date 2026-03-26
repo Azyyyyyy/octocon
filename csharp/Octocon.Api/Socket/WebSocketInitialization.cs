@@ -98,7 +98,7 @@ static async Task SendBatchedDataAsync(
     AccountPublicProfileReadModel? profile,
     IReadOnlyList<AlterReadModel> alters,
     IReadOnlyList<FrontActiveReadModel> fronts,
-    IReadOnlyList<TagPublicReadModel> tags,
+    IReadOnlyList<TagReadModel> tags,
     IReadOnlyList<SettingsFieldReadModel> settingsFields,
     EncryptionState? encryptionState)>
 FetchSocketInitDataAsync(

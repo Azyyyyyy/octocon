@@ -10,16 +10,19 @@ public sealed class ScyllaTagRepository : ITagRepository
     private readonly IScyllaSessionProvider _sessionProvider;
     private readonly IScyllaKeyspaceResolver _keyspaceResolver;
     private readonly PersistenceRegistrationOptions _options;
+    private readonly IAlterRepository _alterRepository;
 
     public ScyllaTagRepository(
         IScyllaSessionProvider sessionProvider,
         IScyllaKeyspaceResolver keyspaceResolver,
-        PersistenceRegistrationOptions options
+        PersistenceRegistrationOptions options,
+        IAlterRepository alterRepository
     )
     {
         _sessionProvider = sessionProvider;
         _keyspaceResolver = keyspaceResolver;
         _options = options;
+        _alterRepository = alterRepository;
     }
 
     public async Task<string?> CreateAsync(
@@ -390,7 +393,7 @@ public sealed class ScyllaTagRepository : ITagRepository
         }, _options, cancellationToken);
     }
 
-    public async Task<IReadOnlyList<TagPublicReadModel>> ListAsync(string systemId, CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<TagReadModel>> ListAsync(string systemId, CancellationToken cancellationToken = default)
     {
         return await DatabaseTransientRetry.ExecuteScyllaAsync(async () =>
         {
@@ -404,13 +407,13 @@ public sealed class ScyllaTagRepository : ITagRepository
             );
 
             var rows = await session.ExecuteAsync(query);
-            var tags = new List<TagPublicReadModel>();
+            var tags = new List<TagReadModel>();
 
             foreach (var row in rows)
             {
                 var tagId = row.GetValue<Guid>("id").ToString("N");
                 var alterIds = await GetAlterIdsAsync(session, keyspace, normalizedSystemId, row.GetValue<Guid>("id"));
-                tags.Add(new TagPublicReadModel(
+                tags.Add(new TagReadModel(
                     tagId,
                     row.GetValue<string>("name"),
                     row.GetValue<string?>("color"),
@@ -458,13 +461,18 @@ public sealed class ScyllaTagRepository : ITagRepository
 
                 var tagId = row.GetValue<Guid>("id").ToString("N");
                 var alterIds = await GetGuardedAlterIdsAsync(session, keyspace, normalizedSystemId, row.GetValue<Guid>("id"), friendshipLevel);
+                var alters = alterIds.Count == 0
+                    ? Array.Empty<BareAlter>()
+                    : (await Task.WhenAll(alterIds.Select(id => _alterRepository.GetGuardedAsync(systemId, id, viewerSystemId, cancellationToken))))
+                        .Where(x => x != null)
+                        .ToArray();
                 tags.Add(new TagPublicReadModel(
                     tagId,
                     row.GetValue<string>("name"),
                     row.GetValue<string?>("color"),
                     row.GetValue<string?>("description"),
                     row.GetValue<Guid?>("parent_tag_id")?.ToString("N"),
-                    alterIds,
+                    alters!,
                     row.GetValue<DateTimeOffset>("inserted_at").UtcDateTime,
                     row.GetValue<DateTimeOffset>("updated_at").UtcDateTime,
                     visibility,
@@ -475,7 +483,7 @@ public sealed class ScyllaTagRepository : ITagRepository
         }, _options, cancellationToken);
     }
 
-    public async Task<TagPublicReadModel?> GetAsync(string systemId, string tagId, CancellationToken cancellationToken = default)
+    public async Task<TagReadModel?> GetAsync(string systemId, string tagId, CancellationToken cancellationToken = default)
     {
         return await DatabaseTransientRetry.ExecuteScyllaAsync(async () =>
         {
@@ -500,8 +508,8 @@ public sealed class ScyllaTagRepository : ITagRepository
                 return null;
             }
 
-            var alterIds = await GetAlterIdsAsync(session, keyspace, normalizedSystemId, tagGuid);
-            return new TagPublicReadModel(
+            var alterIds = await GetAlterIdsAsync(session, keyspace, normalizedSystemId, tagGuid);           
+            return new TagReadModel(
                 row.GetValue<Guid>("id").ToString("N"),
                 row.GetValue<string>("name"),
                 row.GetValue<string?>("color"),
@@ -552,13 +560,18 @@ public sealed class ScyllaTagRepository : ITagRepository
             }
 
             var alterIds = await GetGuardedAlterIdsAsync(session, keyspace, normalizedSystemId, tagGuid, friendshipLevel);
+            var alters = alterIds.Count == 0
+                ? Array.Empty<BareAlter>()
+                : (await Task.WhenAll(alterIds.Select(id => _alterRepository.GetGuardedAsync(systemId, id, viewerSystemId, cancellationToken))))
+                    .Where(x => x != null)
+                    .ToArray();
             return new TagPublicReadModel(
                 row.GetValue<Guid>("id").ToString("N"),
                 row.GetValue<string>("name"),
                 row.GetValue<string?>("color"),
                 row.GetValue<string?>("description"),
                 row.GetValue<Guid?>("parent_tag_id")?.ToString("N"),
-                alterIds,
+                alters!,
                 row.GetValue<DateTimeOffset>("inserted_at").UtcDateTime,
                 row.GetValue<DateTimeOffset>("updated_at").UtcDateTime,
                 visibility,

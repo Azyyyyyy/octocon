@@ -256,7 +256,7 @@ public sealed class ScyllaAlterRepository : IAlterRepository
         }, _options, cancellationToken, _logger);
     }
 
-    public async Task<IReadOnlyList<AlterPublicReadModel>> ListGuardedAsync(
+    public async Task<IReadOnlyList<BareAlter>> ListGuardedAsync(
         string systemId,
         string? viewerSystemId,
         CancellationToken cancellationToken = default)
@@ -271,17 +271,20 @@ public sealed class ScyllaAlterRepository : IAlterRepository
             var definitions = await ResolveVisibleDefinitionsAsync(systemId, friendshipLevel, cancellationToken);
 
             var query = new SimpleStatement(
-                $"SELECT id, name, alias, security_level, fields FROM {keyspace}.alters WHERE user_id = ?",
+                $"SELECT id, name, avatar_url, color, description, pronouns, pinned, security_level, fields FROM {keyspace}.alters WHERE user_id = ?",
                 normalizedSystemId
             );
 
             var rows = await session.ExecuteAsync(query);
             return rows
                 .Where(row => CanView(friendshipLevel, ResolveVisibilityLevel(row.GetValue<short?>("security_level"))))
-                .Select(row => new AlterPublicReadModel(
+                .Select(row => new BareAlter(
                     row.GetValue<short>("id"),
                     row.GetValue<string>("name"),
-                    row.GetValue<string?>("alias"),
+                    row.GetValue<string?>("avatar_url"),
+                    row.GetValue<string?>("color"),
+                    row.GetValue<string?>("pronouns"),
+                    row.GetValue<string?>("description"),
                     ResolveGuardedFields(row.GetValue<IEnumerable<AlterFieldUdt>?>("fields"), definitions)))
                 .OrderBy(x => x.Id)
                 .ToArray();
@@ -326,7 +329,7 @@ public sealed class ScyllaAlterRepository : IAlterRepository
         }, _options, cancellationToken, _logger);
     }
 
-    public async Task<AlterPublicReadModel?> GetGuardedAsync(
+    public async Task<BareAlter?> GetGuardedAsync(
         string systemId,
         int alterId,
         string? viewerSystemId,
@@ -342,7 +345,7 @@ public sealed class ScyllaAlterRepository : IAlterRepository
             var definitions = await ResolveVisibleDefinitionsAsync(systemId, friendshipLevel, cancellationToken);
 
             var query = new SimpleStatement(
-                $"SELECT id, name, alias, security_level, fields FROM {keyspace}.alters WHERE user_id = ? AND id = ? LIMIT 1",
+                $"SELECT id, name, avatar_url, description, color, pronouns, pinned, security_level, fields FROM {keyspace}.alters WHERE user_id = ? AND id = ? LIMIT 1",
                 normalizedSystemId,
                 (short)alterId
             );
@@ -359,11 +362,15 @@ public sealed class ScyllaAlterRepository : IAlterRepository
                 return null;
             }
 
-            return new AlterPublicReadModel(
+            return new BareAlter(
                 row.GetValue<short>("id"),
                 row.GetValue<string>("name"),
-                row.GetValue<string?>("alias"),
-                ResolveGuardedFields(row.GetValue<IEnumerable<AlterFieldUdt>?>("fields"), definitions));
+                row.GetValue<string?>("avatar_url"),
+                row.GetValue<string?>("color"),
+                row.GetValue<string?>("pronouns"),
+                row.GetValue<string?>("description"),
+                ResolveGuardedFields(row.GetValue<IEnumerable<AlterFieldUdt>?>("fields"), definitions)
+            );
         }, _options, cancellationToken, _logger);
     }
 
@@ -501,7 +508,7 @@ public sealed class ScyllaAlterRepository : IAlterRepository
         };
     }
 
-    private static void EnsureAlterFieldUdtMapping(ISession session, string keyspace)
+    public static void EnsureAlterFieldUdtMapping(ISession session, string keyspace)
     {
         if (UdtMappings.ContainsKey(keyspace))
         {
@@ -516,7 +523,7 @@ public sealed class ScyllaAlterRepository : IAlterRepository
         UdtMappings.TryAdd(keyspace, 0);
     }
 
-    private sealed class AlterFieldUdt
+    public sealed class AlterFieldUdt
     {
         public Guid Id { get; set; }
         public string? Value { get; set; }

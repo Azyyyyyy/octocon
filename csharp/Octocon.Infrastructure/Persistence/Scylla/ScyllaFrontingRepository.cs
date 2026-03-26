@@ -2,7 +2,9 @@ using Cassandra;
 using Microsoft.Extensions.Logging;
 using Octocon.Domain.Alters;
 using Octocon.Domain.Fronting;
+using Octocon.Domain.Settings;
 using Octocon.Infrastructure.Persistence.Transient;
+using static Octocon.Infrastructure.Persistence.Scylla.ScyllaAlterRepository;
 
 namespace Octocon.Infrastructure.Persistence.Scylla;
 
@@ -14,18 +16,21 @@ public sealed class ScyllaFrontingRepository : IFrontingRepository
     private readonly IScyllaKeyspaceResolver _keyspaceResolver;
     private readonly PersistenceRegistrationOptions _options;
     private readonly ILogger<ScyllaFrontingRepository> _logger;
+    private readonly ISettingsFieldRepository _settingsFields;
 
     public ScyllaFrontingRepository(
         IScyllaSessionProvider sessionProvider,
         IScyllaKeyspaceResolver keyspaceResolver,
         PersistenceRegistrationOptions options,
-        ILogger<ScyllaFrontingRepository> logger
+        ILogger<ScyllaFrontingRepository> logger,
+        ISettingsFieldRepository settingsFields
     )
     {
         _sessionProvider = sessionProvider;
         _keyspaceResolver = keyspaceResolver;
         _options = options;
         _logger = logger;
+        _settingsFields = settingsFields;
     }
 
     public async Task<bool> IsFrontingAsync(string systemId, int alterId, CancellationToken cancellationToken = default)
@@ -190,8 +195,11 @@ public sealed class ScyllaFrontingRepository : IFrontingRepository
 
             var rows = await session.ExecuteAsync(activeQuery);
             var alterRows = await session.ExecuteAsync(new SimpleStatement(
-                $"SELECT id, name, avatar_url, color, pronouns, pinned FROM {keyspace}.alters WHERE user_id = ?",
+                $"SELECT id, name, avatar_url, description, color, fields, pronouns, pinned FROM {keyspace}.alters WHERE user_id = ?",
                 normalizedSystemId));
+
+            ScyllaAlterRepository.EnsureAlterFieldUdtMapping(session, keyspace);
+            var definitions = await _settingsFields.ListAsync(systemId, cancellationToken);
 
             var alterById = alterRows.ToDictionary(
                 row => (int)row.GetValue<short>("id"),
@@ -201,7 +209,8 @@ public sealed class ScyllaFrontingRepository : IFrontingRepository
                     row.GetValue<string?>("avatar_url"),
                     row.GetValue<string?>("color"),
                     row.GetValue<string?>("pronouns"),
-                    row.GetValue<bool?>("pinned")));
+                    row.GetValue<string?>("description"),
+                    ResolveFields(row.GetValue<IEnumerable<AlterFieldUdt>?>("fields"), definitions)));
 
             return (IReadOnlyList<FrontActiveReadModel>)rows
                 .Select(row =>
@@ -219,7 +228,7 @@ public sealed class ScyllaFrontingRepository : IFrontingRepository
 
                     if (!alterById.TryGetValue(alterId, out var alter))
                     {
-                        alter = new BareAlter(alterId, $"Alter {alterId}", null, null, null, false);
+                        alter = new BareAlter(alterId, $"Alter {alterId}", null, null, null, null, null!);
                     }
 
                     return new FrontActiveReadModel(alter, front, primaryAlterId == alterId);
@@ -227,6 +236,20 @@ public sealed class ScyllaFrontingRepository : IFrontingRepository
                 .OrderByDescending(x => x.Front.TimeStart)
                 .ToArray();
         }, _options, cancellationToken, _logger);
+    }
+
+    private static IReadOnlyList<AlterPublicFieldReadModel> ResolveFields(
+        IEnumerable<AlterFieldUdt>? alterFields,
+        IReadOnlyList<SettingsFieldReadModel> definitions)
+    {
+        if (definitions.Count == 0)
+        {
+            return [];
+        }
+
+        return definitions
+            .Select(def => new AlterPublicFieldReadModel(def.Id, def.Name, def.Type, alterFields?.FirstOrDefault(x => x.Id.ToString("N") == def.Id)?.Value))
+            .ToArray();
     }
 
     public async Task<IReadOnlyList<FrontActiveReadModel>> ListActiveGuardedAsync(

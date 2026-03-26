@@ -136,7 +136,7 @@ public sealed class InMemoryAlterRepository : IAlterRepository
         return Task.FromResult<IReadOnlyList<AlterReadModel>>(rows);
     }
 
-    public async Task<IReadOnlyList<AlterPublicReadModel>> ListGuardedAsync(
+    public async Task<IReadOnlyList<BareAlter>> ListGuardedAsync(
         string systemId,
         string? viewerSystemId,
         CancellationToken cancellationToken = default)
@@ -146,17 +146,20 @@ public sealed class InMemoryAlterRepository : IAlterRepository
 
         if (!_bySystem.TryGetValue(systemId, out var store))
         {
-            return Array.Empty<AlterPublicReadModel>();
+            return Array.Empty<BareAlter>();
         }
 
         var rows = store.Values
             .Where(x => CanView(friendshipLevel, x.VisibilityLevel))
             .OrderBy(x => x.AlterId)
-            .Select(x => new AlterPublicReadModel(
+            .Select(x => new BareAlter(
                 x.AlterId,
                 x.Name,
                 x.Alias,
-                ResolveGuardedFields(x, definitions)))
+                null,
+                null,
+                null,
+                null!))
             .ToArray();
 
         return rows;
@@ -186,7 +189,7 @@ public sealed class InMemoryAlterRepository : IAlterRepository
                 null));
     }
 
-    public async Task<AlterPublicReadModel?> GetGuardedAsync(
+    public async Task<BareAlter?> GetGuardedAsync(
         string systemId,
         int alterId,
         string? viewerSystemId,
@@ -203,11 +206,14 @@ public sealed class InMemoryAlterRepository : IAlterRepository
             return null;
         }
 
-        return new AlterPublicReadModel(
+        return new BareAlter(
             alter.AlterId,
             alter.Name,
             alter.Alias,
-            ResolveGuardedFields(alter, await ResolveVisibleDefinitionsAsync(systemId, friendshipLevel, cancellationToken)));
+            null,
+            null,
+            null,
+            null!);
     }
 
     public Task<bool> AliasTakenByOtherAsync(

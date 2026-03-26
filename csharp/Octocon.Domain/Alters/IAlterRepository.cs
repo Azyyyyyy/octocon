@@ -11,14 +11,16 @@ public class BareAlter {
         string? avatarUrl,
         string? color,
         string? pronouns,
-        bool? pinned)
+        string? description,
+        IReadOnlyList<AlterPublicFieldReadModel> fields)
     {
         Id = id;
         Name = name;
         AvatarUrl = avatarUrl;
         Color = color;
         Pronouns = pronouns;
-        Pinned = pinned ?? false;
+        Fields = fields;
+        Description = description;
     }
 
     public int Id { get; set; }
@@ -26,7 +28,8 @@ public class BareAlter {
     public string? Color { get; set; }
     public string Name { get; set; }
     public string? Pronouns { get; set; }
-    public bool Pinned { get; set; }
+    public IReadOnlyList<AlterPublicFieldReadModel> Fields { get; set; }
+    public string? Description { get; set; }
  }
 
 public sealed class AlterReadModel : BareAlter {
@@ -44,47 +47,22 @@ public sealed class AlterReadModel : BareAlter {
         string? alias,
         bool? untracked,
         bool? archived,
-        bool? pinned) : base(id, name, avatarUrl, color, pronouns, pinned)
+        bool? pinned) : base(id, name, avatarUrl, color, pronouns, description, fields)
     {
         Alias = alias;
-        Fields = fields;
         SecurityLevel = securityLevel;
         ProxyName = proxyName;
-        Description = description;
         Untracked = untracked ?? false;
         Archived = archived ?? false;
+        Pinned = pinned ?? false;
     }
 
     public string? Alias { get; set; }
-    public IReadOnlyList<AlterPublicFieldReadModel>? Fields { get; set; }
     public VisibilityLevel SecurityLevel { get; set; }
     public string? ProxyName { get; set; }
-    public string? Description { get; set; }
     public bool Untracked { get; set; }
     public bool Archived { get; set; }
-}
-
-public sealed class AlterPublicReadModel {
-
-    public AlterPublicReadModel(
-        int id,
-        string name,
-        string? alias,
-        IReadOnlyList<AlterPublicFieldReadModel>? fields = null,
-        VisibilityLevel securityLevel = VisibilityLevel.Public)
-    {
-        Id = id;
-        Name = name;
-        Alias = alias;
-        Fields = fields;
-        SecurityLevel = securityLevel;
-    }
-
-    public int Id { get; set; }
-    public string Name { get; set; }
-    public string? Alias { get; set; }
-    public IReadOnlyList<AlterPublicFieldReadModel>? Fields { get; set; }
-    public VisibilityLevel SecurityLevel { get; set; }
+    public bool Pinned { get; set; }
 }
 
 [JsonConverter(typeof(JsonStringEnumConverter))]
@@ -112,7 +90,7 @@ public interface IAlterRepository
 
     Task<IReadOnlyList<AlterReadModel>> ListAsync(string systemId, CancellationToken cancellationToken = default);
 
-    Task<IReadOnlyList<AlterPublicReadModel>> ListGuardedAsync(
+    Task<IReadOnlyList<BareAlter>> ListGuardedAsync(
         string systemId,
         string? viewerSystemId,
         CancellationToken cancellationToken = default
@@ -120,7 +98,7 @@ public interface IAlterRepository
 
     Task<AlterReadModel?> GetAsync(string systemId, int alterId, CancellationToken cancellationToken = default);
 
-    Task<AlterPublicReadModel?> GetGuardedAsync(
+    Task<BareAlter?> GetGuardedAsync(
         string systemId,
         int alterId,
         string? viewerSystemId,
