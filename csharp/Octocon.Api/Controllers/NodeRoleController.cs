@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Octocon.Domain.Abstractions;
+using Octocon.Infrastructure.Persistence.Bootstrap;
 
 namespace Octocon.Api.Controllers;
 
@@ -9,10 +10,18 @@ namespace Octocon.Api.Controllers;
 /// Exposes node-role metadata for load-balancer and ops health checks.
 /// </summary>
 [Route("health")]
-public sealed class NodeRoleController(
-    ApiSettings settings,
-    INodeRoleContext nodeRole) : OctoconControllerBase(settings)
+public sealed class NodeRoleController : OctoconControllerBase
 {
+    private readonly INodeRoleContext _nodeRole;
+    private readonly IOperationalHealthChecker _healthChecker;
+
+    public NodeRoleController(ApiSettings settings, INodeRoleContext nodeRole, IOperationalHealthChecker healthChecker)
+        : base(settings)
+    {
+        _nodeRole = nodeRole;
+        _healthChecker = healthChecker;
+    }
+
     /// <summary>
     /// Returns the current node's role and whether it owns singleton background tasks.
     /// <para>
@@ -25,8 +34,23 @@ public sealed class NodeRoleController(
     {
         return Ok(new
         {
-            role           = nodeRole.Role.ToString().ToLowerInvariant(),
-            owns_singletons = nodeRole.IsPrimary
+            role = _nodeRole.Role.ToString().ToLowerInvariant(),
+            owns_singletons = _nodeRole.IsPrimary
+        });
+    }
+
+    /// <summary>
+    /// Returns the operational health status of the database and guarded paths.
+    /// </summary>
+    [AllowAnonymous]
+    [HttpGet("database")]
+    public async Task<IActionResult> GetDatabaseHealth()
+    {
+        var result = await _healthChecker.CheckGuardedPathsAsync();
+        return Ok(new
+        {
+            healthy = result.Healthy,
+            paths = result.Paths.Select(p => new { p.Path, p.Healthy, p.Message }).ToList()
         });
     }
 }
