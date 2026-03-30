@@ -2,13 +2,26 @@ using Octocon.Domain.Alters;
 
 namespace Octocon.Domain.Tags;
 
-public sealed record TagPublicReadModel(
+public sealed record TagReadModel(
     string Id,
     string Name,
     string? Color,
     string? Description,
     string? ParentTagId,
     IReadOnlyList<int> Alters,
+    DateTime InsertedAt,
+    DateTime UpdatedAt,
+    VisibilityLevel SecurityLevel,
+    string? UserId
+);
+
+public sealed record TagPublicReadModel(
+    string Id,
+    string Name,
+    string? Color,
+    string? Description,
+    string? ParentTagId,
+    IReadOnlyList<BareAlter> Alters,
     DateTime InsertedAt,
     DateTime UpdatedAt,
     VisibilityLevel SecurityLevel,
@@ -43,7 +56,7 @@ public interface ITagRepository
     /// <summary>Returns true if the parent was removed, false if the tag does not exist.</summary>
     Task<bool> RemoveParentAsync(string systemId, string tagId, CancellationToken cancellationToken = default);
 
-    Task<IReadOnlyList<TagPublicReadModel>> ListAsync(string systemId, CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<TagReadModel>> ListAsync(string systemId, CancellationToken cancellationToken = default);
 
     Task<IReadOnlyList<TagPublicReadModel>> ListGuardedAsync(
         string systemId,
@@ -51,7 +64,7 @@ public interface ITagRepository
         CancellationToken cancellationToken = default
     );
 
-    Task<TagPublicReadModel?> GetAsync(string systemId, string tagId, CancellationToken cancellationToken = default);
+    Task<TagReadModel?> GetAsync(string systemId, string tagId, CancellationToken cancellationToken = default);
 
     Task<TagPublicReadModel?> GetGuardedAsync(
         string systemId,

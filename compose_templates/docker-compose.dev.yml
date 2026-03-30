@@ -13,7 +13,7 @@ services:
     restart: always
     command: --seeds=172.18.1.1 --smp 1 --memory 750M --overprovisioned 1 --developer-mode 1 --endpoint-snitch GossipingPropertyFileSnitch --api-address 0.0.0.0 --broadcast-address scylla-nam
     volumes:
-      - ./dev/scylla/cassandra-rackdc.nam.properties:/etc/scylla/cassandra-rackdc.properties
+      - ../dev/scylla/cassandra-rackdc.nam.properties:/etc/scylla/cassandra-rackdc.properties
       - scylla_nam_data:/var/lib/scylla
     healthcheck:
       test: ["CMD", "/bin/bash", "-c", "cqlsh --execute='describe keyspaces'"]
@@ -30,7 +30,7 @@ services:
     restart: always
     command: --seeds=172.18.1.1,172.18.1.2 --smp 1 --memory 750M --overprovisioned 1 --developer-mode 1 --endpoint-snitch GossipingPropertyFileSnitch --api-address 0.0.0.0 --broadcast-address scylla-eur
     volumes:
-      - ./dev/scylla/cassandra-rackdc.eur.properties:/etc/scylla/cassandra-rackdc.properties
+      - ../dev/scylla/cassandra-rackdc.eur.properties:/etc/scylla/cassandra-rackdc.properties
       - scylla_eur_data:/var/lib/scylla
     healthcheck:
       test: ["CMD", "/bin/bash", "-c", "cqlsh --execute='describe keyspaces'"]
@@ -50,7 +50,7 @@ services:
     restart: always
     command: --seeds=172.18.1.1,172.18.1.2 --smp 1 --memory 750M --overprovisioned 1 --developer-mode 1 --endpoint-snitch GossipingPropertyFileSnitch --api-address 0.0.0.0 --broadcast-address scylla-sam
     volumes:
-      - ./dev/scylla/cassandra-rackdc.sam.properties:/etc/scylla/cassandra-rackdc.properties
+      - ../dev/scylla/cassandra-rackdc.sam.properties:/etc/scylla/cassandra-rackdc.properties
       - scylla_sam_data:/var/lib/scylla
     healthcheck:
       test: ["CMD", "/bin/bash", "-c", "cqlsh --execute='describe keyspaces'"]
@@ -70,7 +70,7 @@ services:
     restart: always
     command: --seeds=172.18.1.1,172.18.1.2 --smp 1 --memory 750M --overprovisioned 1 --developer-mode 1 --endpoint-snitch GossipingPropertyFileSnitch --api-address 0.0.0.0 --broadcast-address scylla-sas
     volumes:
-      - ./dev/scylla/cassandra-rackdc.sas.properties:/etc/scylla/cassandra-rackdc.properties
+      - ../dev/scylla/cassandra-rackdc.sas.properties:/etc/scylla/cassandra-rackdc.properties
       - scylla_sas_data:/var/lib/scylla
     healthcheck:
       test: ["CMD", "/bin/bash", "-c", "cqlsh --execute='describe keyspaces'"]
@@ -90,7 +90,7 @@ services:
     restart: always
     command: --seeds=172.18.1.1,172.18.1.2 --smp 1 --memory 750M --overprovisioned 1 --developer-mode 1 --endpoint-snitch GossipingPropertyFileSnitch --api-address 0.0.0.0 --broadcast-address scylla-eas
     volumes:
-      - ./dev/scylla/cassandra-rackdc.eas.properties:/etc/scylla/cassandra-rackdc.properties
+      - ../dev/scylla/cassandra-rackdc.eas.properties:/etc/scylla/cassandra-rackdc.properties
       - scylla_eas_data:/var/lib/scylla
     healthcheck:
       test: ["CMD", "/bin/bash", "-c", "cqlsh --execute='describe keyspaces'"]
@@ -110,7 +110,7 @@ services:
     restart: always
     command: --seeds=172.18.1.1,172.18.1.2 --smp 1 --memory 750M --overprovisioned 1 --developer-mode 1 --endpoint-snitch GossipingPropertyFileSnitch --api-address 0.0.0.0 --broadcast-address scylla-ocn
     volumes:
-      - ./dev/scylla/cassandra-rackdc.ocn.properties:/etc/scylla/cassandra-rackdc.properties
+      - ../dev/scylla/cassandra-rackdc.ocn.properties:/etc/scylla/cassandra-rackdc.properties
       - scylla_ocn_data:/var/lib/scylla
     logging: *default-log-rotation
     depends_on:
@@ -131,10 +131,11 @@ services:
       scylla-nam:
         condition: service_healthy
     volumes:
-      - ./dev/scylla/scripts/init.cql:/init.cql
-      - ./csharp/db/scylla/001_create_octocon_schema.cql:/schema.cql
+      - ../dev/scylla/scripts/init.cql:/init.cql
+      - ../csharp/db/scylla/001_create_octocon_schema.cql:/schema.cql
+      - ../dev/scylla/scripts/scylla-load-keyspaces.sh:/scripts/scylla-load-keyspaces.sh
     restart: on-failure
-    entrypoint: ["/bin/bash", "-c", "set -euo pipefail; echo Waiting for Scylla CQL endpoint...; for i in $$(seq 1 90); do if cqlsh --request-timeout=300 scylla-nam -e \"DESCRIBE KEYSPACES\" >/dev/null 2>&1; then break; fi; sleep 2; done; echo Waiting for all DCs to join cluster...; for i in $$(seq 1 120); do peers=$$(cqlsh --request-timeout=60 scylla-nam -e \"SELECT data_center FROM system.peers\" 2>/dev/null | tr '[:upper:]' '[:lower:]'); missing=\"\"; for dc in eur sam sas eas ocn; do echo \"$$peers\" | grep -qw \"$$dc\" || missing=\"$$missing $$dc\"; done; if [ -z \"$$missing\" ]; then echo All DCs joined.; break; fi; missing_trimmed=$$(echo \"$$missing\" | xargs); echo \"  Missing DC(s): $$missing_trimmed; waiting...\"; sleep 5; done; echo Loading Scylla keyspaces...; cqlsh --request-timeout=300 scylla-nam -f /init.cql; echo Loading canonical Scylla schema...; tail -n +17 /schema.cql > /tmp/schema.tail.cql; ok=0; for i in $$(seq 1 4); do if cqlsh --request-timeout=300 scylla-nam -f /tmp/schema.tail.cql; then ok=1; break; fi; echo \"Schema apply attempt $$i failed, retrying in 5s...\"; sleep 5; done; if [ \"$$ok\" -ne 1 ]; then echo \"Schema apply failed after retries\"; exit 1; fi; cqlsh --request-timeout=300 scylla-nam -e \"DESCRIBE TABLE nam.fronts\" >/dev/null 2>&1; echo Scylla schema load complete."]
+    entrypoint: ["/bin/bash", "/scripts/scylla-load-keyspaces.sh", "scylla-nam", "eur", "sam", "sas", "eas", "ocn"]
     networks:
       octo_network:
 
@@ -148,7 +149,7 @@ services:
     ports:
       - "4200:5432"
     volumes:
-      - ./msg_pgdata:/var/lib/postgresql/data
+      - ../msg_pgdata:/var/lib/postgresql/data
     logging: *default-log-rotation
     networks:
       octo_network:
