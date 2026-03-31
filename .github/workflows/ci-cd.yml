@@ -10,8 +10,16 @@ jobs:
     env:
       PROJECT_PATH: csharp/Interfold.Api/Interfold.Api.csproj
       DOCKERFILE_PATH: csharp/Interfold.Api/Dockerfile
-      IMAGE_NAME: ghcr.io/${{ lower(github.repository_owner) }}/interfold-api
     steps:
+      - name: Lowercase repository owner & Set image name
+        id: lower
+        run: |
+          # Convert to lowercase using tr
+          owner_lower=$(echo "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')
+          
+          # Export as step output
+          echo "owner_lower=$owner_lower" >> $GITHUB_OUTPUT
+          echo "IMAGE_NAME=ghcr.io/$owner_lower/interfold-api" >> $GITHUB_OUTPUT
       - name: Checkout code
         uses: actions/checkout@v4
 
@@ -41,8 +49,8 @@ jobs:
 
       - name: Build Docker image (from published output)
         run: |
-          docker build -f ${{ env.DOCKERFILE_PATH }} -t ${{ env.IMAGE_NAME }}:${{ github.sha }} ./csharp/Interfold.Api
+          docker build -f ${{ env.DOCKERFILE_PATH }} -t ${{ steps.lower.outputs.IMAGE_NAME }}:${{ github.sha }} ./csharp/Interfold.Api
 
       - name: Push Docker image
         run: |
-          docker push ${{ env.IMAGE_NAME }}:${{ github.sha }}
+          docker push ${{ steps.lower.outputs.IMAGE_NAME }}:${{ github.sha }}
