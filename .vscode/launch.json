@@ -5,10 +5,10 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "C#: Octocon.Api Debug",
+            "name": "C#: Interfold.Api Debug",
             "type": "dotnet",
             "request": "launch",
-            "projectPath": "${workspaceFolder}/csharp/Octocon.Api/Octocon.Api.csproj"
+            "projectPath": "${workspaceFolder}/csharp/Interfold.Api/Interfold.Api.csproj"
         }
 
     ]

@@ -5,7 +5,6 @@ x-log-rotation: &default-log-rotation
     max-file: "3"
 
 services:
-
   scylla-nam:
     image: scylladb/scylla:2025.1
     ports:

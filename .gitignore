@@ -49,3 +49,5 @@ TestResults/
 [Pp]ublish/
 *.nuget.props
 *.nuget.targets
+
+compose_templates/msg_pgdata/**
