@@ -10,7 +10,7 @@ jobs:
     env:
       PROJECT_PATH: csharp/Interfold.Api/Interfold.Api.csproj
       DOCKERFILE_PATH: csharp/Interfold.Api/Dockerfile
-      IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/interfold-api
+      IMAGE_NAME: ghcr.io/${{ lower(github.repository_owner) }}/interfold-api
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
