@@ -49,8 +49,12 @@ jobs:
 
       - name: Build Docker image (from published output)
         run: |
-          docker build -f ${{ env.DOCKERFILE_PATH }} -t ${{ steps.lower.outputs.IMAGE_NAME }}:${{ github.sha }} ./csharp/Interfold.Api
+          docker build -f ${{ env.DOCKERFILE_PATH }} \
+            -t ${{ steps.lower.outputs.IMAGE_NAME }}:${{ github.sha }} \
+            -t ${{ steps.lower.outputs.IMAGE_NAME }}:latest \
+            ./csharp/Interfold.Api
 
       - name: Push Docker image
         run: |
           docker push ${{ steps.lower.outputs.IMAGE_NAME }}:${{ github.sha }}
+          docker push ${{ steps.lower.outputs.IMAGE_NAME }}:latest

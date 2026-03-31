@@ -2,10 +2,7 @@ version: '3.8'
 
 services:
   interfold-api:
-    image: interfold-api:latest
-    build:
-      context: ..
-      dockerfile: csharp/Interfold.Api/Dockerfile
+    image: ghcr.io/azyyyyyy/interfold-api:latest
     ports:
       - "8081:8080"
     environment:
