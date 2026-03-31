@@ -5,17 +5,17 @@ VisualStudioVersion = 17.5.2.0
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "csharp", "csharp", "{B41BF331-FCCB-2ADF-CDB6-767964B34647}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Octocon.Contracts", "csharp\Octocon.Contracts\Octocon.Contracts.csproj", "{B4847DD5-5C4C-CC8B-2882-A765ADA137E6}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Interfold.Contracts", "csharp\Interfold.Contracts\Interfold.Contracts.csproj", "{B4847DD5-5C4C-CC8B-2882-A765ADA137E6}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Octocon.Domain", "csharp\Octocon.Domain\Octocon.Domain.csproj", "{693D7909-20A2-4C43-E727-0DA7071317DE}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Interfold.Domain", "csharp\Interfold.Domain\Interfold.Domain.csproj", "{693D7909-20A2-4C43-E727-0DA7071317DE}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Octocon.Cli", "csharp\Octocon.Cli\Octocon.Cli.csproj", "{BBEFE8E0-B6F9-4F9A-9B17-F5D49691EF15}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Interfold.Cli", "csharp\Interfold.Cli\Interfold.Cli.csproj", "{BBEFE8E0-B6F9-4F9A-9B17-F5D49691EF15}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Octocon.Infrastructure", "csharp\Octocon.Infrastructure\Octocon.Infrastructure.csproj", "{98A61134-E482-431D-8A89-EBA85B8E8C59}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Interfold.Infrastructure", "csharp\Interfold.Infrastructure\Interfold.Infrastructure.csproj", "{98A61134-E482-431D-8A89-EBA85B8E8C59}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Octocon.IntegrationTests", "csharp\Octocon.IntegrationTests\Octocon.IntegrationTests.csproj", "{B5DEF108-AF80-4B76-B31A-AC32C69CEA16}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Interfold.IntegrationTests", "csharp\Interfold.IntegrationTests\Interfold.IntegrationTests.csproj", "{B5DEF108-AF80-4B76-B31A-AC32C69CEA16}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Octocon.Api", "csharp\Octocon.Api\Octocon.Api.csproj", "{D1ADB4DB-0667-4868-BED6-4FF9504141E1}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Interfold.Api", "csharp\Interfold.Api\Interfold.Api.csproj", "{D1ADB4DB-0667-4868-BED6-4FF9504141E1}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution

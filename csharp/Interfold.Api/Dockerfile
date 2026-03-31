@@ -1,21 +1,9 @@
 # Simple Dockerfile for Interfold.Api
 
-# Build stage
-FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
-WORKDIR /src
-
-# Copy solution and restore as distinct layers
-COPY csharp/ ./
-RUN dotnet restore ./Interfold.Api/Interfold.Api.csproj
-
-# Copy everything else and build
-WORKDIR /src/Interfold.Api
-RUN dotnet publish -c Release -o /app/publish --no-restore
-
-# Runtime stage
+# Runtime stage only: expects published output in /publish
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS final
 WORKDIR /app
-COPY --from=build /app/publish .
+COPY publish/ .
 
 # Expose default port
 EXPOSE 8080
