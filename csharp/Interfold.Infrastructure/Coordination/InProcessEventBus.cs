@@ -62,8 +62,8 @@ public sealed class InProcessEventBus : IClusterEventBus, IDisposable
         }
     }
 
-    public async IAsyncEnumerable<TEvent> SubscribeAsync<TEvent>(
-        [EnumeratorCancellation] CancellationToken ct = default)
+    public IAsyncEnumerable<TEvent> SubscribeAsync<TEvent>(
+        CancellationToken ct = default)
         where TEvent : class
     {
         var channel = Channel.CreateUnbounded<TEvent>(new UnboundedChannelOptions
@@ -76,16 +76,79 @@ public sealed class InProcessEventBus : IClusterEventBus, IDisposable
         var topicBag = GetOrCreateBag<TEvent>();
         topicBag.Writers.TryAdd(channel.Writer, 0);
 
-        try
+        return new ChannelAsyncEnumerable<TEvent>(channel, topicBag, ct);
+    }
+
+    private sealed class ChannelAsyncEnumerable<TEvent> : IAsyncEnumerable<TEvent>
+        where TEvent : class
+    {
+        private readonly Channel<TEvent> _channel;
+        private readonly TopicBag<TEvent> _topicBag;
+        private readonly CancellationToken _ct;
+
+        public ChannelAsyncEnumerable(Channel<TEvent> channel, TopicBag<TEvent> topicBag, CancellationToken ct)
         {
-            await foreach (var item in channel.Reader.ReadAllAsync(ct).ConfigureAwait(false))
-                yield return item;
+            _channel = channel;
+            _topicBag = topicBag;
+            _ct = ct;
         }
-        finally
+
+        public IAsyncEnumerator<TEvent> GetAsyncEnumerator(CancellationToken cancellationToken = default)
         {
-            // Remove the writer so reconnect churn does not leave stale writers behind.
-            topicBag.Writers.TryRemove(channel.Writer, out _);
-            channel.Writer.TryComplete();
+            // Combine the provided cancellation token with the one from construction
+            var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(_ct, cancellationToken);
+            return new ChannelAsyncEnumerator(_channel, _topicBag, linkedCts);
+        }
+
+        private sealed class ChannelAsyncEnumerator : IAsyncEnumerator<TEvent>, IAsyncDisposable
+        {
+            private readonly Channel<TEvent> _channel;
+            private readonly TopicBag<TEvent> _topicBag;
+            private readonly ChannelReader<TEvent> _reader;
+            private readonly ChannelWriter<TEvent> _writer;
+            private readonly CancellationTokenSource _cts;
+            private IAsyncEnumerator<TEvent>? _enumerator;
+            private bool _disposed;
+
+            public ChannelAsyncEnumerator(Channel<TEvent> channel, TopicBag<TEvent> topicBag, CancellationTokenSource cts)
+            {
+                _channel = channel;
+                _topicBag = topicBag;
+                _reader = channel.Reader;
+                _writer = channel.Writer;
+                _cts = cts;
+                _enumerator = _reader.ReadAllAsync(_cts.Token).GetAsyncEnumerator();
+            }
+
+            public TEvent Current => _enumerator!.Current;
+
+            public async ValueTask<bool> MoveNextAsync()
+            {
+                if (_disposed) return false;
+                try
+                {
+                    return await _enumerator!.MoveNextAsync().ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    return false;
+                }
+            }
+
+            public async ValueTask DisposeAsync()
+            {
+                if (_disposed) return;
+                _disposed = true;
+                _topicBag.Writers.TryRemove(_writer, out _);
+                _writer.TryComplete();
+                if (_enumerator != null)
+                {
+                    await _enumerator.DisposeAsync().ConfigureAwait(false);
+                    _enumerator = null;
+                }
+                _cts.Cancel();
+                _cts.Dispose();
+            }
         }
     }
 
