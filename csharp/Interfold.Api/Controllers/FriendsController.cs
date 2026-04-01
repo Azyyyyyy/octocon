@@ -13,11 +13,9 @@ public sealed class FriendsController : InterfoldControllerBase
     private readonly SetFriendTrustCommandHandler _setTrust;
 
     public FriendsController(
-        ApiSettings settings,
         IFriendshipRepository repository,
         RemoveFriendshipCommandHandler remove,
         SetFriendTrustCommandHandler setTrust)
-        : base(settings)
     {
         _repository = repository;
         _remove = remove;

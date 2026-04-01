@@ -15,13 +15,11 @@ public sealed class FriendRequestsController : InterfoldControllerBase
     private readonly CancelFriendRequestCommandHandler _cancel;
 
     public FriendRequestsController(
-        ApiSettings settings,
         IFriendshipRepository repository,
         SendFriendRequestCommandHandler send,
         AcceptFriendRequestCommandHandler accept,
         RejectFriendRequestCommandHandler reject,
         CancelFriendRequestCommandHandler cancel)
-        : base(settings)
     {
         _repository = repository;
         _send = send;

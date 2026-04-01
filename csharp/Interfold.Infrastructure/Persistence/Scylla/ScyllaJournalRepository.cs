@@ -1,5 +1,6 @@
 using Cassandra;
 using Interfold.Domain.Journals;
+using Interfold.Infrastructure.Configuration;
 using Interfold.Infrastructure.Persistence.Transient;
 
 namespace Interfold.Infrastructure.Persistence.Scylla;
@@ -8,12 +9,12 @@ public sealed class ScyllaJournalRepository : IJournalRepository
 {
     private readonly IScyllaSessionProvider _sessionProvider;
     private readonly IScyllaKeyspaceResolver _keyspaceResolver;
-    private readonly PersistenceRegistrationOptions _options;
+    private readonly PersistenceConfiguration _options;
 
     public ScyllaJournalRepository(
         IScyllaSessionProvider sessionProvider,
         IScyllaKeyspaceResolver keyspaceResolver,
-        PersistenceRegistrationOptions options)
+        PersistenceConfiguration options)
     {
         _sessionProvider = sessionProvider;
         _keyspaceResolver = keyspaceResolver;

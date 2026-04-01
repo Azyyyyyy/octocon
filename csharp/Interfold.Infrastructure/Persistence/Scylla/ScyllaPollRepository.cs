@@ -1,5 +1,6 @@
 using Cassandra;
 using Interfold.Domain.Polls;
+using Interfold.Infrastructure.Configuration;
 using Interfold.Infrastructure.Persistence.Transient;
 
 namespace Interfold.Infrastructure.Persistence.Scylla;
@@ -24,12 +25,12 @@ public sealed class ScyllaPollRepository : IPollRepository
 
     private readonly IScyllaSessionProvider _sessionProvider;
     private readonly IScyllaKeyspaceResolver _keyspaceResolver;
-    private readonly PersistenceRegistrationOptions _options;
+    private readonly PersistenceConfiguration _options;
 
     public ScyllaPollRepository(
         IScyllaSessionProvider sessionProvider,
         IScyllaKeyspaceResolver keyspaceResolver,
-        PersistenceRegistrationOptions options)
+        PersistenceConfiguration options)
     {
         _sessionProvider = sessionProvider;
         _keyspaceResolver = keyspaceResolver;

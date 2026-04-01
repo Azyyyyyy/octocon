@@ -37,7 +37,6 @@ public sealed class SettingsController : InterfoldControllerBase
     private readonly RelocateFieldCommandHandler _relocateFieldHandler;
 
     public SettingsController(
-        ApiSettings settings,
         IAccountRepository accountRepository,
         ISingletonTaskOwner singletonTaskOwner,
         UpdateUsernameCommandHandler usernameHandler,
@@ -61,7 +60,6 @@ public sealed class SettingsController : InterfoldControllerBase
         UpdateFieldCommandHandler updateFieldHandler,
         DeleteFieldCommandHandler deleteFieldHandler,
         RelocateFieldCommandHandler relocateFieldHandler)
-        : base(settings)
     {
         _accountRepository = accountRepository;
         _singletonTaskOwner = singletonTaskOwner;

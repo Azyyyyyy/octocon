@@ -2,6 +2,7 @@ using Cassandra;
 using System.Security.Cryptography;
 using System.Text;
 using Interfold.Domain.Accounts;
+using Interfold.Infrastructure.Configuration;
 using Interfold.Infrastructure.Persistence.Transient;
 
 namespace Interfold.Infrastructure.Persistence.Scylla;
@@ -10,12 +11,12 @@ public sealed class ScyllaAccountRepository : IAccountRepository
 {
     private readonly IScyllaSessionProvider _sessionProvider;
     private readonly IScyllaKeyspaceResolver _keyspaceResolver;
-    private readonly PersistenceRegistrationOptions _options;
+    private readonly PersistenceConfiguration _options;
 
     public ScyllaAccountRepository(
         IScyllaSessionProvider sessionProvider,
         IScyllaKeyspaceResolver keyspaceResolver,
-        PersistenceRegistrationOptions options
+        PersistenceConfiguration options
     )
     {
         _sessionProvider = sessionProvider;

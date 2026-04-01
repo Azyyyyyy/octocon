@@ -11,11 +11,8 @@ namespace Interfold.Api.Controllers;
 [Authorize]
 public abstract class InterfoldControllerBase : ControllerBase
 {
-    private readonly ApiSettings _settings;
-
-    protected InterfoldControllerBase(ApiSettings settings)
+    protected InterfoldControllerBase()
     {
-        _settings = settings;
     }
 
     protected string? GetPrincipalId()

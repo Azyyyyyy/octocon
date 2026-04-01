@@ -1,5 +1,4 @@
 using Microsoft.AspNetCore.Mvc;
-using System.Text.Json.Serialization;
 using Interfold.Contracts.Operations;
 using Interfold.Domain.Journals;
 
@@ -19,7 +18,6 @@ public sealed class JournalsController : InterfoldControllerBase
     private readonly DetachAlterFromGlobalJournalCommandHandler _detachAlter;
 
     public JournalsController(
-        ApiSettings settings,
         IJournalRepository journalRepository,
         CreateGlobalJournalEntryCommandHandler create,
         UpdateGlobalJournalEntryCommandHandler update,
@@ -28,7 +26,6 @@ public sealed class JournalsController : InterfoldControllerBase
         SetGlobalJournalPinnedCommandHandler setPinned,
         AttachAlterToGlobalJournalCommandHandler attachAlter,
         DetachAlterFromGlobalJournalCommandHandler detachAlter)
-        : base(settings)
     {
         _journalRepository = journalRepository;
         _create = create;

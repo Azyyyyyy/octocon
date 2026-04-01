@@ -1,4 +1,5 @@
 using Cassandra;
+using Interfold.Infrastructure.Configuration;
 using Interfold.Domain.Settings;
 using Interfold.Infrastructure.Persistence.Transient;
 using System.Collections.Concurrent;
@@ -18,13 +19,13 @@ public sealed class ScyllaSettingsFieldRepository : ISettingsFieldRepository
 
     private readonly IScyllaSessionProvider _sessionProvider;
     private readonly IScyllaKeyspaceResolver _keyspaceResolver;
-    private readonly PersistenceRegistrationOptions _options;
+    private readonly PersistenceConfiguration _options;
     private static readonly ConcurrentDictionary<string, byte> UdtMappings = new(StringComparer.OrdinalIgnoreCase);
 
     public ScyllaSettingsFieldRepository(
         IScyllaSessionProvider sessionProvider,
         IScyllaKeyspaceResolver keyspaceResolver,
-        PersistenceRegistrationOptions options)
+        PersistenceConfiguration options)
     {
         _sessionProvider = sessionProvider;
         _keyspaceResolver = keyspaceResolver;

@@ -1,5 +1,6 @@
 using Cassandra;
 using Interfold.Domain.Abstractions;
+using Interfold.Infrastructure.Configuration;
 using Interfold.Infrastructure.Persistence.Transient;
 
 namespace Interfold.Infrastructure.Persistence.Scylla;
@@ -9,14 +10,14 @@ public sealed class ScyllaAggregateVersionStore : IAggregateVersionStore
     private readonly IScyllaSessionProvider _sessionProvider;
     private readonly IScyllaKeyspaceResolver _keyspaceResolver;
     private readonly IRegionContext _regionContext;
-    private readonly PersistenceRegistrationOptions _options;
+    private readonly PersistenceConfiguration _options;
     private int _aggregateVersionLwtUnsupported;
 
     public ScyllaAggregateVersionStore(
         IScyllaSessionProvider sessionProvider,
         IScyllaKeyspaceResolver keyspaceResolver,
         IRegionContext regionContext,
-        PersistenceRegistrationOptions options
+        PersistenceConfiguration options
     )
     {
         _sessionProvider = sessionProvider;

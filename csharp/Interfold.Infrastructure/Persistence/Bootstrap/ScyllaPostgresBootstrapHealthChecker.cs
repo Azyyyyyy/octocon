@@ -1,6 +1,7 @@
 using Cassandra;
 using Npgsql;
 using Interfold.Domain.Alters;
+using Interfold.Infrastructure.Configuration;
 using Interfold.Infrastructure.Persistence.Postgres;
 using Interfold.Infrastructure.Persistence.Scylla;
 using Interfold.Infrastructure.Persistence.Transient;
@@ -37,13 +38,13 @@ public sealed class ScyllaPostgresBootstrapHealthChecker : IDatabaseBootstrapHea
     private readonly IPostgresConnectionFactory _postgresConnectionFactory;
     private readonly IScyllaSessionProvider _scyllaSessionProvider;
     private readonly IAlterRepository _alterRepository;
-    private readonly PersistenceRegistrationOptions _options;
+    private readonly PersistenceConfiguration _options;
 
     public ScyllaPostgresBootstrapHealthChecker(
         IPostgresConnectionFactory postgresConnectionFactory,
         IScyllaSessionProvider scyllaSessionProvider,
         IAlterRepository alterRepository,
-        PersistenceRegistrationOptions options
+        PersistenceConfiguration options
     )
     {
         _postgresConnectionFactory = postgresConnectionFactory;

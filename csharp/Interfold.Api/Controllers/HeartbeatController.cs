@@ -7,7 +7,7 @@ namespace Interfold.Api.Controllers;
 [Route("api")]
 public sealed class HeartbeatController : InterfoldControllerBase
 {
-    public HeartbeatController(ApiSettings settings) : base(settings) { }
+    public HeartbeatController() { }
 
     [AllowAnonymous]
     [HttpGet("heartbeat")]

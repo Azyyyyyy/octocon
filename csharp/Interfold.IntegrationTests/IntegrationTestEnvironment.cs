@@ -8,16 +8,12 @@ namespace Interfold.IntegrationTests;
 /// </summary>
 public static class IntegrationTestEnvironment
 {
-    private static readonly IConfiguration Configuration = new ConfigurationBuilder()
-        .AddEnvironmentVariables()
-        .Build();
-
     /// <summary>
     /// Gets an environment variable value or returns a fallback if not set/empty.
     /// </summary>
     public static string GetVariable(string key, string fallback = "")
     {
-        var value = Configuration[key];
+        var value = Environment.GetEnvironmentVariable(key);
         return string.IsNullOrWhiteSpace(value) ? fallback : value;
     }
 
@@ -26,7 +22,7 @@ public static class IntegrationTestEnvironment
     /// </summary>
     public static bool IsEnabled(string key)
     {
-        var value = Configuration[key];
+        var value = GetVariable(key);
         return bool.TryParse(value, out var enabled) && enabled;
     }
 
@@ -43,10 +39,10 @@ public static class IntegrationTestEnvironment
     /// <summary>
     /// Gets the PostgreSQL connection string if available.
     /// </summary>
-    public static bool HasPostgresConnection => !string.IsNullOrWhiteSpace(Configuration["OCTOCON_POSTGRES_CONNECTION"]);
+    public static bool HasPostgresConnection => !string.IsNullOrWhiteSpace(GetVariable("OCTOCON_POSTGRES_CONNECTION"));
 
     /// <summary>
     /// Gets the PostgreSQL connection string.
     /// </summary>
-    public static string? PostgresConnection => Configuration["OCTOCON_POSTGRES_CONNECTION"];
+    public static string? PostgresConnection => GetVariable("OCTOCON_POSTGRES_CONNECTION");
 }

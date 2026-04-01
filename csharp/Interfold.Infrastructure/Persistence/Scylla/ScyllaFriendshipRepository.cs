@@ -1,5 +1,6 @@
 using Cassandra;
 using Interfold.Domain.Friendships;
+using Interfold.Infrastructure.Configuration;
 using Interfold.Infrastructure.Persistence.Transient;
 
 namespace Interfold.Infrastructure.Persistence.Scylla;
@@ -11,12 +12,12 @@ public sealed class ScyllaFriendshipRepository : IFriendshipRepository
 
     private readonly IScyllaSessionProvider _sessionProvider;
     private readonly IScyllaKeyspaceResolver _keyspaceResolver;
-    private readonly PersistenceRegistrationOptions _options;
+    private readonly PersistenceConfiguration _options;
 
     public ScyllaFriendshipRepository(
         IScyllaSessionProvider sessionProvider,
         IScyllaKeyspaceResolver keyspaceResolver,
-        PersistenceRegistrationOptions options)
+        PersistenceConfiguration options)
     {
         _sessionProvider = sessionProvider;
         _keyspaceResolver = keyspaceResolver;

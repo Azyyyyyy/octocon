@@ -1,5 +1,4 @@
 using Microsoft.AspNetCore.Mvc;
-using System.Text.Json.Serialization;
 using Interfold.Contracts.Operations;
 using Interfold.Domain.Tags;
 
@@ -18,8 +17,7 @@ public sealed class TagsController : InterfoldControllerBase
    private readonly RemoveParentTagCommandHandler _removeParent;
 
    public TagsController(
-       ApiSettings settings,
-       ITagRepository tagRepository,
+        ITagRepository tagRepository,
        CreateTagCommandHandler create,
        UpdateTagCommandHandler update,
        DeleteTagCommandHandler delete,
@@ -27,7 +25,6 @@ public sealed class TagsController : InterfoldControllerBase
        DetachAlterFromTagCommandHandler detachAlter,
        SetParentTagCommandHandler setParent,
        RemoveParentTagCommandHandler removeParent)
-        : base(settings)
     {
        _tagRepository = tagRepository;
        _create = create;

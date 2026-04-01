@@ -1,9 +1,7 @@
 using System.Diagnostics;
 using System.Net;
 using System.Net.Http.Json;
-using System.Net.Sockets;
 using System.Text.Json;
-using TUnit.Core;
 
 namespace Interfold.IntegrationTests;
 

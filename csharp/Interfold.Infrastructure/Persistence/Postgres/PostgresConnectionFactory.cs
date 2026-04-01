@@ -1,4 +1,5 @@
 using Npgsql;
+using Interfold.Infrastructure.Configuration;
 using Interfold.Infrastructure.Persistence.Transient;
 
 namespace Interfold.Infrastructure.Persistence.Postgres;
@@ -11,9 +12,9 @@ public interface IPostgresConnectionFactory
 public sealed class PostgresConnectionFactory : IPostgresConnectionFactory
 {
     private readonly string _connectionString;
-    private readonly PersistenceRegistrationOptions _options;
+    private readonly PersistenceConfiguration _options;
 
-    public PostgresConnectionFactory(string connectionString, PersistenceRegistrationOptions options)
+    public PostgresConnectionFactory(string connectionString, PersistenceConfiguration options)
     {
         _connectionString = connectionString;
         _options = options;

@@ -5,8 +5,9 @@ using Interfold.Domain.Abstractions;
 using Interfold.Domain.Accounts;
 using Interfold.Domain.Alters;
 using Interfold.Domain.Fronting;
-using Interfold.Infrastructure.DependencyInjection;
+using Interfold.Infrastructure.Configuration;
 using Interfold.Infrastructure.Coordination;
+using Interfold.Infrastructure.DependencyInjection;
 using Interfold.Infrastructure.Persistence;
 using Interfold.Infrastructure.Persistence.Bootstrap;
 
@@ -257,66 +258,46 @@ static int PrintResult<TResult>(CommandExecutionResult<TResult> result)
 
 static CliRuntime BuildRuntime(IConfiguration configuration, IReadOnlyDictionary<string, string> options)
 {
-    var persistence = ResolvePersistenceMode(configuration, options);
-    var nodeGroup = NodeGroupResolver.Resolve(configuration);
-    var services = new ServiceCollection();
+    var persistenceConfig = configuration.BindPersistenceConfiguration();
+    var clusterConfig     = configuration.BindClusterConfiguration();
+    var persistence       = ResolvePersistenceMode(persistenceConfig, options);
+    var services          = new ServiceCollection();
 
     services.AddInterfoldPersistence(persistence, cfg =>
     {
         cfg.DefaultRegion =
-            TryGet(options, "region") ??
-            configuration["OCTOCON_REGION"] ??
-            cfg.DefaultRegion;
+            TryGet(options, "region") ?? persistenceConfig.DefaultRegion;
 
         cfg.PostgresConnectionString =
-            TryGet(options, "postgres-connection") ??
-            configuration["OCTOCON_POSTGRES_CONNECTION"] ??
-            cfg.PostgresConnectionString;
+            TryGet(options, "postgres-connection") ?? persistenceConfig.PostgresConnectionString;
 
         cfg.ScyllaKeyspace =
-            TryGet(options, "scylla-keyspace") ??
-            configuration["OCTOCON_SCYLLA_KEYSPACE"] ??
-            cfg.DefaultRegion;
+            TryGet(options, "scylla-keyspace") ?? persistenceConfig.ScyllaKeyspace;
 
         cfg.ScyllaLocalDatacenter =
-            TryGet(options, "scylla-datacenter") ??
-            configuration["OCTOCON_SCYLLA_DATACENTER"] ??
-            cfg.ScyllaLocalDatacenter;
+            TryGet(options, "scylla-datacenter") ?? persistenceConfig.ScyllaLocalDatacenter;
 
-        var contactPoints =
-            TryGet(options, "scylla-contact-points") ??
-            configuration["OCTOCON_SCYLLA_CONTACT_POINTS"];
-
-        if (!string.IsNullOrWhiteSpace(contactPoints))
-        {
-            cfg.ScyllaContactPoints = contactPoints
-                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        }
+        var contactPointsStr = TryGet(options, "scylla-contact-points");
+        cfg.ScyllaContactPoints = !string.IsNullOrWhiteSpace(contactPointsStr)
+            ? contactPointsStr.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            : persistenceConfig.ScyllaContactPoints;
 
         cfg.ScyllaUsername =
-            TryGet(options, "scylla-username") ??
-            configuration["OCTOCON_SCYLLA_USERNAME"];
+            TryGet(options, "scylla-username") ?? persistenceConfig.ScyllaUsername;
 
         cfg.ScyllaPassword =
-            TryGet(options, "scylla-password") ??
-            configuration["OCTOCON_SCYLLA_PASSWORD"];
+            TryGet(options, "scylla-password") ?? persistenceConfig.ScyllaPassword;
 
         cfg.DbRetryAttempts =
-            TryInt(options, "db-retry-attempts") ??
-            TryIntFromEnv(configuration, "OCTOCON_DB_RETRY_ATTEMPTS") ??
-            cfg.DbRetryAttempts;
+            TryInt(options, "db-retry-attempts") ?? persistenceConfig.DbRetryAttempts;
 
         cfg.DbRetryInitialDelayMs =
-            TryInt(options, "db-retry-initial-delay-ms") ??
-            TryIntFromEnv(configuration, "OCTOCON_DB_RETRY_INITIAL_DELAY_MS") ??
-            cfg.DbRetryInitialDelayMs;
+            TryInt(options, "db-retry-initial-delay-ms") ?? persistenceConfig.DbRetryInitialDelayMs;
 
         cfg.DbRetryMaxDelayMs =
-            TryInt(options, "db-retry-max-delay-ms") ??
-            TryIntFromEnv(configuration, "OCTOCON_DB_RETRY_MAX_DELAY_MS") ??
-            cfg.DbRetryMaxDelayMs;
+            TryInt(options, "db-retry-max-delay-ms") ?? persistenceConfig.DbRetryMaxDelayMs;
     });
-    services.AddInterfoldCluster(nodeGroup);
+    services.AddInterfoldCluster(NodeGroupResolver.Resolve(clusterConfig.NodeGroup));
     services.AddSingleton<UpdateUsernameCommandHandler>();
     services.AddSingleton<CreateAlterCommandHandler>();
     services.AddSingleton<UpdateAlterCommandHandler>();
@@ -329,11 +310,9 @@ static CliRuntime BuildRuntime(IConfiguration configuration, IReadOnlyDictionary
     return provider.GetRequiredService<CliRuntime>();
 }
 
-static PersistenceMode ResolvePersistenceMode(IConfiguration configuration, IReadOnlyDictionary<string, string> options)
+static PersistenceMode ResolvePersistenceMode(PersistenceConfiguration persistenceConfig, IReadOnlyDictionary<string, string> options)
 {
-    var configured = TryGet(options, "persistence")
-        ?? configuration["OCTOCON_PERSISTENCE"]
-        ?? "scylla-postgres";
+    var configured = TryGet(options, "persistence") ?? persistenceConfig.Mode;
 
     return configured.ToLowerInvariant() switch
     {
@@ -386,17 +365,6 @@ static bool? TryBool(IReadOnlyDictionary<string, string> options, string key)
     }
 
     return bool.TryParse(value, out var parsed) ? parsed : null;
-}
-
-static int? TryIntFromEnv(IConfiguration configuration, string key)
-{
-    var raw = configuration[key];
-    if (string.IsNullOrWhiteSpace(raw))
-    {
-        return null;
-    }
-
-    return int.TryParse(raw, out var parsed) ? parsed : null;
 }
 
 static string GetOrCreateIdempotency(IReadOnlyDictionary<string, string> options) =>

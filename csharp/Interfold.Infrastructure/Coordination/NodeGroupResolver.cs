@@ -11,9 +11,12 @@ namespace Interfold.Infrastructure.Coordination;
 ///   <item><c>OCTOCON_NODE_GROUP</c> (manual override)</item>
 ///   <item>Default: <see cref="NodeGroup.Auxiliary"/></item>
 /// </list>
+/// For typed-configuration usage, prefer <see cref="Resolve(string?)"/> with the value
+/// from <c>ClusterConfiguration.NodeGroup</c>.
 /// </summary>
 public static class NodeGroupResolver
 {
+    /// <summary>Resolves node group from <see cref="IConfiguration"/> directly.</summary>
     public static NodeGroup Resolve(IConfiguration configuration)
     {
         var raw = configuration["FLY_PROCESS_GROUP"]
@@ -21,6 +24,9 @@ public static class NodeGroupResolver
 
         return ResolveFromRawValue(raw);
     }
+
+    /// <summary>Resolves node group from a pre-bound string value (e.g. from <c>ClusterConfiguration.NodeGroup</c>).</summary>
+    public static NodeGroup Resolve(string? rawValue) => ResolveFromRawValue(rawValue);
 
     private static NodeGroup ResolveFromRawValue(string? raw)
     {

@@ -1,4 +1,5 @@
 using Cassandra;
+using Interfold.Infrastructure.Configuration;
 using Interfold.Domain.Alters;
 using Interfold.Domain.Tags;
 using Interfold.Infrastructure.Persistence.Transient;
@@ -9,13 +10,13 @@ public sealed class ScyllaTagRepository : ITagRepository
 {
     private readonly IScyllaSessionProvider _sessionProvider;
     private readonly IScyllaKeyspaceResolver _keyspaceResolver;
-    private readonly PersistenceRegistrationOptions _options;
+    private readonly PersistenceConfiguration _options;
     private readonly IAlterRepository _alterRepository;
 
     public ScyllaTagRepository(
         IScyllaSessionProvider sessionProvider,
         IScyllaKeyspaceResolver keyspaceResolver,
-        PersistenceRegistrationOptions options,
+        PersistenceConfiguration options,
         IAlterRepository alterRepository
     )
     {

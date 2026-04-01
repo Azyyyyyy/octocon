@@ -18,7 +18,6 @@ public sealed class AlterJournalsController : InterfoldControllerBase
     private readonly SetAlterJournalPinnedCommandHandler _setPinned;
 
     public AlterJournalsController(
-        ApiSettings settings,
         IAlterRepository alterRepository,
         IJournalRepository journalRepository,
         CreateAlterJournalEntryCommandHandler create,
@@ -26,7 +25,6 @@ public sealed class AlterJournalsController : InterfoldControllerBase
         DeleteAlterJournalEntryCommandHandler delete,
         SetAlterJournalLockedCommandHandler setLocked,
         SetAlterJournalPinnedCommandHandler setPinned)
-        : base(settings)
     {
         _alterRepository = alterRepository;
         _journalRepository = journalRepository;

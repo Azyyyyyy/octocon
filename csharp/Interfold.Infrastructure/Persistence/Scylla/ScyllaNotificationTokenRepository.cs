@@ -1,4 +1,4 @@
-using Cassandra;
+using Interfold.Infrastructure.Configuration;
 using Interfold.Domain.Settings;
 using Interfold.Infrastructure.Persistence.Transient;
 
@@ -8,12 +8,12 @@ public sealed class ScyllaNotificationTokenRepository : INotificationTokenReposi
 {
     private readonly IScyllaSessionProvider _sessionProvider;
     private readonly IScyllaKeyspaceResolver _keyspaceResolver;
-    private readonly PersistenceRegistrationOptions _options;
+    private readonly PersistenceConfiguration _options;
 
     public ScyllaNotificationTokenRepository(
         IScyllaSessionProvider sessionProvider,
         IScyllaKeyspaceResolver keyspaceResolver,
-        PersistenceRegistrationOptions options)
+        PersistenceConfiguration options)
     {
         _sessionProvider = sessionProvider;
         _keyspaceResolver = keyspaceResolver;

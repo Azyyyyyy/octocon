@@ -1,11 +1,12 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Authentication;
+using Microsoft.Extensions.Options;
 using Microsoft.AspNetCore.Mvc;
 using Interfold.Domain.Abstractions;
 using Interfold.Contracts.Operations;
 using Interfold.Domain.Accounts;
-using Interfold.Api;
 using Interfold.Api.Services;
+using Interfold.Infrastructure.Configuration;
 
 namespace Interfold.Api.Controllers;
 
@@ -17,20 +18,23 @@ public sealed class AuthLinkController : ControllerBase
     private const string LinkTokenCookieName = "octocon_link_token";
 
     private readonly IAccountRepository _accounts;
-    private readonly ApiSettings _apiSettings;
+    private readonly IOptionsMonitor<AuthenticationConfiguration> _authOptions;
+    private readonly IOptionsMonitor<ApiConfiguration> _apiOptions;
     private readonly IAuthenticationSchemeProvider _schemeProvider;
     private readonly GoogleOAuthService _googleOAuth;
     private readonly IClusterEventBus _eventBus;
 
     public AuthLinkController(
         IAccountRepository accounts,
-        ApiSettings apiSettings,
+        IOptionsMonitor<AuthenticationConfiguration> authOptions,
+        IOptionsMonitor<ApiConfiguration> apiOptions,
         IAuthenticationSchemeProvider schemeProvider,
         GoogleOAuthService googleOAuth,
         IClusterEventBus eventBus)
     {
         _accounts = accounts;
-        _apiSettings = apiSettings;
+        _authOptions = authOptions;
+        _apiOptions = apiOptions;
         _schemeProvider = schemeProvider;
         _googleOAuth = googleOAuth;
         _eventBus = eventBus;
@@ -70,27 +74,22 @@ public sealed class AuthLinkController : ControllerBase
         }
 
         var providerKey = provider.ToLowerInvariant();
-        if (_apiSettings.AuthChallengeEnabled)
+        var challengeScheme = GetChallengeScheme(providerKey);
+        if (!string.IsNullOrWhiteSpace(challengeScheme))
         {
-            var challengeScheme = GetChallengeScheme(providerKey);
-            if (!string.IsNullOrWhiteSpace(challengeScheme))
+            var registeredScheme = await _schemeProvider.GetSchemeAsync(challengeScheme);
+            if (registeredScheme is not null)
             {
-                var registeredScheme = await _schemeProvider.GetSchemeAsync(challengeScheme);
-                if (registeredScheme is not null)
+                var props = new AuthenticationProperties
                 {
-                    var props = new AuthenticationProperties
-                    {
-                        RedirectUri = $"/auth/link/{providerKey}/callback"
-                    };
+                    RedirectUri = $"/auth/link/{providerKey}/callback"
+                };
 
-                    Response.Headers["X-Interfold-OperationId"] = OperationIds.QueryAuthLinkRequest;
-                    return Challenge(props, challengeScheme);
-                }
+                Response.Headers["X-Interfold-OperationId"] = OperationIds.QueryAuthLinkRequest;
+                return Challenge(props, challengeScheme);
             }
         }
 
-        // Google OAuth2 token exchange is now handled in ExtractProviderIdentityAsync.
-        // If no OAuth provider is configured or challenge disabled, return 403 fallback.
         Response.Headers["X-Interfold-OperationId"] = OperationIds.QueryAuthLinkRequest;
         return StatusCode(StatusCodes.Status403Forbidden, string.Empty);
     }
@@ -182,7 +181,8 @@ public sealed class AuthLinkController : ControllerBase
             new SettingsAccountLinkedEvent(systemId, providerKey, identity),
             HttpContext.RequestAborted);
 
-        return Redirect($"{_apiSettings.DeepEndpointAddress}/link_success/{providerKey}");
+        var apiConfig = _apiOptions.CurrentValue;
+        return Redirect($"{apiConfig.DeepLinkAddress}/link_success/{providerKey}");
     }
 
     private async Task<string?> ExtractProviderIdentityAsync(string provider)
@@ -216,7 +216,8 @@ public sealed class AuthLinkController : ControllerBase
     private string BuildGoogleRedirectUri(string provider)
     {
         var providerKey = provider.ToLowerInvariant();
-        var baseUrl = _apiSettings.AuthCallbackBaseUrl ?? $"{Request.Scheme}://{Request.Host}";
+        var authConfig = _authOptions.CurrentValue;
+        var baseUrl = authConfig.CallbackBaseUrl ?? $"{Request.Scheme}://{Request.Host}";
         return $"{baseUrl}/auth/link/{providerKey}/callback";
     }
 
@@ -248,13 +249,16 @@ public sealed class AuthLinkController : ControllerBase
     }
 
     private string? GetChallengeScheme(string providerKey)
-        => providerKey switch
+    {
+        var authConfig = _authOptions.CurrentValue;
+        return providerKey switch
         {
-            "discord" => _apiSettings.AuthChallengeDiscordScheme,
-            "google" => _apiSettings.AuthChallengeGoogleScheme,
-            "apple" => _apiSettings.AuthChallengeAppleScheme,
+            "discord" => authConfig.DiscordSchemeName,
+            "google" => authConfig.GoogleSchemeName,
+            "apple" => authConfig.AppleSchemeName,
             _ => null
         };
+    }
 
     private static bool IsSupportedProvider(string provider)
         => !string.IsNullOrWhiteSpace(provider) && SupportedProviders.Contains(provider);

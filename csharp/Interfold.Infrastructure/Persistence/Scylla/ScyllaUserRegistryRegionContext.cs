@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using Interfold.Infrastructure.Configuration;
 using Cassandra;
 using Microsoft.Extensions.Logging;
 using Interfold.Domain.Abstractions;
@@ -18,7 +19,7 @@ public sealed class ScyllaUserRegistryRegionContext : IRegionContext
     private const int MaxCacheSize = 1024;
 
     private readonly IScyllaSessionProvider _sessionProvider;
-    private readonly PersistenceRegistrationOptions _options;
+    private readonly PersistenceConfiguration _options;
     private readonly ILogger<ScyllaUserRegistryRegionContext> _logger;
     private readonly ConcurrentDictionary<string, string> _cache = new(StringComparer.Ordinal);
 
@@ -26,7 +27,7 @@ public sealed class ScyllaUserRegistryRegionContext : IRegionContext
 
     public ScyllaUserRegistryRegionContext(
         IScyllaSessionProvider sessionProvider,
-        PersistenceRegistrationOptions options,
+        PersistenceConfiguration options,
         ILogger<ScyllaUserRegistryRegionContext> logger)
     {
         _sessionProvider = sessionProvider;

@@ -20,12 +20,11 @@ public sealed class PublicSystemsController : InterfoldControllerBase
     private readonly IFriendshipRepository _friendships;
 
     public PublicSystemsController(
-        ApiSettings settings,
         IAccountRepository accounts,
         IAlterRepository alters,
         ITagRepository tags,
         IFrontingRepository fronting,
-        IFriendshipRepository friendships) : base(settings)
+        IFriendshipRepository friendships)
     {
         _accounts = accounts;
         _alters = alters;

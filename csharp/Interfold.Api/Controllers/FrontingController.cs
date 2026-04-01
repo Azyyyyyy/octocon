@@ -18,7 +18,6 @@ public sealed class FrontingController : InterfoldControllerBase
     private readonly UpdateFrontCommentCommandHandler _updateCommentHandler;
 
     public FrontingController(
-        ApiSettings settings,
         IFrontingRepository repository,
         StartFrontCommandHandler startHandler,
         EndFrontCommandHandler endHandler,
@@ -27,7 +26,6 @@ public sealed class FrontingController : InterfoldControllerBase
         SetPrimaryFrontCommandHandler primaryHandler,
         DeleteFrontByIdCommandHandler deleteByIdHandler,
         UpdateFrontCommentCommandHandler updateCommentHandler)
-        : base(settings)
     {
         _repository = repository;
         _startHandler = startHandler;

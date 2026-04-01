@@ -1,4 +1,5 @@
 using Cassandra;
+using Interfold.Infrastructure.Configuration;
 using Interfold.Infrastructure.Persistence.Transient;
 
 namespace Interfold.Infrastructure.Persistence.Scylla;
@@ -10,10 +11,10 @@ public interface IScyllaSessionProvider
 
 public sealed class ScyllaSessionProvider : IScyllaSessionProvider
 {
-    private readonly PersistenceRegistrationOptions _options;
+    private readonly PersistenceConfiguration _options;
     private readonly Lazy<Task<ISession>> _session;
 
-    public ScyllaSessionProvider(PersistenceRegistrationOptions options)
+    public ScyllaSessionProvider(PersistenceConfiguration options)
     {
         _options = options;
         _session = new Lazy<Task<ISession>>(ConnectAsync);

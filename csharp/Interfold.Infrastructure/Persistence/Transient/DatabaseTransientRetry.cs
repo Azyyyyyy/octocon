@@ -1,6 +1,7 @@
 using Cassandra;
 using Microsoft.Extensions.Logging;
 using Npgsql;
+using Interfold.Infrastructure.Configuration;
 
 namespace Interfold.Infrastructure.Persistence.Transient;
 
@@ -10,35 +11,35 @@ internal static class DatabaseTransientRetry
 
     public static Task ExecuteScyllaAsync(
         Func<Task> operation,
-        PersistenceRegistrationOptions options,
+        PersistenceConfiguration options,
         CancellationToken cancellationToken = default,
         ILogger? logger = null
     ) => ExecuteAsync(operation, options, IsScyllaTransient, cancellationToken, logger);
 
     public static Task<T> ExecuteScyllaAsync<T>(
         Func<Task<T>> operation,
-        PersistenceRegistrationOptions options,
+        PersistenceConfiguration options,
         CancellationToken cancellationToken = default,
         ILogger? logger = null
     ) => ExecuteAsync(operation, options, IsScyllaTransient, cancellationToken, logger);
 
     public static Task ExecutePostgresAsync(
         Func<Task> operation,
-        PersistenceRegistrationOptions options,
+        PersistenceConfiguration options,
         CancellationToken cancellationToken = default,
         ILogger? logger = null
     ) => ExecuteAsync(operation, options, IsPostgresTransient, cancellationToken, logger);
 
     public static Task<T> ExecutePostgresAsync<T>(
         Func<Task<T>> operation,
-        PersistenceRegistrationOptions options,
+        PersistenceConfiguration options,
         CancellationToken cancellationToken = default,
         ILogger? logger = null
     ) => ExecuteAsync(operation, options, IsPostgresTransient, cancellationToken, logger);
 
     private static async Task ExecuteAsync(
         Func<Task> operation,
-        PersistenceRegistrationOptions options,
+        PersistenceConfiguration options,
         Func<Exception, bool> isTransient,
         CancellationToken cancellationToken,
         ILogger? logger
@@ -53,7 +54,7 @@ internal static class DatabaseTransientRetry
 
     private static async Task<T> ExecuteAsync<T>(
         Func<Task<T>> operation,
-        PersistenceRegistrationOptions options,
+        PersistenceConfiguration options,
         Func<Exception, bool> isTransient,
         CancellationToken cancellationToken,
         ILogger? logger

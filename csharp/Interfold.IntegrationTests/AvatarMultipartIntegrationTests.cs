@@ -5,7 +5,6 @@ using System.Net.Http.Json;
 using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
-using TUnit.Core;
 
 namespace Interfold.IntegrationTests;
 
@@ -51,7 +50,7 @@ public sealed class AvatarMultipartIntegrationTests
     [Test]
     public async Task Api_AlterAvatarMultipart_PersistsAndReflectsOnPublicAlter()
     {
-        if (!IntegrationTestEnvironment.ShouldRunApiIntegration))
+        if (!IntegrationTestEnvironment.ShouldRunApiIntegration)
             return;
 
         var workspaceRoot = FindWorkspaceRoot();

@@ -1,10 +1,11 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Authentication;
+using Microsoft.Extensions.Options;
 using Microsoft.AspNetCore.Mvc;
 using Interfold.Contracts.Operations;
 using Interfold.Domain.Accounts;
-using Interfold.Api;
 using Interfold.Api.Services;
+using Interfold.Infrastructure.Configuration;
 using System.Security.Cryptography;
 using System.Text;
 
@@ -18,20 +19,23 @@ public sealed class AuthController : ControllerBase
 
     private readonly IAccountRepository _accounts;
     private readonly IConfiguration _configuration;
-    private readonly ApiSettings _apiSettings;
+    private readonly IOptionsMonitor<AuthenticationConfiguration> _authOptions;
+    private readonly IOptionsMonitor<ApiConfiguration> _apiOptions;
     private readonly IAuthenticationSchemeProvider _schemeProvider;
     private readonly GoogleOAuthService _googleOAuth;
 
     public AuthController(
         IAccountRepository accounts,
         IConfiguration configuration,
-        ApiSettings apiSettings,
+        IOptionsMonitor<AuthenticationConfiguration> authOptions,
+        IOptionsMonitor<ApiConfiguration> apiOptions,
         IAuthenticationSchemeProvider schemeProvider,
         GoogleOAuthService googleOAuth)
     {
         _accounts = accounts;
         _configuration = configuration;
-        _apiSettings = apiSettings;
+        _authOptions = authOptions;
+        _apiOptions = apiOptions;
         _schemeProvider = schemeProvider;
         _googleOAuth = googleOAuth;
     }
@@ -67,37 +71,32 @@ public sealed class AuthController : ControllerBase
         });
 
         var providerKey = provider.ToLowerInvariant();
-        if (_apiSettings.AuthChallengeEnabled)
+        var challengeScheme = GetChallengeScheme(providerKey);
+        if (!string.IsNullOrWhiteSpace(challengeScheme))
         {
-            var challengeScheme = GetChallengeScheme(providerKey);
-            if (!string.IsNullOrWhiteSpace(challengeScheme))
+            var registeredScheme = await _schemeProvider.GetSchemeAsync(challengeScheme);
+            if (registeredScheme is not null)
             {
-                var registeredScheme = await _schemeProvider.GetSchemeAsync(challengeScheme);
-                if (registeredScheme is not null)
+                var redirectUri = BuildCallbackUri(providerKey);
+                var props = new AuthenticationProperties
                 {
-                    var redirectUri = BuildCallbackUri(providerKey);
-                    var props = new AuthenticationProperties
-                    {
-                        RedirectUri = redirectUri
-                    };
+                    RedirectUri = redirectUri
+                };
 
-                    var additionalParameters = GetChallengeParameters(providerKey);
-                    if (additionalParameters?.Count > 0)
+                var additionalParameters = GetChallengeParameters(providerKey);
+                if (additionalParameters?.Count > 0)
+                {
+                    foreach (var (key, value) in additionalParameters)
                     {
-                        foreach (var (key, value) in additionalParameters)
-                        {
-                            props.Items[key] = value;
-                        }
+                        props.Items[key] = value;
                     }
-
-                    Response.Headers["X-Interfold-OperationId"] = OperationIds.QueryAuthOAuthRequest;
-                    return Challenge(props, challengeScheme);
                 }
+
+                Response.Headers["X-Interfold-OperationId"] = OperationIds.QueryAuthOAuthRequest;
+                return Challenge(props, challengeScheme);
             }
         }
 
-        // TODO(auth): Replace this fallback once provider challenge middleware is fully wired.
-        // Until then we keep legacy request behavior (403 with empty body) and handle callback parity.
         Response.Headers["X-Interfold-OperationId"] = OperationIds.QueryAuthOAuthRequest;
         return StatusCode(StatusCodes.Status403Forbidden, string.Empty);
     }
@@ -183,20 +182,21 @@ public sealed class AuthController : ControllerBase
             }
         }
 
+        var apiConfig = _apiOptions.CurrentValue;
         if (providerKey == "google" &&
             platform.Equals("wasm", StringComparison.OrdinalIgnoreCase) &&
             isBeta.Equals("true", StringComparison.OrdinalIgnoreCase))
         {
-            return _apiSettings.BetaFrontendAddress ?? throw new InvalidOperationException("Beta frontend address is not configured.");
+            return apiConfig.BetaFrontendAddress ?? throw new InvalidOperationException("Beta frontend address is not configured.");
         }
 
         if ((providerKey == "discord" || providerKey == "google") &&
             platform.Equals("wasm", StringComparison.OrdinalIgnoreCase))
         {
-            return _apiSettings.FrontendAddress ?? throw new InvalidOperationException("Frontend address is not configured.");
+            return apiConfig.FrontendAddress ?? throw new InvalidOperationException("Frontend address is not configured.");
         }
 
-        return $"{_apiSettings.DeepEndpointAddress ?? throw new InvalidOperationException("Deep endpoint address is not configured.")}/auth/token";
+        return $"{apiConfig.DeepLinkAddress ?? throw new InvalidOperationException("Deep endpoint address is not configured.")}/auth/token";
     }
 
     private string BuildMetadataJson()
@@ -244,7 +244,8 @@ public sealed class AuthController : ControllerBase
     private string BuildGoogleRedirectUri(string provider)
     {
         var providerKey = provider.ToLowerInvariant();
-        var baseUrl = _apiSettings.AuthCallbackBaseUrl ?? $"{Request.Scheme}://{Request.Host}";
+        var authConfig = _authOptions.CurrentValue;
+        var baseUrl = authConfig.CallbackBaseUrl ?? $"{Request.Scheme}://{Request.Host}";
         return $"{baseUrl}/auth/{providerKey}/callback";
     }
 
@@ -323,30 +324,37 @@ public sealed class AuthController : ControllerBase
     }
 
     private string? GetChallengeScheme(string providerKey)
-        => providerKey switch
+    {
+        var authConfig = _authOptions.CurrentValue;
+        return providerKey switch
         {
-            "discord" => _apiSettings.AuthChallengeDiscordScheme,
-            "google" => _apiSettings.AuthChallengeGoogleScheme,
-            "apple" => _apiSettings.AuthChallengeAppleScheme,
+            "discord" => authConfig.DiscordSchemeName,
+            "google" => authConfig.GoogleSchemeName,
+            "apple" => authConfig.AppleSchemeName,
             _ => null
         };
+    }
 
     private Dictionary<string, string>? GetChallengeParameters(string providerKey)
-        => providerKey switch
+    {
+        var authConfig = _authOptions.CurrentValue;
+        return providerKey switch
         {
-            "discord" => _apiSettings.AuthChallengeDiscordParameters,
-            "google" => _apiSettings.AuthChallengeGoogleParameters,
-            "apple" => _apiSettings.AuthChallengeAppleParameters,
+            "discord" => authConfig.DiscordParameters,
+            "google" => authConfig.GoogleParameters,
+            "apple" => authConfig.AppleParameters,
             _ => null
         };
+    }
 
     private string BuildCallbackUri(string providerKey)
     {
         var callbackPath = $"/auth/{providerKey}/callback";
+        var authConfig = _authOptions.CurrentValue;
         
-        if (!string.IsNullOrWhiteSpace(_apiSettings.AuthCallbackBaseUrl))
+        if (!string.IsNullOrWhiteSpace(authConfig.CallbackBaseUrl))
         {
-            var baseUrl = _apiSettings.AuthCallbackBaseUrl.TrimEnd('/');
+            var baseUrl = authConfig.CallbackBaseUrl.TrimEnd('/');
             return $"{baseUrl}{callbackPath}";
         }
 

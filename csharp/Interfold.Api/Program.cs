@@ -1,22 +1,14 @@
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Trace;
-using System.Security.Claims;
-using Microsoft.IdentityModel.Tokens;
 using System.Text;
 using Interfold.Api;
 using Interfold.Api.Auth;
 using Interfold.Api.Services;
 using Interfold.Api.Swagger;
-using Interfold.Domain.Accounts;
-using Interfold.Domain.Alters;
-using Interfold.Domain.Friendships;
-using Interfold.Domain.Fronting;
-using Interfold.Domain.Journals;
-using Interfold.Domain.Polls;
-using Interfold.Domain.Settings;
-using Interfold.Domain.Tags;
+using Interfold.Infrastructure.Configuration;
 using Interfold.Infrastructure.Coordination;
 using Interfold.Infrastructure.DependencyInjection;
 using Interfold.Infrastructure.Persistence;
@@ -25,149 +17,43 @@ using Interfold.Api.Socket;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// --- Configuration ---
+// Bind startup-time values read before the DI container is built.
+var clusterConfig     = builder.Configuration.BindClusterConfiguration();
+var persistenceConfig = builder.Configuration.BindPersistenceConfiguration();
+var obsConfig         = builder.Configuration.BindObservabilityConfiguration();
+var authConfig        = builder.Configuration.BindAuthenticationConfiguration();
+
+// Register all typed options
+// Auth and API configs are consumed directly via IOptionsMonitor in services.
+// Storage and socket configs are consumed via IOptionsMonitor only — no startup local needed.
+builder.Services.AddInterfoldOptions();
+
 // --- Node role ---
-// Resolution order mirrors the legacy Elixir runtime:
-//   1. FLY_PROCESS_GROUP (fly.io automatic)
-//   2. OCTOCON_NODE_GROUP (manual override)
-//   3. Default: auxiliary
-var nodeGroup = NodeGroupResolver.Resolve(builder.Configuration);
-builder.Services.AddInterfoldCluster(nodeGroup);
+builder.Services.AddInterfoldCluster(NodeGroupResolver.Resolve(clusterConfig.NodeGroup));
 
 // --- Persistence ---
-var persistenceMode = (builder.Configuration["OCTOCON_PERSISTENCE"] ?? "scylla-postgres").ToLowerInvariant() switch
+var persistenceMode = persistenceConfig.Mode switch
 {
-    "inmemory"       => PersistenceMode.InMemory,
+    "inmemory"        => PersistenceMode.InMemory,
     "scylla-postgres" => PersistenceMode.ScyllaPostgres,
-    var x            => throw new InvalidOperationException($"Unsupported persistence mode: {x}")
+    var x             => throw new InvalidOperationException($"Unsupported persistence mode: {x}")
 };
 
-builder.Services.AddInterfoldPersistence(persistenceMode, cfg =>
-{
-    cfg.DefaultRegion         = builder.Configuration["OCTOCON_REGION"] ?? cfg.DefaultRegion;
-    cfg.PostgresConnectionString = builder.Configuration["OCTOCON_POSTGRES_CONNECTION"] ?? cfg.PostgresConnectionString;
-    cfg.ScyllaKeyspace        = builder.Configuration["OCTOCON_SCYLLA_KEYSPACE"] ?? cfg.DefaultRegion;
-    cfg.ScyllaLocalDatacenter = builder.Configuration["OCTOCON_SCYLLA_DATACENTER"] ?? cfg.ScyllaLocalDatacenter;
-
-    var contactPoints = builder.Configuration["OCTOCON_SCYLLA_CONTACT_POINTS"];
-    if (!string.IsNullOrWhiteSpace(contactPoints))
-        cfg.ScyllaContactPoints = contactPoints.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-
-    cfg.ScyllaUsername = builder.Configuration["OCTOCON_SCYLLA_USERNAME"];
-    cfg.ScyllaPassword = builder.Configuration["OCTOCON_SCYLLA_PASSWORD"];
-});
-
-// --- Domain handlers ---
-builder.Services.AddSingleton<CreateAlterCommandHandler>();
-builder.Services.AddSingleton<UpdateAlterCommandHandler>();
-builder.Services.AddSingleton<DeleteAlterCommandHandler>();
-builder.Services.AddSingleton<StartFrontCommandHandler>();
-builder.Services.AddSingleton<EndFrontCommandHandler>();
-builder.Services.AddSingleton<BulkUpdateFrontCommandHandler>();
-builder.Services.AddSingleton<SetFrontCommandHandler>();
-builder.Services.AddSingleton<SetPrimaryFrontCommandHandler>();
-builder.Services.AddSingleton<DeleteFrontByIdCommandHandler>();
-builder.Services.AddSingleton<UpdateFrontCommentCommandHandler>();
-builder.Services.AddSingleton<UpdateUsernameCommandHandler>();
-builder.Services.AddSingleton<UpdateDescriptionCommandHandler>();
-builder.Services.AddSingleton<AddPushTokenCommandHandler>();
-builder.Services.AddSingleton<RemovePushTokenCommandHandler>();
-builder.Services.AddSingleton<SetupEncryptionCommandHandler>();
-builder.Services.AddSingleton<RecoverEncryptionCommandHandler>();
-builder.Services.AddSingleton<ResetEncryptionCommandHandler>();
-builder.Services.AddSingleton<UploadAvatarCommandHandler>();
-builder.Services.AddSingleton<DeleteAvatarCommandHandler>();
-builder.Services.AddSingleton<ImportPkCommandHandler>();
-builder.Services.AddSingleton<ImportSpCommandHandler>();
-builder.Services.AddSingleton<UnlinkDiscordCommandHandler>();
-builder.Services.AddSingleton<UnlinkEmailCommandHandler>();
-builder.Services.AddSingleton<UnlinkAppleCommandHandler>();
-builder.Services.AddSingleton<DeleteAccountCommandHandler>();
-builder.Services.AddSingleton<WipeAltersCommandHandler>();
-builder.Services.AddSingleton<CreateFieldCommandHandler>();
-builder.Services.AddSingleton<UpdateFieldCommandHandler>();
-builder.Services.AddSingleton<DeleteFieldCommandHandler>();
-builder.Services.AddSingleton<RelocateFieldCommandHandler>();
+builder.Services.AddInterfoldPersistence(persistenceMode, persistenceConfig);
+builder.Services.AddInterfoldDomainHandlers();
 builder.Services.AddSingleton<IAvatarStorage, LocalAvatarStorage>();
-builder.Services.AddSingleton<CreateTagCommandHandler>();
-builder.Services.AddSingleton<UpdateTagCommandHandler>();
-builder.Services.AddSingleton<DeleteTagCommandHandler>();
-builder.Services.AddSingleton<AttachAlterToTagCommandHandler>();
-builder.Services.AddSingleton<DetachAlterFromTagCommandHandler>();
-builder.Services.AddSingleton<SetParentTagCommandHandler>();
-builder.Services.AddSingleton<RemoveParentTagCommandHandler>();
-builder.Services.AddSingleton<CreatePollCommandHandler>();
-builder.Services.AddSingleton<UpdatePollCommandHandler>();
-builder.Services.AddSingleton<DeletePollCommandHandler>();
-builder.Services.AddSingleton<CreateGlobalJournalEntryCommandHandler>();
-builder.Services.AddSingleton<UpdateGlobalJournalEntryCommandHandler>();
-builder.Services.AddSingleton<DeleteGlobalJournalEntryCommandHandler>();
-builder.Services.AddSingleton<SetGlobalJournalLockedCommandHandler>();
-builder.Services.AddSingleton<SetGlobalJournalPinnedCommandHandler>();
-builder.Services.AddSingleton<AttachAlterToGlobalJournalCommandHandler>();
-builder.Services.AddSingleton<DetachAlterFromGlobalJournalCommandHandler>();
-builder.Services.AddSingleton<CreateAlterJournalEntryCommandHandler>();
-builder.Services.AddSingleton<UpdateAlterJournalEntryCommandHandler>();
-builder.Services.AddSingleton<DeleteAlterJournalEntryCommandHandler>();
-builder.Services.AddSingleton<SetAlterJournalLockedCommandHandler>();
-builder.Services.AddSingleton<SetAlterJournalPinnedCommandHandler>();
-builder.Services.AddSingleton<RemoveFriendshipCommandHandler>();
-builder.Services.AddSingleton<SetFriendTrustCommandHandler>();
-builder.Services.AddSingleton<SendFriendRequestCommandHandler>();
-builder.Services.AddSingleton<AcceptFriendRequestCommandHandler>();
-builder.Services.AddSingleton<RejectFriendRequestCommandHandler>();
-builder.Services.AddSingleton<CancelFriendRequestCommandHandler>();
-
-// --- API settings ---
-bool.TryParse(builder.Configuration["OCTOCON_AUTH_CHALLENGE_ENABLED"], out var authChallengeEnabled);
-builder.Services.AddSingleton(new ApiSettings
-{
-    AuthChallengeEnabled = authChallengeEnabled,
-    AuthChallengeDiscordScheme = builder.Configuration["OCTOCON_AUTH_CHALLENGE_DISCORD_SCHEME"] ?? "oauth-discord",
-    AuthChallengeGoogleScheme = builder.Configuration["OCTOCON_AUTH_CHALLENGE_GOOGLE_SCHEME"] ?? "oauth-google",
-    AuthChallengeAppleScheme = builder.Configuration["OCTOCON_AUTH_CHALLENGE_APPLE_SCHEME"] ?? "oauth-apple",
-    AuthChallengeDiscordParameters = ParseAuthParameters(builder.Configuration["OCTOCON_AUTH_CHALLENGE_DISCORD_PARAMS"]),
-    AuthChallengeGoogleParameters = ParseAuthParameters(builder.Configuration["OCTOCON_AUTH_CHALLENGE_GOOGLE_PARAMS"]),
-    AuthChallengeAppleParameters = ParseAuthParameters(builder.Configuration["OCTOCON_AUTH_CHALLENGE_APPLE_PARAMS"]),
-    AuthCallbackBaseUrl = builder.Configuration["OCTOCON_AUTH_CALLBACK_BASE_URL"],
-    GoogleOAuthClientId = builder.Configuration["OCTOCON_GOOGLE_OAUTH_CLIENT_ID"],
-    GoogleOAuthClientSecret = builder.Configuration["OCTOCON_GOOGLE_OAUTH_CLIENT_SECRET"],
-    FrontendAddress = builder.Configuration["OCTOCON_FRONTEND"],
-    BetaFrontendAddress = builder.Configuration["OCTOCON_BETA_FRONTEND"],
-    DeepEndpointAddress = builder.Configuration["OCTOCON_DEEPLINK_ADDRESS"]
-});
 
 // --- HTTP Client Factory (for OAuth token exchange, etc.) ---
 builder.Services.AddHttpClient<GoogleOAuthService>();
 
-// --- Auth (Phase F baseline) ---
-// Tokens are always self-issued by this backend (or the Elixir Guardian backend) after
+// --- Auth ---
+// Tokens are always self-issued by this backend after
 // OAuth provider authentication completes. There is no single external OIDC authority to
-// validate against — the provider (Google/Apple/Discord) is only used to identify the user;
-// the resulting JWT is issued by Octocon itself. We therefore skip issuer validation and
-// rely on audience and lifetime checks only.
+// validate against — the provider is only used to identify the user;
+// the resulting JWT is issued by Interfold itself. We therefore skip issuer validation and
+// rely on audience and lifetime checks only for now. TODO: Look into how we can make this better WITHOUT breaking exisitng clients
 var jwtAudience = "octocon";
-var jwtSigningSecrets = new[]
-{
-    builder.Configuration["OCTOCON_AUTH_DEEP_LINK_SECRET"],
-    builder.Configuration["GUARDIAN_SECRET_KEY"],
-    builder.Configuration["OCTOCON_JWT_AUTHORITY"], // legacy fallback used as secret in token issuance
-    "octocon-local" // final local fallback for parity with IssueDeepLinkToken
-}
-    .Where(static s => !string.IsNullOrWhiteSpace(s))
-    .Distinct(StringComparer.Ordinal)
-    .ToArray();
-
-var jwtSigningKeys = jwtSigningSecrets
-    .Select(static secret => (SecurityKey)new SymmetricSecurityKey(Encoding.UTF8.GetBytes(secret!)))
-    .ToArray();
-
-SecurityKey[] ResolveJwtSigningKeys(
-    string token,
-    SecurityToken? securityToken,
-    string? kid,
-    TokenValidationParameters validationParameters)
-    => jwtSigningKeys;
-
 builder.Services
     .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
@@ -184,32 +70,33 @@ builder.Services
             ClockSkew = TimeSpan.FromMinutes(1),
             ValidateIssuerSigningKey = false,
             RequireSignedTokens = true,
-            IssuerSigningKeys = jwtSigningKeys,
             IssuerSigningKeyResolver = ResolveJwtSigningKeys,
             SignatureValidator = ValidateHs256TokenSignatureForBearer
         };
     });
 
-if (authChallengeEnabled)
-{
-    TryAddRedirectChallengeScheme(
-        builder.Services,
-        builder.Configuration["OCTOCON_AUTH_CHALLENGE_DISCORD_SCHEME"] ?? "oauth-discord",
-        builder.Configuration["OCTOCON_AUTH_CHALLENGE_DISCORD_ENDPOINT"],
-        ParseAuthParameters(builder.Configuration["OCTOCON_AUTH_CHALLENGE_DISCORD_PARAMS"]));
+// Register OAuth challenge schemes if authentication is enabled.  
+// These are registered once at startup and remain static; only the parameters in
+// IOptionsMonitor<AuthenticationConfiguration> are live-reloadable per request.
+// OAuth challenge schemes are registered once at startup; only the parameters in
+// IOptionsMonitor<AuthenticationConfiguration> are live-reloadable per request.
+TryAddRedirectChallengeScheme(
+    builder.Services,
+    authConfig.DiscordSchemeName,
+    authConfig.DiscordEndpoint,
+    authConfig.DiscordParameters);
 
-    TryAddRedirectChallengeScheme(
-        builder.Services,
-        builder.Configuration["OCTOCON_AUTH_CHALLENGE_GOOGLE_SCHEME"] ?? "oauth-google",
-        builder.Configuration["OCTOCON_AUTH_CHALLENGE_GOOGLE_ENDPOINT"],
-        ParseAuthParameters(builder.Configuration["OCTOCON_AUTH_CHALLENGE_GOOGLE_PARAMS"]));
+TryAddRedirectChallengeScheme(
+    builder.Services,
+    authConfig.GoogleSchemeName,
+    authConfig.GoogleEndpoint,
+    authConfig.GoogleParameters);
 
-    TryAddRedirectChallengeScheme(
-        builder.Services,
-        builder.Configuration["OCTOCON_AUTH_CHALLENGE_APPLE_SCHEME"] ?? "oauth-apple",
-        builder.Configuration["OCTOCON_AUTH_CHALLENGE_APPLE_ENDPOINT"],
-        ParseAuthParameters(builder.Configuration["OCTOCON_AUTH_CHALLENGE_APPLE_PARAMS"]));
-}
+TryAddRedirectChallengeScheme(
+    builder.Services,
+    authConfig.AppleSchemeName,
+    authConfig.AppleEndpoint,
+    authConfig.AppleParameters);
 
 builder.Services.AddAuthorization() //Builder
         /*.SetFallbackPolicy(new AuthorizationPolicyBuilder()
@@ -220,8 +107,6 @@ builder.Services.AddAuthorization() //Builder
 // Traces and metrics are exported via OTLP when OCTOCON_OTLP_ENDPOINT is set.
 // Without the env var the SDK still runs in-process so metrics are always available
 // for internal /metrics scraping or future export without code changes.
-var otlpEndpoint = builder.Configuration["OCTOCON_OTLP_ENDPOINT"];
-
 builder.Services
     .AddOpenTelemetry()
     .WithMetrics(metrics =>
@@ -230,15 +115,15 @@ builder.Services
             .AddAspNetCoreInstrumentation()
             .AddMeter(InterfoldMetrics.MeterName);
 
-        if (!string.IsNullOrWhiteSpace(otlpEndpoint))
-            metrics.AddOtlpExporter(o => o.Endpoint = new Uri(otlpEndpoint));
+        if (!string.IsNullOrWhiteSpace(obsConfig.OtlpEndpoint))
+            metrics.AddOtlpExporter(o => o.Endpoint = new Uri(obsConfig.OtlpEndpoint));
     })
     .WithTracing(tracing =>
     {
         tracing.AddAspNetCoreInstrumentation();
 
-        if (!string.IsNullOrWhiteSpace(otlpEndpoint))
-            tracing.AddOtlpExporter(o => o.Endpoint = new Uri(otlpEndpoint));
+        if (!string.IsNullOrWhiteSpace(obsConfig.OtlpEndpoint))
+            tracing.AddOtlpExporter(o => o.Endpoint = new Uri(obsConfig.OtlpEndpoint));
     });
 
 // --- MVC ---
@@ -343,26 +228,16 @@ app.Map("/api/socket", socketApp => socketApp.Run(WebSocketHandler.HandleUserSoc
 app.MapControllers();
 
 app.Run();
+return 0;
 
-static Dictionary<string, string>? ParseAuthParameters(string? paramsString)
-{
-    if (string.IsNullOrWhiteSpace(paramsString))
-        return null;
-
-    var parameters = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-    var pairs = paramsString.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-    
-    foreach (var pair in pairs)
-    {
-        var keyValue = pair.Split('=', 2, StringSplitOptions.TrimEntries);
-        if (keyValue.Length == 2)
-        {
-            parameters[keyValue[0]] = keyValue[1];
-        }
-    }
-
-    return parameters.Count > 0 ? parameters : null;
-}
+SecurityKey[] ResolveJwtSigningKeys(
+    string token,
+    SecurityToken? securityToken,
+    string? kid,
+    TokenValidationParameters validationParameters)
+    => (builder.Configuration.BindAuthenticationConfiguration().JwtSigningSecrets ?? [])
+        .Select(static s => (SecurityKey)new SymmetricSecurityKey(Encoding.UTF8.GetBytes(s)))
+        .ToArray();
 
 static void TryAddRedirectChallengeScheme(
     IServiceCollection services, 
@@ -410,7 +285,12 @@ static SecurityToken ValidateHs256TokenSignatureForBearer(string token, TokenVal
     var signingInput = Encoding.UTF8.GetBytes(parts[0] + "." + parts[1]);
     var signatureBytes = parts[2].Base64UrlDecode();
 
-    var keys = validationParameters.IssuerSigningKeys?.OfType<SymmetricSecurityKey>().ToArray()
+    // Prefer the live key resolver (reads from IConfiguration per call) over the static key list.
+    var keys = (validationParameters.IssuerSigningKeyResolver != null
+        ? validationParameters.IssuerSigningKeyResolver(token, null, null, validationParameters)
+        : validationParameters.IssuerSigningKeys)
+        ?.OfType<SymmetricSecurityKey>()
+        .ToArray()
         ?? Array.Empty<SymmetricSecurityKey>();
 
     foreach (var key in keys)

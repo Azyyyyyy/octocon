@@ -15,13 +15,11 @@ public sealed class AltersController : InterfoldControllerBase
     private readonly IAvatarStorage _avatarStorage;
 
     public AltersController(
-        ApiSettings settings,
         IAlterRepository alterRepository,
         CreateAlterCommandHandler createHandler,
         UpdateAlterCommandHandler updateHandler,
         DeleteAlterCommandHandler deleteHandler,
         IAvatarStorage avatarStorage)
-        : base(settings)
     {
         _alterRepository = alterRepository;
         _createHandler = createHandler;

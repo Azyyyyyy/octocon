@@ -15,8 +15,7 @@ public sealed class NodeRoleController : InterfoldControllerBase
     private readonly INodeRoleContext _nodeRole;
     private readonly IOperationalHealthChecker _healthChecker;
 
-    public NodeRoleController(ApiSettings settings, INodeRoleContext nodeRole, IOperationalHealthChecker healthChecker)
-        : base(settings)
+    public NodeRoleController(INodeRoleContext nodeRole, IOperationalHealthChecker healthChecker)
     {
         _nodeRole = nodeRole;
         _healthChecker = healthChecker;

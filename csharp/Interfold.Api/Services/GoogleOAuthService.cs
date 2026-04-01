@@ -1,5 +1,6 @@
-using System.Text;
 using System.Text.Json;
+using Microsoft.Extensions.Options;
+using Interfold.Infrastructure.Configuration;
 
 namespace Interfold.Api.Services;
 
@@ -12,12 +13,12 @@ public sealed class GoogleOAuthService
     private const string UserInfoEndpoint = "https://www.googleapis.com/oauth2/v2/userinfo";
 
     private readonly HttpClient _httpClient;
-    private readonly ApiSettings _settings;
+    private readonly IOptionsMonitor<AuthenticationConfiguration> _authOptions;
 
-    public GoogleOAuthService(HttpClient httpClient, ApiSettings settings)
+    public GoogleOAuthService(HttpClient httpClient, IOptionsMonitor<AuthenticationConfiguration> authOptions)
     {
         _httpClient = httpClient;
-        _settings = settings;
+        _authOptions = authOptions;
     }
 
     /// <summary>
@@ -29,9 +30,10 @@ public sealed class GoogleOAuthService
         string redirectUri,
         CancellationToken cancellationToken = default)
     {
+        var authConfig = _authOptions.CurrentValue;
         // Validate configuration
-        if (string.IsNullOrWhiteSpace(_settings.GoogleOAuthClientId) ||
-            string.IsNullOrWhiteSpace(_settings.GoogleOAuthClientSecret))
+        if (string.IsNullOrWhiteSpace(authConfig.GoogleOAuthClientId) ||
+            string.IsNullOrWhiteSpace(authConfig.GoogleOAuthClientSecret))
         {
             return null;
         }
@@ -42,8 +44,8 @@ public sealed class GoogleOAuthService
             var tokenRequest = new Dictionary<string, string>
             {
                 { "code", code },
-                { "client_id", _settings.GoogleOAuthClientId },
-                { "client_secret", _settings.GoogleOAuthClientSecret },
+                { "client_id", authConfig.GoogleOAuthClientId },
+                { "client_secret", authConfig.GoogleOAuthClientSecret },
                 { "grant_type", "authorization_code" },
                 { "redirect_uri", redirectUri }
             };

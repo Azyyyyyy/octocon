@@ -12,7 +12,8 @@ using Microsoft.IdentityModel.Tokens;
 using Interfold.Domain.Journals;
 using Interfold.Domain.Polls;
 using System.Security.Claims;
-using Microsoft.Extensions.Configuration;
+using Interfold.Infrastructure.Configuration;
+using Microsoft.Extensions.Options;
 
 namespace Interfold.Api.Socket;
 
@@ -44,10 +45,11 @@ public static async Task HandleUserSocketAsync(HttpContext context)
     }
 
     using var socket = await context.WebSockets.AcceptWebSocketAsync();
-    var configuration = context.RequestServices.GetRequiredService<IConfiguration>();
 
+    var batchedInitThresholdBytes = context.RequestServices
+        .GetRequiredService<IOptionsMonitor<SocketConfiguration>>()
+        .CurrentValue.BatchBytesThreshold ?? 1_048_576;
     var buffer = new byte[1024 * 16];
-    var batchedInitThresholdBytes = ReadPositiveIntFromEnv(configuration, "OCTOCON_SOCKET_BATCH_BYTES_THRESHOLD", 1_048_576);
     var joinedTopics = new System.Collections.Concurrent.ConcurrentDictionary<string, byte>(StringComparer.Ordinal);
     string? joinedSystemId = null;
     var topicReplyAsArrayFrame = new System.Collections.Concurrent.ConcurrentDictionary<string, bool>(StringComparer.Ordinal);
@@ -451,19 +453,10 @@ static bool IsSocketJoinTokenAuthorized(
         return false;
     }
 
-    var settings = context.RequestServices.GetRequiredService<ApiSettings>();
-    var configuration = context.RequestServices.GetRequiredService<IConfiguration>();
     var jwtAudience = "octocon";
-    var jwtSigningSecrets = new[]
-    {
-        configuration["OCTOCON_AUTH_DEEP_LINK_SECRET"],
-        configuration["GUARDIAN_SECRET_KEY"],
-        configuration["OCTOCON_JWT_AUTHORITY"],
-        "octocon-local"
-    }
-        .Where(static s => !string.IsNullOrWhiteSpace(s))
-        .Distinct(StringComparer.Ordinal)
-        .ToArray();
+    var jwtSigningSecrets = context.RequestServices
+        .GetRequiredService<IOptionsMonitor<AuthenticationConfiguration>>()
+        .CurrentValue.JwtSigningSecrets ?? [];
 
     var jwtSigningKeys = jwtSigningSecrets
         .Select(static secret => (SecurityKey)new SymmetricSecurityKey(Encoding.UTF8.GetBytes(secret!)))
@@ -621,12 +614,6 @@ static SecurityToken ValidateHs256TokenSignatureForSocket(string token, TokenVal
     }
 
     throw new SecurityTokenInvalidSignatureException("Invalid JWT signature.");
-}
-
-static int ReadPositiveIntFromEnv(IConfiguration configuration, string key, int fallback)
-{
-    var raw = configuration[key];
-    return int.TryParse(raw, out var parsed) && parsed > 0 ? parsed : fallback;
 }
 
 static bool TryParsePhoenixFrame(

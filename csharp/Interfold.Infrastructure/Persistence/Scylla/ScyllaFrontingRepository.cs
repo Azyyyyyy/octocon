@@ -1,4 +1,5 @@
 using Cassandra;
+using Interfold.Infrastructure.Configuration;
 using Microsoft.Extensions.Logging;
 using Interfold.Domain.Alters;
 using Interfold.Domain.Fronting;
@@ -14,14 +15,14 @@ public sealed class ScyllaFrontingRepository : IFrontingRepository
 
     private readonly IScyllaSessionProvider _sessionProvider;
     private readonly IScyllaKeyspaceResolver _keyspaceResolver;
-    private readonly PersistenceRegistrationOptions _options;
+    private readonly PersistenceConfiguration _options;
     private readonly ILogger<ScyllaFrontingRepository> _logger;
     private readonly ISettingsFieldRepository _settingsFields;
 
     public ScyllaFrontingRepository(
         IScyllaSessionProvider sessionProvider,
         IScyllaKeyspaceResolver keyspaceResolver,
-        PersistenceRegistrationOptions options,
+        PersistenceConfiguration options,
         ILogger<ScyllaFrontingRepository> logger,
         ISettingsFieldRepository settingsFields
     )

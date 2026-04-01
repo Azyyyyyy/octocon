@@ -1,5 +1,6 @@
 using System.Text.RegularExpressions;
-using Microsoft.Extensions.Configuration;
+using Interfold.Infrastructure.Configuration;
+using Microsoft.Extensions.Options;
 
 namespace Interfold.Api.Services;
 
@@ -13,10 +14,15 @@ public sealed class LocalAvatarStorage : IAvatarStorage
 {
     private static readonly Regex SafeSegmentPattern = new("[^a-zA-Z0-9_-]", RegexOptions.Compiled);
 
-    private readonly string _storageRoot;
-    private readonly string _publicBase;
+    private readonly IOptionsMonitor<StorageConfiguration> _storageOptions;
+    private readonly string _webRootFallback;
+    private readonly string _publicBaseFallback;
 
-    public LocalAvatarStorage(IWebHostEnvironment environment, IConfiguration configuration)
+    // Read CurrentValue per-access so appsettings.json changes take effect without restart.
+    private string StorageRoot => _storageOptions.CurrentValue.AvatarStorageRoot ?? _webRootFallback;
+    private string PublicBase  => _storageOptions.CurrentValue.AvatarPublicBase  ?? _publicBaseFallback;
+
+    public LocalAvatarStorage(IWebHostEnvironment environment, IOptionsMonitor<StorageConfiguration> storageOptions)
     {
         var webRoot = environment.WebRootPath;
         if (string.IsNullOrWhiteSpace(webRoot))
@@ -24,11 +30,9 @@ public sealed class LocalAvatarStorage : IAvatarStorage
             webRoot = Path.Combine(environment.ContentRootPath, "wwwroot");
         }
 
-        _storageRoot = configuration["OCTOCON_AVATAR_STORAGE_ROOT"]
-            ?? Path.Combine(webRoot, "avatars");
-
-        _publicBase = configuration["OCTOCON_AVATAR_PUBLIC_BASE"]
-            ?? "/avatars";
+        _storageOptions     = storageOptions;
+        _webRootFallback    = Path.Combine(webRoot, "avatars");
+        _publicBaseFallback = "/avatars";
     }
 
     public Task<string> SaveSystemAvatarAsync(string systemId, IFormFile file, CancellationToken cancellationToken = default)
@@ -50,7 +54,7 @@ public sealed class LocalAvatarStorage : IAvatarStorage
         var extension = ResolveExtension(file);
         var fileName = $"{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}_{Guid.NewGuid():N}{extension}";
 
-        var directoryPath = Path.Combine(_storageRoot, safeSystemId, safeTargetId);
+        var directoryPath = Path.Combine(StorageRoot, safeSystemId, safeTargetId);
         Directory.CreateDirectory(directoryPath);
 
         var filePath = Path.Combine(directoryPath, fileName);
@@ -59,7 +63,7 @@ public sealed class LocalAvatarStorage : IAvatarStorage
             await file.CopyToAsync(stream, cancellationToken);
         }
 
-        var basePath = _publicBase.TrimEnd('/');
+        var basePath = PublicBase.TrimEnd('/');
         return $"{basePath}/{safeSystemId}/{safeTargetId}/{fileName}";
     }
 

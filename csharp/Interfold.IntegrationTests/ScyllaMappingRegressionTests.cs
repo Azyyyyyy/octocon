@@ -1,8 +1,7 @@
 using Cassandra;
 using Microsoft.Extensions.Logging.Abstractions;
-using Interfold.Infrastructure.Persistence;
+using Interfold.Infrastructure.Configuration;
 using Interfold.Infrastructure.Persistence.Scylla;
-using TUnit.Core;
 
 namespace Interfold.IntegrationTests;
 
@@ -84,7 +83,7 @@ public sealed class RegionContextCachingTests
     }
 
     private static ScyllaUserRegistryRegionContext BuildContext(string defaultRegion = "nam") =>
-        new(new ThrowingSessionProvider(), new PersistenceRegistrationOptions { DefaultRegion = defaultRegion },
+        new(new ThrowingSessionProvider(), new PersistenceConfiguration { DefaultRegion = defaultRegion },
             NullLogger<ScyllaUserRegistryRegionContext>.Instance);
 
     [Test]

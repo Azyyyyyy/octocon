@@ -2,6 +2,7 @@ using Cassandra;
 using Microsoft.Extensions.Logging;
 using Interfold.Domain.Alters;
 using Interfold.Domain.Settings;
+using Interfold.Infrastructure.Configuration;
 using Interfold.Infrastructure.Persistence.Transient;
 using System.Collections.Concurrent;
 
@@ -12,7 +13,7 @@ public sealed class ScyllaAlterRepository : IAlterRepository
     private readonly IScyllaSessionProvider _sessionProvider;
     private readonly IScyllaKeyspaceResolver _keyspaceResolver;
     private readonly ISettingsFieldRepository _settingsFields;
-    private readonly PersistenceRegistrationOptions _options;
+    private readonly PersistenceConfiguration _options;
     private readonly ILogger<ScyllaAlterRepository> _logger;
     private static readonly ConcurrentDictionary<string, byte> UdtMappings = new(StringComparer.OrdinalIgnoreCase);
 
@@ -20,7 +21,7 @@ public sealed class ScyllaAlterRepository : IAlterRepository
         IScyllaSessionProvider sessionProvider,
         IScyllaKeyspaceResolver keyspaceResolver,
         ISettingsFieldRepository settingsFields,
-        PersistenceRegistrationOptions options,
+        PersistenceConfiguration options,
         ILogger<ScyllaAlterRepository> logger
     )
     {

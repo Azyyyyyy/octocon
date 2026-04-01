@@ -15,11 +15,10 @@ public sealed class PollsController : InterfoldControllerBase
     private readonly DeletePollCommandHandler _delete;
 
     public PollsController(
-        ApiSettings settings,
         IPollRepository pollRepository,
         CreatePollCommandHandler create,
         UpdatePollCommandHandler update,
-        DeletePollCommandHandler delete) : base(settings)
+        DeletePollCommandHandler delete)
     {
         _pollRepository = pollRepository;
         _create = create;

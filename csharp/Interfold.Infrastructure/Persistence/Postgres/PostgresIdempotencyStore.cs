@@ -1,5 +1,6 @@
 using Interfold.Domain.Abstractions;
 using Npgsql;
+using Interfold.Infrastructure.Configuration;
 using Interfold.Infrastructure.Persistence.Transient;
 
 namespace Interfold.Infrastructure.Persistence.Postgres;
@@ -7,11 +8,11 @@ namespace Interfold.Infrastructure.Persistence.Postgres;
 public sealed class PostgresIdempotencyStore : IIdempotencyStore
 {
     private readonly IPostgresConnectionFactory _connectionFactory;
-    private readonly PersistenceRegistrationOptions _options;
+    private readonly PersistenceConfiguration _options;
 
     public PostgresIdempotencyStore(
         IPostgresConnectionFactory connectionFactory,
-        PersistenceRegistrationOptions options
+        PersistenceConfiguration options
     )
     {
         _connectionFactory = connectionFactory;

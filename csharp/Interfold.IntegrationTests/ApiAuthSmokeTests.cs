@@ -5,7 +5,6 @@ using System.Net.Sockets;
 using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
-using TUnit.Core;
 
 namespace Interfold.IntegrationTests;
 
@@ -41,7 +40,7 @@ public sealed class ApiAuthSmokeTests
     [Test]
     public async Task Api_AuthRequest_IssuesChallengeRedirect_WhenChallengeEnabledAndSchemeConfigured()
     {
-        if (!IntegrationTestEnvironment.ShouldRunApiIntegration))
+        if (!IntegrationTestEnvironment.ShouldRunApiIntegration)
             return;
 
         var workspaceRoot = FindWorkspaceRoot();
@@ -85,7 +84,7 @@ public sealed class ApiAuthSmokeTests
     [Test]
     public async Task Api_AuthAndIdempotencyFlow_WorksInDevHeaderMode()
     {
-        if (!IntegrationTestEnvironment.ShouldRunApiIntegration))
+        if (!IntegrationTestEnvironment.ShouldRunApiIntegration)
             return;
 
         var workspaceRoot = FindWorkspaceRoot();
@@ -177,7 +176,7 @@ public sealed class ApiAuthSmokeTests
     [Test]
     public async Task Api_FailsFast_WithoutJwtAuthority_WhenDevHeaderBypassOff()
     {
-        if (!IntegrationTestEnvironment.ShouldRunApiIntegration))
+        if (!IntegrationTestEnvironment.ShouldRunApiIntegration)
             return;
 
         var workspaceRoot = FindWorkspaceRoot();
@@ -204,7 +203,7 @@ public sealed class ApiAuthSmokeTests
     [Test]
     public async Task Api_UserSocketEndpoint_AllowsWebSocketUpgrade_WithToken()
     {
-        if (!IntegrationTestEnvironment.ShouldRunApiIntegration))
+        if (!IntegrationTestEnvironment.ShouldRunApiIntegration)
             return;
 
         var workspaceRoot = FindWorkspaceRoot();
@@ -378,7 +377,7 @@ public sealed class ApiAuthSmokeTests
     [Test]
     public async Task Api_UserSocketEndpoint_RejectsUnsupportedProtocolVersion()
     {
-        if (!IntegrationTestEnvironment.ShouldRunApiIntegration))
+        if (!IntegrationTestEnvironment.ShouldRunApiIntegration)
             return;
 
         var workspaceRoot = FindWorkspaceRoot();
@@ -423,7 +422,7 @@ public sealed class ApiAuthSmokeTests
     [Test]
     public async Task Api_UserSocketEndpoint_BatchesForIos_WhenThresholdExceeded()
     {
-        if (!IntegrationTestEnvironment.ShouldRunApiIntegration))
+        if (!IntegrationTestEnvironment.ShouldRunApiIntegration)
             return;
 
         var workspaceRoot = FindWorkspaceRoot();
@@ -479,7 +478,7 @@ public sealed class ApiAuthSmokeTests
     [Test]
     public async Task Api_UserSocketEndpoint_RateLimitsThirdJoinWithinOneSecond()
     {
-        if (!IntegrationTestEnvironment.ShouldRunApiIntegration))
+        if (!IntegrationTestEnvironment.ShouldRunApiIntegration)
             return;
 
         var workspaceRoot = FindWorkspaceRoot();
@@ -537,7 +536,7 @@ public sealed class ApiAuthSmokeTests
     [Test]
     public async Task Api_UserSocketEndpoint_PushesFrontingChangedEvent_AfterFrontStart()
     {
-        if (!IntegrationTestEnvironment.ShouldRunApiIntegration))
+        if (!IntegrationTestEnvironment.ShouldRunApiIntegration)
             return;
 
         var workspaceRoot = FindWorkspaceRoot();
@@ -647,7 +646,7 @@ public sealed class ApiAuthSmokeTests
     [Test]
     public async Task Api_UserSocketEndpoint_PushesAlterTagAndFieldsEvents_AfterEndpointWrites()
     {
-        if (!IntegrationTestEnvironment.ShouldRunApiIntegration))
+        if (!IntegrationTestEnvironment.ShouldRunApiIntegration)
             return;
 
         var workspaceRoot = FindWorkspaceRoot();
@@ -768,7 +767,7 @@ public sealed class ApiAuthSmokeTests
     [Test]
     public async Task Api_UserSocketEndpoint_PushesFriendRequestReceived_ToRecipientSystem()
     {
-        if (!IntegrationTestEnvironment.ShouldRunApiIntegration))
+        if (!IntegrationTestEnvironment.ShouldRunApiIntegration)
             return;
 
         var workspaceRoot = FindWorkspaceRoot();
@@ -869,7 +868,7 @@ public sealed class ApiAuthSmokeTests
     [Test]
     public async Task Api_UserSocketEndpoint_PushesFriendRequestAccepted_ToActorAndRecipient()
     {
-        if (!IntegrationTestEnvironment.ShouldRunApiIntegration))
+        if (!IntegrationTestEnvironment.ShouldRunApiIntegration)
             return;
 
         var workspaceRoot = FindWorkspaceRoot();
@@ -1001,7 +1000,7 @@ public sealed class ApiAuthSmokeTests
     [Test]
     public async Task Api_UserSocketEndpoint_PushesFriendRequestRejected_ToActorAndRecipient()
     {
-        if (!IntegrationTestEnvironment.ShouldRunApiIntegration))
+        if (!IntegrationTestEnvironment.ShouldRunApiIntegration)
             return;
 
         var workspaceRoot = FindWorkspaceRoot();
@@ -1122,7 +1121,7 @@ public sealed class ApiAuthSmokeTests
     [Test]
     public async Task Api_UserSocketEndpoint_PushesFriendRequestCancelled_ToActorAndRecipient()
     {
-        if (!IntegrationTestEnvironment.ShouldRunApiIntegration))
+        if (!IntegrationTestEnvironment.ShouldRunApiIntegration)
             return;
 
         var workspaceRoot = FindWorkspaceRoot();
@@ -1243,7 +1242,7 @@ public sealed class ApiAuthSmokeTests
     [Test]
     public async Task Api_UserSocketEndpoint_PushesFriendRemoved_ToActorAndRecipient()
     {
-        if (!IntegrationTestEnvironment.ShouldRunApiIntegration))
+        if (!IntegrationTestEnvironment.ShouldRunApiIntegration)
             return;
 
         var workspaceRoot = FindWorkspaceRoot();
@@ -1401,7 +1400,7 @@ public sealed class ApiAuthSmokeTests
     [Test]
     public async Task Api_UserSocketEndpoint_PushesFriendTrustedAndUntrusted_ToActor()
     {
-        if (!IntegrationTestEnvironment.ShouldRunApiIntegration))
+        if (!IntegrationTestEnvironment.ShouldRunApiIntegration)
             return;
 
         var workspaceRoot = FindWorkspaceRoot();
@@ -1575,7 +1574,7 @@ public sealed class ApiAuthSmokeTests
     [Test]
     public async Task Api_UserSocketEndpoint_PushesFriendAdded_OnMutualFriendRequest()
     {
-        if (!IntegrationTestEnvironment.ShouldRunApiIntegration))
+        if (!IntegrationTestEnvironment.ShouldRunApiIntegration)
             return;
 
         var workspaceRoot = FindWorkspaceRoot();
@@ -1705,7 +1704,7 @@ public sealed class ApiAuthSmokeTests
     [Test]
     public async Task Api_OAuthCallback_IssuesJwsCompactSerializationToken()
     {
-        if (!IntegrationTestEnvironment.ShouldRunApiIntegration))
+        if (!IntegrationTestEnvironment.ShouldRunApiIntegration)
             return;
 
         var workspaceRoot = FindWorkspaceRoot();
@@ -1802,7 +1801,7 @@ public sealed class ApiAuthSmokeTests
     [Test]
     public async Task Api_FrontHistoryBetween_IncludesEndedFronts()
     {
-        if (!IntegrationTestEnvironment.ShouldRunApiIntegration))
+        if (!IntegrationTestEnvironment.ShouldRunApiIntegration)
             return;
 
         var workspaceRoot = FindWorkspaceRoot();
