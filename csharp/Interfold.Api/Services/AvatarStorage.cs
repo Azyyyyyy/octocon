@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using Microsoft.Extensions.Configuration;
 
 namespace Interfold.Api.Services;
 
@@ -15,7 +16,7 @@ public sealed class LocalAvatarStorage : IAvatarStorage
     private readonly string _storageRoot;
     private readonly string _publicBase;
 
-    public LocalAvatarStorage(IWebHostEnvironment environment)
+    public LocalAvatarStorage(IWebHostEnvironment environment, IConfiguration configuration)
     {
         var webRoot = environment.WebRootPath;
         if (string.IsNullOrWhiteSpace(webRoot))
@@ -23,10 +24,10 @@ public sealed class LocalAvatarStorage : IAvatarStorage
             webRoot = Path.Combine(environment.ContentRootPath, "wwwroot");
         }
 
-        _storageRoot = Environment.GetEnvironmentVariable("OCTOCON_AVATAR_STORAGE_ROOT")
+        _storageRoot = configuration["OCTOCON_AVATAR_STORAGE_ROOT"]
             ?? Path.Combine(webRoot, "avatars");
 
-        _publicBase = Environment.GetEnvironmentVariable("OCTOCON_AVATAR_PUBLIC_BASE")
+        _publicBase = configuration["OCTOCON_AVATAR_PUBLIC_BASE"]
             ?? "/avatars";
     }
 

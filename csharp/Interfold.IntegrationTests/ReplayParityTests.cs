@@ -23,35 +23,35 @@ public sealed class ReplayParityTests
     [Test]
     public async Task Replay_AlterLifecycle_PassesAllSteps()
     {
-        if (!ShouldRun()) return;
+        if (!IntegrationTestEnvironment.ShouldRunApiIntegration) return;
         await RunTraceAsync("alter-lifecycle.trace.json");
     }
 
     [Test]
     public async Task Replay_TagLifecycle_PassesAllSteps()
     {
-        if (!ShouldRun()) return;
+        if (!IntegrationTestEnvironment.ShouldRunApiIntegration) return;
         await RunTraceAsync("tag-lifecycle.trace.json");
     }
 
     [Test]
     public async Task Replay_FrontingLifecycle_PassesAllSteps()
     {
-        if (!ShouldRun()) return;
+        if (!IntegrationTestEnvironment.ShouldRunApiIntegration) return;
         await RunTraceAsync("fronting-lifecycle.trace.json");
     }
 
     [Test]
     public async Task Replay_PollLifecycle_PassesAllSteps()
     {
-        if (!ShouldRun()) return;
+        if (!IntegrationTestEnvironment.ShouldRunApiIntegration) return;
         await RunTraceAsync("poll-lifecycle.trace.json");
     }
 
     [Test]
     public async Task Replay_SettingsLifecycle_PassesAllSteps()
     {
-        if (!ShouldRun()) return;
+        if (!IntegrationTestEnvironment.ShouldRunApiIntegration) return;
         await RunTraceAsync("settings-lifecycle.trace.json");
     }
 
@@ -59,14 +59,14 @@ public sealed class ReplayParityTests
         [Test]
         public async Task Replay_JournalLifecycle_PassesAllSteps()
         {
-            if (!ShouldRun()) return;
+            if (!IntegrationTestEnvironment.ShouldRunApiIntegration) return;
             await RunTraceAsync("journal-lifecycle.trace.json");
         }
 
         [Test]
         public async Task Replay_FriendshipLifecycle_PassesAllSteps()
         {
-            if (!ShouldRun()) return;
+            if (!IntegrationTestEnvironment.ShouldRunApiIntegration) return;
             await RunTraceAsync("friendship-lifecycle.trace.json");
         }
 
@@ -332,11 +332,7 @@ public sealed class ReplayParityTests
         throw new InvalidOperationException("Cannot find workspace root.");
     }
 
-    private static bool ShouldRun()
-    {
-        var run = Environment.GetEnvironmentVariable("OCTOCON_RUN_API_INTEGRATION");
-        return bool.TryParse(run, out var v) && v;
-    }
+
 
     private static void Ensure(bool condition, string message)
     {

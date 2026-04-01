@@ -30,11 +30,11 @@ var builder = WebApplication.CreateBuilder(args);
 //   1. FLY_PROCESS_GROUP (fly.io automatic)
 //   2. OCTOCON_NODE_GROUP (manual override)
 //   3. Default: auxiliary
-var nodeGroup = NodeGroupResolver.Resolve();
+var nodeGroup = NodeGroupResolver.Resolve(builder.Configuration);
 builder.Services.AddInterfoldCluster(nodeGroup);
 
 // --- Persistence ---
-var persistenceMode = (Env("OCTOCON_PERSISTENCE") ?? "scylla-postgres").ToLowerInvariant() switch
+var persistenceMode = (builder.Configuration["OCTOCON_PERSISTENCE"] ?? "scylla-postgres").ToLowerInvariant() switch
 {
     "inmemory"       => PersistenceMode.InMemory,
     "scylla-postgres" => PersistenceMode.ScyllaPostgres,
@@ -43,17 +43,17 @@ var persistenceMode = (Env("OCTOCON_PERSISTENCE") ?? "scylla-postgres").ToLowerI
 
 builder.Services.AddInterfoldPersistence(persistenceMode, cfg =>
 {
-    cfg.DefaultRegion         = Env("OCTOCON_REGION") ?? cfg.DefaultRegion;
-    cfg.PostgresConnectionString = Env("OCTOCON_POSTGRES_CONNECTION") ?? cfg.PostgresConnectionString;
-    cfg.ScyllaKeyspace        = Env("OCTOCON_SCYLLA_KEYSPACE") ?? cfg.DefaultRegion;
-    cfg.ScyllaLocalDatacenter = Env("OCTOCON_SCYLLA_DATACENTER") ?? cfg.ScyllaLocalDatacenter;
+    cfg.DefaultRegion         = builder.Configuration["OCTOCON_REGION"] ?? cfg.DefaultRegion;
+    cfg.PostgresConnectionString = builder.Configuration["OCTOCON_POSTGRES_CONNECTION"] ?? cfg.PostgresConnectionString;
+    cfg.ScyllaKeyspace        = builder.Configuration["OCTOCON_SCYLLA_KEYSPACE"] ?? cfg.DefaultRegion;
+    cfg.ScyllaLocalDatacenter = builder.Configuration["OCTOCON_SCYLLA_DATACENTER"] ?? cfg.ScyllaLocalDatacenter;
 
-    var contactPoints = Env("OCTOCON_SCYLLA_CONTACT_POINTS");
+    var contactPoints = builder.Configuration["OCTOCON_SCYLLA_CONTACT_POINTS"];
     if (!string.IsNullOrWhiteSpace(contactPoints))
         cfg.ScyllaContactPoints = contactPoints.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
-    cfg.ScyllaUsername = Env("OCTOCON_SCYLLA_USERNAME");
-    cfg.ScyllaPassword = Env("OCTOCON_SCYLLA_PASSWORD");
+    cfg.ScyllaUsername = builder.Configuration["OCTOCON_SCYLLA_USERNAME"];
+    cfg.ScyllaPassword = builder.Configuration["OCTOCON_SCYLLA_PASSWORD"];
 });
 
 // --- Domain handlers ---
@@ -118,22 +118,22 @@ builder.Services.AddSingleton<RejectFriendRequestCommandHandler>();
 builder.Services.AddSingleton<CancelFriendRequestCommandHandler>();
 
 // --- API settings ---
-bool.TryParse(Env("OCTOCON_AUTH_CHALLENGE_ENABLED"), out var authChallengeEnabled);
+bool.TryParse(builder.Configuration["OCTOCON_AUTH_CHALLENGE_ENABLED"], out var authChallengeEnabled);
 builder.Services.AddSingleton(new ApiSettings
 {
     AuthChallengeEnabled = authChallengeEnabled,
-    AuthChallengeDiscordScheme = Env("OCTOCON_AUTH_CHALLENGE_DISCORD_SCHEME") ?? "oauth-discord",
-    AuthChallengeGoogleScheme = Env("OCTOCON_AUTH_CHALLENGE_GOOGLE_SCHEME") ?? "oauth-google",
-    AuthChallengeAppleScheme = Env("OCTOCON_AUTH_CHALLENGE_APPLE_SCHEME") ?? "oauth-apple",
-    AuthChallengeDiscordParameters = ParseAuthParameters(Env("OCTOCON_AUTH_CHALLENGE_DISCORD_PARAMS")),
-    AuthChallengeGoogleParameters = ParseAuthParameters(Env("OCTOCON_AUTH_CHALLENGE_GOOGLE_PARAMS")),
-    AuthChallengeAppleParameters = ParseAuthParameters(Env("OCTOCON_AUTH_CHALLENGE_APPLE_PARAMS")),
-    AuthCallbackBaseUrl = Env("OCTOCON_AUTH_CALLBACK_BASE_URL"),
-    GoogleOAuthClientId = Env("OCTOCON_GOOGLE_OAUTH_CLIENT_ID"),
-    GoogleOAuthClientSecret = Env("OCTOCON_GOOGLE_OAUTH_CLIENT_SECRET"),
-    FrontendAddress = Env("OCTOCON_FRONTEND"),
-    BetaFrontendAddress = Env("OCTOCON_BETA_FRONTEND"),
-    DeepEndpointAddress = Env("OCTOCON_DEEPLINK_ADDRESS")
+    AuthChallengeDiscordScheme = builder.Configuration["OCTOCON_AUTH_CHALLENGE_DISCORD_SCHEME"] ?? "oauth-discord",
+    AuthChallengeGoogleScheme = builder.Configuration["OCTOCON_AUTH_CHALLENGE_GOOGLE_SCHEME"] ?? "oauth-google",
+    AuthChallengeAppleScheme = builder.Configuration["OCTOCON_AUTH_CHALLENGE_APPLE_SCHEME"] ?? "oauth-apple",
+    AuthChallengeDiscordParameters = ParseAuthParameters(builder.Configuration["OCTOCON_AUTH_CHALLENGE_DISCORD_PARAMS"]),
+    AuthChallengeGoogleParameters = ParseAuthParameters(builder.Configuration["OCTOCON_AUTH_CHALLENGE_GOOGLE_PARAMS"]),
+    AuthChallengeAppleParameters = ParseAuthParameters(builder.Configuration["OCTOCON_AUTH_CHALLENGE_APPLE_PARAMS"]),
+    AuthCallbackBaseUrl = builder.Configuration["OCTOCON_AUTH_CALLBACK_BASE_URL"],
+    GoogleOAuthClientId = builder.Configuration["OCTOCON_GOOGLE_OAUTH_CLIENT_ID"],
+    GoogleOAuthClientSecret = builder.Configuration["OCTOCON_GOOGLE_OAUTH_CLIENT_SECRET"],
+    FrontendAddress = builder.Configuration["OCTOCON_FRONTEND"],
+    BetaFrontendAddress = builder.Configuration["OCTOCON_BETA_FRONTEND"],
+    DeepEndpointAddress = builder.Configuration["OCTOCON_DEEPLINK_ADDRESS"]
 });
 
 // --- HTTP Client Factory (for OAuth token exchange, etc.) ---
@@ -148,9 +148,9 @@ builder.Services.AddHttpClient<GoogleOAuthService>();
 var jwtAudience = "octocon";
 var jwtSigningSecrets = new[]
 {
-    Env("OCTOCON_AUTH_DEEP_LINK_SECRET"),
-    Env("GUARDIAN_SECRET_KEY"),
-    Env("OCTOCON_JWT_AUTHORITY"), // legacy fallback used as secret in token issuance
+    builder.Configuration["OCTOCON_AUTH_DEEP_LINK_SECRET"],
+    builder.Configuration["GUARDIAN_SECRET_KEY"],
+    builder.Configuration["OCTOCON_JWT_AUTHORITY"], // legacy fallback used as secret in token issuance
     "octocon-local" // final local fallback for parity with IssueDeepLinkToken
 }
     .Where(static s => !string.IsNullOrWhiteSpace(s))
@@ -194,21 +194,21 @@ if (authChallengeEnabled)
 {
     TryAddRedirectChallengeScheme(
         builder.Services,
-        Env("OCTOCON_AUTH_CHALLENGE_DISCORD_SCHEME") ?? "oauth-discord",
-        Env("OCTOCON_AUTH_CHALLENGE_DISCORD_ENDPOINT"),
-        ParseAuthParameters(Env("OCTOCON_AUTH_CHALLENGE_DISCORD_PARAMS")));
+        builder.Configuration["OCTOCON_AUTH_CHALLENGE_DISCORD_SCHEME"] ?? "oauth-discord",
+        builder.Configuration["OCTOCON_AUTH_CHALLENGE_DISCORD_ENDPOINT"],
+        ParseAuthParameters(builder.Configuration["OCTOCON_AUTH_CHALLENGE_DISCORD_PARAMS"]));
 
     TryAddRedirectChallengeScheme(
         builder.Services,
-        Env("OCTOCON_AUTH_CHALLENGE_GOOGLE_SCHEME") ?? "oauth-google",
-        Env("OCTOCON_AUTH_CHALLENGE_GOOGLE_ENDPOINT"),
-        ParseAuthParameters(Env("OCTOCON_AUTH_CHALLENGE_GOOGLE_PARAMS")));
+        builder.Configuration["OCTOCON_AUTH_CHALLENGE_GOOGLE_SCHEME"] ?? "oauth-google",
+        builder.Configuration["OCTOCON_AUTH_CHALLENGE_GOOGLE_ENDPOINT"],
+        ParseAuthParameters(builder.Configuration["OCTOCON_AUTH_CHALLENGE_GOOGLE_PARAMS"]));
 
     TryAddRedirectChallengeScheme(
         builder.Services,
-        Env("OCTOCON_AUTH_CHALLENGE_APPLE_SCHEME") ?? "oauth-apple",
-        Env("OCTOCON_AUTH_CHALLENGE_APPLE_ENDPOINT"),
-        ParseAuthParameters(Env("OCTOCON_AUTH_CHALLENGE_APPLE_PARAMS")));
+        builder.Configuration["OCTOCON_AUTH_CHALLENGE_APPLE_SCHEME"] ?? "oauth-apple",
+        builder.Configuration["OCTOCON_AUTH_CHALLENGE_APPLE_ENDPOINT"],
+        ParseAuthParameters(builder.Configuration["OCTOCON_AUTH_CHALLENGE_APPLE_PARAMS"]));
 }
 
 builder.Services.AddAuthorization() //Builder
@@ -220,7 +220,7 @@ builder.Services.AddAuthorization() //Builder
 // Traces and metrics are exported via OTLP when OCTOCON_OTLP_ENDPOINT is set.
 // Without the env var the SDK still runs in-process so metrics are always available
 // for internal /metrics scraping or future export without code changes.
-var otlpEndpoint = Env("OCTOCON_OTLP_ENDPOINT");
+var otlpEndpoint = builder.Configuration["OCTOCON_OTLP_ENDPOINT"];
 
 builder.Services
     .AddOpenTelemetry()
@@ -343,8 +343,6 @@ app.Map("/api/socket", socketApp => socketApp.Run(WebSocketHandler.HandleUserSoc
 app.MapControllers();
 
 app.Run();
-
-static string? Env(string key) => Environment.GetEnvironmentVariable(key);
 
 static Dictionary<string, string>? ParseAuthParameters(string? paramsString)
 {

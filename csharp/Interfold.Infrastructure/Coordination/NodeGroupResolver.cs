@@ -1,4 +1,5 @@
 using Interfold.Domain.Abstractions;
+using Microsoft.Extensions.Configuration;
 
 namespace Interfold.Infrastructure.Coordination;
 
@@ -13,11 +14,16 @@ namespace Interfold.Infrastructure.Coordination;
 /// </summary>
 public static class NodeGroupResolver
 {
-    public static NodeGroup Resolve()
+    public static NodeGroup Resolve(IConfiguration configuration)
     {
-        var raw = Environment.GetEnvironmentVariable("FLY_PROCESS_GROUP")
-               ?? Environment.GetEnvironmentVariable("OCTOCON_NODE_GROUP");
+        var raw = configuration["FLY_PROCESS_GROUP"]
+               ?? configuration["OCTOCON_NODE_GROUP"];
 
+        return ResolveFromRawValue(raw);
+    }
+
+    private static NodeGroup ResolveFromRawValue(string? raw)
+    {
         return raw?.Trim().ToLowerInvariant() switch
         {
             "primary"   => NodeGroup.Primary,

@@ -28,7 +28,7 @@ public sealed class ParityRegressionTests
     [Test]
     public async Task AlterJournal_NestedCreate_Returns201WithDataAndReplay()
     {
-        if (!ShouldRun()) return;
+        if (!IntegrationTestEnvironment.ShouldRunApiIntegration) return;
 
         var workspaceRoot = FindWorkspaceRoot();
         var port = GetFreePort();
@@ -100,7 +100,7 @@ public sealed class ParityRegressionTests
     [Test]
     public async Task AlterJournal_ShowAfterDelete_Returns404()
     {
-        if (!ShouldRun()) return;
+        if (!IntegrationTestEnvironment.ShouldRunApiIntegration) return;
 
         var workspaceRoot = FindWorkspaceRoot();
         var port = GetFreePort();
@@ -134,7 +134,7 @@ public sealed class ParityRegressionTests
     [Test]
     public async Task SettingsField_InvalidType_FallsBackToText_Returns204()
     {
-        if (!ShouldRun()) return;
+        if (!IntegrationTestEnvironment.ShouldRunApiIntegration) return;
 
         var workspaceRoot = FindWorkspaceRoot();
         var port = GetFreePort();
@@ -158,7 +158,7 @@ public sealed class ParityRegressionTests
     [Test]
     public async Task SettingsField_MissingType_FallsBackToText_Returns204()
     {
-        if (!ShouldRun()) return;
+        if (!IntegrationTestEnvironment.ShouldRunApiIntegration) return;
 
         var workspaceRoot = FindWorkspaceRoot();
         var port = GetFreePort();
@@ -186,7 +186,7 @@ public sealed class ParityRegressionTests
     [Test]
     public async Task LegacyRoute_SystemsMePolls_Returns404()
     {
-        if (!ShouldRun()) return;
+        if (!IntegrationTestEnvironment.ShouldRunApiIntegration) return;
 
         var workspaceRoot = FindWorkspaceRoot();
         var port = GetFreePort();
@@ -217,7 +217,7 @@ public sealed class ParityRegressionTests
     [Test]
     public async Task LegacyRoute_SystemsMeJournals_Returns404()
     {
-        if (!ShouldRun()) return;
+        if (!IntegrationTestEnvironment.ShouldRunApiIntegration) return;
 
         var workspaceRoot = FindWorkspaceRoot();
         var port = GetFreePort();
@@ -252,7 +252,7 @@ public sealed class ParityRegressionTests
     [Test]
     public async Task TagParent_SetAndRemove_Returns204()
     {
-        if (!ShouldRun()) return;
+        if (!IntegrationTestEnvironment.ShouldRunApiIntegration) return;
 
         var workspaceRoot = FindWorkspaceRoot();
         var port = GetFreePort();
@@ -289,7 +289,7 @@ public sealed class ParityRegressionTests
     [Test]
     public async Task PublicBatch_SelfLookup_Returns403InvalidEndpoint()
     {
-        if (!ShouldRun()) return;
+        if (!IntegrationTestEnvironment.ShouldRunApiIntegration) return;
 
         var workspaceRoot = FindWorkspaceRoot();
         var port = GetFreePort();
@@ -316,7 +316,7 @@ public sealed class ParityRegressionTests
     [Test]
     public async Task FrontStart_LegacyIdField_Returns201()
     {
-        if (!ShouldRun()) return;
+        if (!IntegrationTestEnvironment.ShouldRunApiIntegration) return;
 
         var workspaceRoot = FindWorkspaceRoot();
         var port = GetFreePort();
@@ -344,7 +344,7 @@ public sealed class ParityRegressionTests
     [Test]
     public async Task PublicAlter_PrivateSecurity_Returns404ForAnonymous()
     {
-        if (!ShouldRun()) return;
+        if (!IntegrationTestEnvironment.ShouldRunApiIntegration) return;
 
         var workspaceRoot = FindWorkspaceRoot();
         var port = GetFreePort();
@@ -371,7 +371,7 @@ public sealed class ParityRegressionTests
     [Test]
     public async Task PublicTag_PrivateSecurity_Returns404ForAnonymous()
     {
-        if (!ShouldRun()) return;
+        if (!IntegrationTestEnvironment.ShouldRunApiIntegration) return;
 
         var workspaceRoot = FindWorkspaceRoot();
         var port = GetFreePort();
@@ -398,7 +398,7 @@ public sealed class ParityRegressionTests
     [Test]
     public async Task PublicFronting_PrivateAlter_IsFilteredFromAnonymous()
     {
-        if (!ShouldRun()) return;
+        if (!IntegrationTestEnvironment.ShouldRunApiIntegration) return;
 
         var workspaceRoot = FindWorkspaceRoot();
         var port = GetFreePort();
@@ -435,7 +435,7 @@ public sealed class ParityRegressionTests
     [Test]
     public async Task GuardedVisibility_Matrix_NonFriendFriendTrusted_AppliesAcrossPublicReads()
     {
-        if (!ShouldRun()) return;
+        if (!IntegrationTestEnvironment.ShouldRunApiIntegration) return;
 
         var workspaceRoot = FindWorkspaceRoot();
         var port = GetFreePort();
@@ -525,7 +525,7 @@ public sealed class ParityRegressionTests
     [Test]
     public async Task GuardedCustomFields_Matrix_FieldSecurityLevelByRelationship_AppliesCorrectly()
     {
-        if (!ShouldRun()) return;
+        if (!IntegrationTestEnvironment.ShouldRunApiIntegration) return;
 
         var workspaceRoot = FindWorkspaceRoot();
         var port = GetFreePort();
@@ -614,7 +614,7 @@ public sealed class ParityRegressionTests
     [Test]
     public async Task PollType_AllSupportedTypes_RoundTripCorrectly()
     {
-        if (!ShouldRun()) return;
+        if (!IntegrationTestEnvironment.ShouldRunApiIntegration) return;
 
         var workspaceRoot = FindWorkspaceRoot();
         var port = GetFreePort();
@@ -671,7 +671,7 @@ public sealed class ParityRegressionTests
     [Test]
     public async Task PollValidation_TitleTooLong_Returns422()
     {
-        if (!ShouldRun()) return;
+        if (!IntegrationTestEnvironment.ShouldRunApiIntegration) return;
 
         var workspaceRoot = FindWorkspaceRoot();
         var port = GetFreePort();
@@ -697,7 +697,7 @@ public sealed class ParityRegressionTests
     [Test]
     public async Task PollValidation_DescriptionTooLong_Returns422()
     {
-        if (!ShouldRun()) return;
+        if (!IntegrationTestEnvironment.ShouldRunApiIntegration) return;
 
         var workspaceRoot = FindWorkspaceRoot();
         var port = GetFreePort();
@@ -724,7 +724,7 @@ public sealed class ParityRegressionTests
     [Test]
     public async Task ErrorResponse_ConflictFormats_IncludeEntityRefAndCode()
     {
-        if (!ShouldRun()) return;
+        if (!IntegrationTestEnvironment.ShouldRunApiIntegration) return;
 
         var workspaceRoot = FindWorkspaceRoot();
         var port = GetFreePort();
@@ -756,7 +756,7 @@ public sealed class ParityRegressionTests
     [Test]
     public async Task SettingsField_DefaultSecurityLevel_IsPrivate()
     {
-        if (!ShouldRun()) return;
+        if (!IntegrationTestEnvironment.ShouldRunApiIntegration) return;
 
         var workspaceRoot = FindWorkspaceRoot();
         var port = GetFreePort();
@@ -1069,7 +1069,7 @@ public sealed class ParityRegressionTests
     {
         // Validates that ListGuardedAsync path works without exception
         // This test runs with in-memory persistence only (no Scylla required)
-        if (!ShouldRun()) return;
+        if (!IntegrationTestEnvironment.ShouldRunApiIntegration) return;
 
         var workspaceRoot = FindWorkspaceRoot();
         var port = GetFreePort();
@@ -1086,7 +1086,7 @@ public sealed class ParityRegressionTests
     public async Task OperationalHealth_GuardedPaths_GetGuardedAsync_Succeeds()
     {
         // Validates that GetGuardedAsync path handles missing entities gracefully
-        if (!ShouldRun()) return;
+        if (!IntegrationTestEnvironment.ShouldRunApiIntegration) return;
 
         var workspaceRoot = FindWorkspaceRoot();
         var port = GetFreePort();
@@ -1105,11 +1105,7 @@ public sealed class ParityRegressionTests
             $"Expected 404 for missing alter, got {res.StatusCode}; guarded get path may be broken");
     }
 
-    private static bool ShouldRun()
-    {
-        var run = Environment.GetEnvironmentVariable("OCTOCON_RUN_API_INTEGRATION");
-        return bool.TryParse(run, out var v) && v;
-    }
+
 
     private static void Ensure(bool condition, string message)
     {

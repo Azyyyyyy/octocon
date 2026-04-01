@@ -12,6 +12,7 @@ using Microsoft.IdentityModel.Tokens;
 using Interfold.Domain.Journals;
 using Interfold.Domain.Polls;
 using System.Security.Claims;
+using Microsoft.Extensions.Configuration;
 
 namespace Interfold.Api.Socket;
 
@@ -43,9 +44,10 @@ public static async Task HandleUserSocketAsync(HttpContext context)
     }
 
     using var socket = await context.WebSockets.AcceptWebSocketAsync();
+    var configuration = context.RequestServices.GetRequiredService<IConfiguration>();
 
     var buffer = new byte[1024 * 16];
-    var batchedInitThresholdBytes = ReadPositiveIntFromEnv("OCTOCON_SOCKET_BATCH_BYTES_THRESHOLD", 1_048_576);
+    var batchedInitThresholdBytes = ReadPositiveIntFromEnv(configuration, "OCTOCON_SOCKET_BATCH_BYTES_THRESHOLD", 1_048_576);
     var joinedTopics = new System.Collections.Concurrent.ConcurrentDictionary<string, byte>(StringComparer.Ordinal);
     string? joinedSystemId = null;
     var topicReplyAsArrayFrame = new System.Collections.Concurrent.ConcurrentDictionary<string, bool>(StringComparer.Ordinal);
@@ -621,9 +623,9 @@ static SecurityToken ValidateHs256TokenSignatureForSocket(string token, TokenVal
     throw new SecurityTokenInvalidSignatureException("Invalid JWT signature.");
 }
 
-static int ReadPositiveIntFromEnv(string key, int fallback)
+static int ReadPositiveIntFromEnv(IConfiguration configuration, string key, int fallback)
 {
-    var raw = Environment.GetEnvironmentVariable(key);
+    var raw = configuration[key];
     return int.TryParse(raw, out var parsed) && parsed > 0 ? parsed : fallback;
 }
 

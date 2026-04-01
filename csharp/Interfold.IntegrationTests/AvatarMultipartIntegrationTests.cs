@@ -14,7 +14,7 @@ public sealed class AvatarMultipartIntegrationTests
     [Test]
     public async Task Api_SettingsAvatarMultipart_PersistsAndServesAvatar()
     {
-        if (!ShouldRunApiIntegration())
+        if (!IntegrationTestEnvironment.ShouldRunApiIntegration)
             return;
 
         var workspaceRoot = FindWorkspaceRoot();
@@ -51,7 +51,7 @@ public sealed class AvatarMultipartIntegrationTests
     [Test]
     public async Task Api_AlterAvatarMultipart_PersistsAndReflectsOnPublicAlter()
     {
-        if (!ShouldRunApiIntegration())
+        if (!IntegrationTestEnvironment.ShouldRunApiIntegration))
             return;
 
         var workspaceRoot = FindWorkspaceRoot();
@@ -216,12 +216,6 @@ public sealed class AvatarMultipartIntegrationTests
         }
 
         return null;
-    }
-
-    private static bool ShouldRunApiIntegration()
-    {
-        var run = Environment.GetEnvironmentVariable("OCTOCON_RUN_API_INTEGRATION");
-        return bool.TryParse(run, out var enabled) && enabled;
     }
 
     private static string FindWorkspaceRoot()

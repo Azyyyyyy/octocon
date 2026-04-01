@@ -5,10 +5,11 @@ namespace Interfold.IntegrationTests;
 
 public sealed class ScyllaPostgresSmokeTests
 {
+
     [Test]
     public async Task AlterCreate_IdempotentReplay_WorksAgainstLiveAdapters()
     {
-        if (!ShouldRunLiveIntegration())
+        if (!(IntegrationTestEnvironment.ShouldRunLiveIntegration && IntegrationTestEnvironment.HasPostgresConnection))
         {
             return;
         }
@@ -22,10 +23,10 @@ public sealed class ScyllaPostgresSmokeTests
         var baseArgs =
             $"run --project \"{projectPath}\" -- " +
             "--persistence=scylla-postgres " +
-            $"--scylla-contact-points={GetEnv("OCTOCON_TEST_SCYLLA_CONTACT_POINTS", "127.0.0.1")} " +
-            $"--scylla-username={GetEnv("OCTOCON_TEST_SCYLLA_USERNAME", "cassandra")} " +
-            $"--scylla-password={GetEnv("OCTOCON_TEST_SCYLLA_PASSWORD", "cassandra")} " +
-            $"--region={GetEnv("OCTOCON_TEST_REGION", "nam")} " +
+            $"--scylla-contact-points={IntegrationTestEnvironment.GetVariable("OCTOCON_TEST_SCYLLA_CONTACT_POINTS", "127.0.0.1")} " +
+            $"--scylla-username={IntegrationTestEnvironment.GetVariable("OCTOCON_TEST_SCYLLA_USERNAME", "cassandra")} " +
+            $"--scylla-password={IntegrationTestEnvironment.GetVariable("OCTOCON_TEST_SCYLLA_PASSWORD", "cassandra")} " +
+            $"--region={IntegrationTestEnvironment.GetVariable("OCTOCON_TEST_REGION", "nam")} " +
             "alter-create " +
             $"--system {systemId} " +
             "--name IntegrationSmoke " +
@@ -46,22 +47,7 @@ public sealed class ScyllaPostgresSmokeTests
             $"Second CLI invocation did not contain replay=true. stdout: {second.StdOut}");
     }
 
-    private static bool ShouldRunLiveIntegration()
-    {
-        var run = Environment.GetEnvironmentVariable("OCTOCON_RUN_LIVE_INTEGRATION");
-        if (!bool.TryParse(run, out var enabled) || !enabled)
-        {
-            return false;
-        }
 
-        return !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("OCTOCON_POSTGRES_CONNECTION"));
-    }
-
-    private static string GetEnv(string key, string fallback)
-    {
-        var value = Environment.GetEnvironmentVariable(key);
-        return string.IsNullOrWhiteSpace(value) ? fallback : value;
-    }
 
     private static string FindWorkspaceRoot()
     {
@@ -93,7 +79,7 @@ public sealed class ScyllaPostgresSmokeTests
             UseShellExecute = false
         };
 
-        psi.Environment["OCTOCON_POSTGRES_CONNECTION"] = Environment.GetEnvironmentVariable("OCTOCON_POSTGRES_CONNECTION") ?? string.Empty;
+        psi.Environment["OCTOCON_POSTGRES_CONNECTION"] = IntegrationTestEnvironment.PostgresConnection ?? string.Empty;
         psi.Environment["OCTOCON_PERSISTENCE"] = "scylla-postgres";
 
         using var process = new Process { StartInfo = psi };

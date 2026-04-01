@@ -16,7 +16,7 @@ public sealed class NodeRoleIntegrationTests
     [Test]
     public async Task NodeRole_DefaultsToAuxiliary_WhenNoEnvVarSet()
     {
-        if (!ShouldRunApiIntegration())
+        if (!IntegrationTestEnvironment.ShouldRunApiIntegration)
             return;
 
         var workspaceRoot = FindWorkspaceRoot();
@@ -43,7 +43,7 @@ public sealed class NodeRoleIntegrationTests
     [Test]
     public async Task NodeRole_ReturnsPrimary_WhenOctoconNodeGroupIsPrimary()
     {
-        if (!ShouldRunApiIntegration())
+        if (!IntegrationTestEnvironment.ShouldRunApiIntegration)
             return;
 
         var workspaceRoot = FindWorkspaceRoot();
@@ -70,7 +70,7 @@ public sealed class NodeRoleIntegrationTests
     [Test]
     public async Task NodeRole_ReturnsPrimary_WhenFlyProcessGroupIsPrimary()
     {
-        if (!ShouldRunApiIntegration())
+        if (!IntegrationTestEnvironment.ShouldRunApiIntegration)
             return;
 
         var workspaceRoot = FindWorkspaceRoot();
@@ -95,7 +95,7 @@ public sealed class NodeRoleIntegrationTests
     [Test]
     public async Task NodeRole_FlyProcessGroup_TakesPrecedenceOver_OctoconNodeGroup()
     {
-        if (!ShouldRunApiIntegration())
+        if (!IntegrationTestEnvironment.ShouldRunApiIntegration)
             return;
 
         var workspaceRoot = FindWorkspaceRoot();
@@ -123,7 +123,7 @@ public sealed class NodeRoleIntegrationTests
     [Test]
     public async Task NodeRole_Endpoint_IsAnonymous()
     {
-        if (!ShouldRunApiIntegration())
+        if (!IntegrationTestEnvironment.ShouldRunApiIntegration)
             return;
 
         var workspaceRoot = FindWorkspaceRoot();
@@ -259,12 +259,6 @@ public sealed class NodeRoleIntegrationTests
         }
 
         throw new InvalidOperationException($"Field '{fieldName}' not found in: {json}");
-    }
-
-    private static bool ShouldRunApiIntegration()
-    {
-        var run = Environment.GetEnvironmentVariable("OCTOCON_RUN_API_INTEGRATION");
-        return bool.TryParse(run, out var enabled) && enabled;
     }
 
     private static string FindWorkspaceRoot()

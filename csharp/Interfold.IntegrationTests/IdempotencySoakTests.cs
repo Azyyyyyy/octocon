@@ -21,6 +21,7 @@ namespace Interfold.IntegrationTests;
 /// </summary>
 public sealed class IdempotencySoakTests
 {
+
     private const int SoakRepeatCount = 5;
 
     // -----------------------------------------------------------------------
@@ -30,7 +31,7 @@ public sealed class IdempotencySoakTests
     [Test]
     public async Task Idempotency_AlterCreate_ReplayStable()
     {
-        if (!ShouldRun()) return;
+        if (!IntegrationTestEnvironment.ShouldRunApiIntegration) return;
 
         await RunSoakAsync(async (client, key) =>
         {
@@ -46,7 +47,7 @@ public sealed class IdempotencySoakTests
     [Test]
     public async Task Idempotency_TagCreate_ReplayStable()
     {
-        if (!ShouldRun()) return;
+        if (!IntegrationTestEnvironment.ShouldRunApiIntegration) return;
 
         await RunSoakAsync(async (client, key) =>
         {
@@ -62,7 +63,7 @@ public sealed class IdempotencySoakTests
     [Test]
     public async Task Idempotency_PollCreate_ReplayStable()
     {
-        if (!ShouldRun()) return;
+        if (!IntegrationTestEnvironment.ShouldRunApiIntegration) return;
 
         await RunSoakAsync(async (client, key) =>
         {
@@ -78,7 +79,7 @@ public sealed class IdempotencySoakTests
     [Test]
     public async Task Idempotency_GlobalJournalCreate_ReplayStable()
     {
-        if (!ShouldRun()) return;
+        if (!IntegrationTestEnvironment.ShouldRunApiIntegration) return;
 
         await RunSoakAsync(async (client, key) =>
         {
@@ -94,7 +95,7 @@ public sealed class IdempotencySoakTests
     [Test]
     public async Task Idempotency_SettingsUsernameUpdate_ReplayStable()
     {
-        if (!ShouldRun()) return;
+        if (!IntegrationTestEnvironment.ShouldRunApiIntegration) return;
 
         await RunSoakAsync(async (client, key) =>
         {
@@ -114,7 +115,7 @@ public sealed class IdempotencySoakTests
     [Test]
     public async Task Idempotency_RequestId_PresentOnEveryResponse()
     {
-        if (!ShouldRun()) return;
+        if (!IntegrationTestEnvironment.ShouldRunApiIntegration) return;
 
         var workspaceRoot = FindWorkspaceRoot();
         var port = GetFreePort();
@@ -136,7 +137,7 @@ public sealed class IdempotencySoakTests
     [Test]
     public async Task Idempotency_CorrelationId_EchoedFromRequestHeader()
     {
-        if (!ShouldRun()) return;
+        if (!IntegrationTestEnvironment.ShouldRunApiIntegration) return;
 
         var workspaceRoot = FindWorkspaceRoot();
         var port = GetFreePort();
@@ -288,12 +289,6 @@ public sealed class IdempotencySoakTests
             dir = dir.Parent;
         }
         throw new InvalidOperationException("Cannot find workspace root.");
-    }
-
-    private static bool ShouldRun()
-    {
-        var run = Environment.GetEnvironmentVariable("OCTOCON_RUN_API_INTEGRATION");
-        return bool.TryParse(run, out var v) && v;
     }
 
     private static void Ensure(bool condition, string message)
