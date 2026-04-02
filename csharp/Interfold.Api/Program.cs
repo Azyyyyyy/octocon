@@ -14,6 +14,7 @@ using Interfold.Infrastructure.DependencyInjection;
 using Interfold.Infrastructure.Persistence;
 using System.Text.Json;
 using Interfold.Api.Socket;
+using Microsoft.AspNetCore.Authorization;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -98,10 +99,21 @@ TryAddRedirectChallengeScheme(
     authConfig.AppleEndpoint,
     authConfig.AppleParameters);
 
-builder.Services.AddAuthorization() //Builder
-        /*.SetFallbackPolicy(new AuthorizationPolicyBuilder()
+builder.Services.AddHsts(options =>
+{
+    options.ExcludedHosts.Add("api.octocon.app");
+});
+
+builder.Services.AddHttpsRedirection(options => 
+{
+    options.RedirectStatusCode = 308; // Permanent Redirect
+});
+
+//TODO: Readd global auth requirement with exemptions for public endpoints (e.g. auth callbacks, public content) once we have a better sense of the overall auth strategy and endpoint categorization.
+/*builder.Services.AddAuthorizationBuilder()
+            .SetFallbackPolicy(new AuthorizationPolicyBuilder()
             .RequireAuthenticatedUser()
-            .Build())*/;
+            .Build());*/
 
 // --- OpenTelemetry (Phase N) ---
 // Traces and metrics are exported via OTLP when OCTOCON_OTLP_ENDPOINT is set.
@@ -216,6 +228,8 @@ app.Use(async (ctx, next) =>
     await next();
 });
 
+app.UseHsts();
+app.UseHttpsRedirection();
 app.UseAuthentication();
 app.UseStaticFiles();
 app.UseWebSockets(new WebSocketOptions
