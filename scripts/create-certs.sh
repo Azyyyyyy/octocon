@@ -9,6 +9,8 @@ set -e
 #   "$PASSWORD" \
 #   "$YEARS"
 
+# ==== CONFIGURATION ====
+
 ROOT_NAME="$1"
 DOMAINS="$2"
 OUTPUT_PATH="$3"
@@ -17,13 +19,19 @@ YEARS="$5"
 
 DOMAINS_ARRAY=(${DOMAINS//,/ })
 
+INSTALL_TRUST_STORE=true   # set false to skip
+
+# ==== Internal filenames ====
+
+CER_OUTPUT_FILE="${ROOT_NAME}.cer"
+PFX_OUTPUT_FILE="${ROOT_NAME}.pfx"
 ROOT_KEY="${OUTPUT_PATH}/rootCA.key"
 ROOT_CRT="${OUTPUT_PATH}/rootCA.crt"
 LEAF_KEY="${OUTPUT_PATH}/leaf.key"
 LEAF_CSR="${OUTPUT_PATH}/leaf.csr"
 LEAF_CRT="${OUTPUT_PATH}/leaf.crt"
 
-echo "=== Generating Root CA (OpenSSL) ==="
+echo "=== Generating Root CA ==="
 
 openssl req -x509 -newkey rsa:2048 -days $((YEARS * 365)) \
   -keyout "$ROOT_KEY" \
@@ -33,14 +41,19 @@ openssl req -x509 -newkey rsa:2048 -days $((YEARS * 365)) \
   -addext "basicConstraints=critical,CA:TRUE,pathlen:0" \
   -addext "keyUsage=critical,keyCertSign"
 
-# SAN block
+echo "Root CA created."
+
+# ==== Build SAN list ====
 SAN=""
-for d in "${DOMAINS_ARRAY[@]}"; do SAN+="DNS:${d},"; done
+for domain in "${DOMAINS_ARRAY[@]}"; do
+    SAN+="DNS:${domain},"
+done
 SAN="${SAN::-1}"
 
-echo "=== Generating Leaf Certificate ==="
 
-openssl req -new -nodes \
+echo "=== Generating Leaf TLS Certificate ==="
+
+openssl req -newkey rsa:2048 -nodes \
   -keyout "$LEAF_KEY" \
   -out "$LEAF_CSR" \
   -subj "/CN=${DOMAINS_ARRAY[0]}"
@@ -54,12 +67,41 @@ openssl x509 -req \
   -days $((YEARS * 365)) \
   -extfile <(printf "subjectAltName=%s\nkeyUsage=digitalSignature,keyEncipherment" "$SAN")
 
-# Export as PFX
+echo "Leaf certificate created."
+
+
+# ==== Export ====
+cp "$ROOT_CRT" "$OUTPUT_PATH/$CER_OUTPUT_FILE"
+
 openssl pkcs12 -export \
   -inkey "$LEAF_KEY" \
   -in "$LEAF_CRT" \
   -certfile "$ROOT_CRT" \
-  -out "${OUTPUT_PATH}/${ROOT_NAME}.pfx" \
+  -out "$OUTPUT_PATH/$PFX_OUTPUT_FILE" \
   -password pass:"$PASSWORD"
 
-echo "Certificates generated."
+echo "Certificates exported:"
+echo " - $CER_OUTPUT_FILE"
+echo " - $PFX_OUTPUT_FILE"
+
+
+# ==== Install into Linux system trust store ====
+if [ "$INSTALL_TRUST_STORE" = true ]; then
+    echo "=== Installing Root CA into System Trust Store ==="
+
+    if [[ -d "/usr/local/share/ca-certificates" ]]; then
+        # Debian / Ubuntu
+        cp "$ROOT_CRT" /usr/local/share/ca-certificates/interfold-root-ca.crt
+        update-ca-certificates
+        echo "Installed into Debian/Ubuntu trust store."
+    elif [[ -d "/etc/pki/ca-trust/source/anchors" ]]; then
+        # RHEL / Fedora / CentOS
+        cp "$ROOT_CRT" /etc/pki/ca-trust/source/anchors/interfold-root-ca.crt
+        update-ca-trust extract
+        echo "Installed into RHEL/Fedora trust store."
+    else
+        echo "Unknown distro — skipping trust store install."
+    fi
+fi
+
+echo "Done!"

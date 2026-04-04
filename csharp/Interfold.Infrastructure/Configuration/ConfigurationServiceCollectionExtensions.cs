@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
+using System.Security.Cryptography;
 
 namespace Interfold.Infrastructure.Configuration;
 
@@ -11,24 +12,6 @@ namespace Interfold.Infrastructure.Configuration;
 /// </summary>
 public static class ConfigurationServiceCollectionExtensions
 {
-    /// <summary>
-    /// Adds all Interfold configuration sections to the service container.
-    /// Call this once during application startup before building the host.
-    /// <para>
-    /// Configuration is loaded from (in priority order):
-    /// 1. Environment variables (OCTOCON_*, FLY_*, GUARDIAN_*)
-    /// 2. appsettings.{Environment}.json
-    /// 3. appsettings.json
-    /// 4. In-memory defaults defined in configuration classes
-    /// </para>
-    /// </summary>
-    public static IConfigurationBuilder AddInterfoldConfiguration(this IConfigurationBuilder configBuilder)
-    {
-        // Note: Environment variables with underscores are automatically bound by .NET Core
-        // configuration system when using ConfigurationBinder
-        return configBuilder;
-    }
-
     /// <summary>
     /// Registers all Interfold configuration classes with the DI container using the
     /// <see cref="IOptions{TOptions}"/> / <see cref="IOptionsMonitor{TOptions}"/> pattern.
@@ -50,105 +33,39 @@ public static class ConfigurationServiceCollectionExtensions
     {
         // Startup-only: node role cannot change while the process is running.
         services.AddOptions<ClusterConfiguration>()
-            .Configure<IConfiguration>(static (opts, config) =>
-            {
-                opts.NodeGroup = (config["FLY_PROCESS_GROUP"]
-                               ?? config["OCTOCON_NODE_GROUP"]
-                               ?? "auxiliary").ToLowerInvariant();
-            });
+            .Configure<IConfiguration>(ApplyCluster);
 
         // Startup-only: database connection pools are created once; reconnection requires restart.
         services.AddOptions<PersistenceConfiguration>()
-            .Configure<IConfiguration>(static (opts, config) =>
-            {
-                var region = config["OCTOCON_REGION"] ?? "nam";
-                opts.Mode                    = config["OCTOCON_PERSISTENCE"] ?? "scylla-postgres";
-                opts.DefaultRegion           = region;
-                opts.PostgresConnectionString = config["OCTOCON_POSTGRES_CONNECTION"]
-                    ?? "Host=localhost;Port=5432;Database=octocon;Username=octocon;Password=octocon";
-                opts.ScyllaKeyspace          = config["OCTOCON_SCYLLA_KEYSPACE"] ?? region;
-                opts.ScyllaLocalDatacenter   = config["OCTOCON_SCYLLA_DATACENTER"] ?? "datacenter1";
-                var contactPoints            = config["OCTOCON_SCYLLA_CONTACT_POINTS"];
-                opts.ScyllaContactPoints     = string.IsNullOrWhiteSpace(contactPoints)
-                    ? ["127.0.0.1"]
-                    : contactPoints.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-                opts.ScyllaUsername          = config["OCTOCON_SCYLLA_USERNAME"];
-                opts.ScyllaPassword          = config["OCTOCON_SCYLLA_PASSWORD"];
-                opts.DbRetryAttempts         = TryParseInt(config["OCTOCON_DB_RETRY_ATTEMPTS"])      ?? 3;
-                opts.DbRetryInitialDelayMs   = TryParseInt(config["OCTOCON_DB_RETRY_INITIAL_DELAY_MS"]) ?? 100;
-                opts.DbRetryMaxDelayMs       = TryParseInt(config["OCTOCON_DB_RETRY_MAX_DELAY_MS"])  ?? 1500;
-            });
+            .Configure<IConfiguration>(ApplyPersistence);
 
         // Live-reloadable: JWT signing secrets can rotate, OAuth parameters can be updated via
         // appsettings.json without restart.  Consume via IOptionsMonitor<AuthenticationConfiguration>
         // in singletons, or IOptionsSnapshot<AuthenticationConfiguration> in scoped services.
         services.AddOptions<AuthenticationConfiguration>()
-            .Configure<IConfiguration>(static (opts, config) =>
-            {
-                opts.CallbackBaseUrl      = config["OCTOCON_AUTH_CALLBACK_BASE_URL"];
-                opts.DeepLinkSecret       = config["OCTOCON_AUTH_DEEP_LINK_SECRET"];
-                opts.JwtAuthority         = config["OCTOCON_JWT_AUTHORITY"];
-                opts.GoogleOAuthClientId  = config["OCTOCON_GOOGLE_OAUTH_CLIENT_ID"];
-                opts.GoogleOAuthClientSecret = config["OCTOCON_GOOGLE_OAUTH_CLIENT_SECRET"];
-
-                // Aggregate signing secrets in priority order; deduped for key-rotation safety.
-                opts.JwtSigningSecrets = new string?[]
-                    {
-                        config["OCTOCON_AUTH_DEEP_LINK_SECRET"],
-                        config["GUARDIAN_SECRET_KEY"],
-                        config["OCTOCON_JWT_AUTHORITY"],
-                        "octocon-local"
-                    }
-                    .OfType<string>()
-                    .Where(static s => !string.IsNullOrWhiteSpace(s))
-                    .Distinct(StringComparer.Ordinal)
-                    .ToArray();
-
-                opts.DiscordSchemeName  = config["OCTOCON_AUTH_CHALLENGE_DISCORD_SCHEME"] ?? "oauth-discord";
-                opts.DiscordEndpoint    = config["OCTOCON_AUTH_CHALLENGE_DISCORD_ENDPOINT"];
-                opts.DiscordParameters  = ParseAuthParameters(config["OCTOCON_AUTH_CHALLENGE_DISCORD_PARAMS"]);
-                opts.GoogleSchemeName   = config["OCTOCON_AUTH_CHALLENGE_GOOGLE_SCHEME"]  ?? "oauth-google";
-                opts.GoogleEndpoint     = config["OCTOCON_AUTH_CHALLENGE_GOOGLE_ENDPOINT"];
-                opts.GoogleParameters   = ParseAuthParameters(config["OCTOCON_AUTH_CHALLENGE_GOOGLE_PARAMS"]);
-                opts.AppleSchemeName    = config["OCTOCON_AUTH_CHALLENGE_APPLE_SCHEME"]   ?? "oauth-apple";
-                opts.AppleEndpoint      = config["OCTOCON_AUTH_CHALLENGE_APPLE_ENDPOINT"];
-                opts.AppleParameters    = ParseAuthParameters(config["OCTOCON_AUTH_CHALLENGE_APPLE_PARAMS"]);
-            });
+            .Configure<IConfiguration>(ApplyAuthentication);
 
         // Live-reloadable: frontend URLs and deep-link scheme.
         services.AddOptions<ApiConfiguration>()
-            .Configure<IConfiguration>(static (opts, config) =>
-            {
-                opts.FrontendAddress    = config["OCTOCON_FRONTEND"];
-                opts.BetaFrontendAddress = config["OCTOCON_BETA_FRONTEND"];
-                opts.DeepLinkAddress    = config["OCTOCON_DEEPLINK_ADDRESS"];
-            });
+            .Configure<IConfiguration>(ApplyApi);
 
         // Registered for completeness; OTLP exporters are wired at startup so runtime changes
         // to OtlpEndpoint only take effect after a restart.
         services.AddOptions<ObservabilityConfiguration>()
-            .Configure<IConfiguration>(static (opts, config) =>
-            {
-                opts.OtlpEndpoint = config["OCTOCON_OTLP_ENDPOINT"];
-            });
+            .Configure<IConfiguration>(ApplyObservability);
 
         // Live-reloadable: avatar storage paths can be updated via appsettings.json.
         services.AddOptions<StorageConfiguration>()
-            .Configure<IConfiguration>(static (opts, config) =>
-            {
-                opts.AvatarStorageRoot = config["OCTOCON_AVATAR_STORAGE_ROOT"];
-                opts.AvatarPublicBase  = config["OCTOCON_AVATAR_PUBLIC_BASE"];
-            });
+            .Configure<IConfiguration>(ApplyStorage);
 
         // Live-reloadable: batch tuning can be adjusted without restart.
         services.AddOptions<SocketConfiguration>()
-            .Configure<IConfiguration>(static (opts, config) =>
-            {
-                opts.BatchBytesThreshold = TryParseInt(config["OCTOCON_SOCKET_BATCH_BYTES_THRESHOLD"]);
-            });
+            .Configure<IConfiguration>(ApplySocket);
 
         return services;
     }
+
+    // --- Bind helpers (thin wrappers used by CLI and other non-DI callers) ---
 
     /// <summary>
     /// Binds environment variables to ClusterConfiguration.
@@ -156,12 +73,9 @@ public static class ConfigurationServiceCollectionExtensions
     /// </summary>
     public static ClusterConfiguration BindClusterConfiguration(this IConfiguration config)
     {
-        // Resolve node group with priority: FLY_PROCESS_GROUP > OCTOCON_NODE_GROUP > default
-        var nodeGroup = config["FLY_PROCESS_GROUP"]
-                     ?? config["OCTOCON_NODE_GROUP"]
-                     ?? "auxiliary";
-
-        return new ClusterConfiguration { NodeGroup = nodeGroup.ToLowerInvariant() };
+        var opts = new ClusterConfiguration();
+        ApplyCluster(opts, config);
+        return opts;
     }
 
     /// <summary>
@@ -170,37 +84,9 @@ public static class ConfigurationServiceCollectionExtensions
     /// </summary>
     public static PersistenceConfiguration BindPersistenceConfiguration(this IConfiguration config)
     {
-        var mode = config["OCTOCON_PERSISTENCE"] ?? "scylla-postgres";
-        var region = config["OCTOCON_REGION"] ?? "nam";
-        var pgConnection = config["OCTOCON_POSTGRES_CONNECTION"]
-            ?? "Host=localhost;Port=5432;Database=octocon;Username=octocon;Password=octocon";
-        var scyllaKeyspace = config["OCTOCON_SCYLLA_KEYSPACE"] ?? region; // defaults to region
-        var scyllaDatacenter = config["OCTOCON_SCYLLA_DATACENTER"] ?? "datacenter1";
-        var contactPointsStr = config["OCTOCON_SCYLLA_CONTACT_POINTS"];
-        var contactPoints = string.IsNullOrWhiteSpace(contactPointsStr)
-            ? new[] { "127.0.0.1" }
-            : contactPointsStr.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        var username = config["OCTOCON_SCYLLA_USERNAME"];
-        var password = config["OCTOCON_SCYLLA_PASSWORD"];
-
-        var retryAttempts = TryParseInt(config["OCTOCON_DB_RETRY_ATTEMPTS"]) ?? 3;
-        var retryInitialDelayMs = TryParseInt(config["OCTOCON_DB_RETRY_INITIAL_DELAY_MS"]) ?? 100;
-        var retryMaxDelayMs = TryParseInt(config["OCTOCON_DB_RETRY_MAX_DELAY_MS"]) ?? 1500;
-
-        return new PersistenceConfiguration
-        {
-            Mode = mode,
-            DefaultRegion = region,
-            PostgresConnectionString = pgConnection,
-            ScyllaKeyspace = scyllaKeyspace,
-            ScyllaLocalDatacenter = scyllaDatacenter,
-            ScyllaContactPoints = contactPoints,
-            ScyllaUsername = username,
-            ScyllaPassword = password,
-            DbRetryAttempts = retryAttempts,
-            DbRetryInitialDelayMs = retryInitialDelayMs,
-            DbRetryMaxDelayMs = retryMaxDelayMs,
-        };
+        var opts = new PersistenceConfiguration();
+        ApplyPersistence(opts, config);
+        return opts;
     }
 
     /// <summary>
@@ -209,85 +95,9 @@ public static class ConfigurationServiceCollectionExtensions
     /// </summary>
     public static AuthenticationConfiguration BindAuthenticationConfiguration(this IConfiguration config)
     {
-        var deepLinkSecret = config["OCTOCON_AUTH_DEEP_LINK_SECRET"];
-        var guardianSecret = config["GUARDIAN_SECRET_KEY"];
-        var jwtAuthority = config["OCTOCON_JWT_AUTHORITY"];
-
-        var jwtSigningSecrets = new string?[] { deepLinkSecret, guardianSecret, jwtAuthority, "octocon-local" }
-            .OfType<string>()
-            .Where(s => !string.IsNullOrWhiteSpace(s))
-            .Distinct(StringComparer.Ordinal)
-            .ToArray();
-
-        return new AuthenticationConfiguration
-        {
-            CallbackBaseUrl = config["OCTOCON_AUTH_CALLBACK_BASE_URL"],
-            JwtSigningSecrets = jwtSigningSecrets.Length > 0 ? jwtSigningSecrets : null,
-            DeepLinkSecret = deepLinkSecret,
-            JwtAuthority = jwtAuthority,
-            GoogleOAuthClientId = config["OCTOCON_GOOGLE_OAUTH_CLIENT_ID"],
-            GoogleOAuthClientSecret = config["OCTOCON_GOOGLE_OAUTH_CLIENT_SECRET"],
-            DiscordSchemeName = config["OCTOCON_AUTH_CHALLENGE_DISCORD_SCHEME"] ?? "oauth-discord",
-            DiscordEndpoint = config["OCTOCON_AUTH_CHALLENGE_DISCORD_ENDPOINT"],
-            DiscordParameters = ParseAuthParameters(config["OCTOCON_AUTH_CHALLENGE_DISCORD_PARAMS"]),
-            GoogleSchemeName = config["OCTOCON_AUTH_CHALLENGE_GOOGLE_SCHEME"] ?? "oauth-google",
-            GoogleEndpoint = config["OCTOCON_AUTH_CHALLENGE_GOOGLE_ENDPOINT"],
-            GoogleParameters = ParseAuthParameters(config["OCTOCON_AUTH_CHALLENGE_GOOGLE_PARAMS"]),
-            AppleSchemeName = config["OCTOCON_AUTH_CHALLENGE_APPLE_SCHEME"] ?? "oauth-apple",
-            AppleEndpoint = config["OCTOCON_AUTH_CHALLENGE_APPLE_ENDPOINT"],
-            AppleParameters = ParseAuthParameters(config["OCTOCON_AUTH_CHALLENGE_APPLE_PARAMS"]),
-        };
-    }
-
-    /// <summary>
-    /// Binds environment variables to ApiConfiguration.
-    /// Maps OCTOCON_FRONTEND, OCTOCON_BETA_FRONTEND, OCTOCON_DEEPLINK_ADDRESS.
-    /// </summary>
-    public static ApiConfiguration BindApiConfiguration(this IConfiguration config)
-    {
-        return new ApiConfiguration
-        {
-            FrontendAddress = config["OCTOCON_FRONTEND"],
-            BetaFrontendAddress = config["OCTOCON_BETA_FRONTEND"],
-            DeepLinkAddress = config["OCTOCON_DEEPLINK_ADDRESS"],
-        };
-    }
-
-    /// <summary>
-    /// Binds environment variables to ObservabilityConfiguration.
-    /// Maps OCTOCON_OTLP_ENDPOINT.
-    /// </summary>
-    public static ObservabilityConfiguration BindObservabilityConfiguration(this IConfiguration config)
-    {
-        return new ObservabilityConfiguration
-        {
-            OtlpEndpoint = config["OCTOCON_OTLP_ENDPOINT"],
-        };
-    }
-
-    /// <summary>
-    /// Binds environment variables to StorageConfiguration.
-    /// Maps OCTOCON_AVATAR_STORAGE_ROOT and OCTOCON_AVATAR_PUBLIC_BASE.
-    /// </summary>
-    public static StorageConfiguration BindStorageConfiguration(this IConfiguration config)
-    {
-        return new StorageConfiguration
-        {
-            AvatarStorageRoot = config["OCTOCON_AVATAR_STORAGE_ROOT"],
-            AvatarPublicBase = config["OCTOCON_AVATAR_PUBLIC_BASE"],
-        };
-    }
-
-    /// <summary>
-    /// Binds environment variables to SocketConfiguration.
-    /// Maps OCTOCON_SOCKET_BATCH_BYTES_THRESHOLD.
-    /// </summary>
-    public static SocketConfiguration BindSocketConfiguration(this IConfiguration config)
-    {
-        return new SocketConfiguration
-        {
-            BatchBytesThreshold = TryParseInt(config["OCTOCON_SOCKET_BATCH_BYTES_THRESHOLD"]),
-        };
+        var opts = new AuthenticationConfiguration();
+        ApplyAuthentication(opts, config);
+        return opts;
     }
 
     /// <summary>
@@ -296,18 +106,116 @@ public static class ConfigurationServiceCollectionExtensions
     /// </summary>
     public static TestingConfiguration BindTestingConfiguration(this IConfiguration config)
     {
-        var runApi = bool.TryParse(config["OCTOCON_RUN_API_INTEGRATION"], out var resultApi) && resultApi;
+        var runApi  = bool.TryParse(config["OCTOCON_RUN_API_INTEGRATION"],  out var resultApi)  && resultApi;
         var runLive = bool.TryParse(config["OCTOCON_RUN_LIVE_INTEGRATION"], out var resultLive) && resultLive;
 
         return new TestingConfiguration
         {
-            RunApiIntegration = runApi,
-            RunLiveIntegration = runLive,
+            RunApiIntegration       = runApi,
+            RunLiveIntegration      = runLive,
             TestScyllaContactPoints = config["OCTOCON_TEST_SCYLLA_CONTACT_POINTS"] ?? "127.0.0.1",
-            TestScyllaUsername = config["OCTOCON_TEST_SCYLLA_USERNAME"] ?? "cassandra",
-            TestScyllaPassword = config["OCTOCON_TEST_SCYLLA_PASSWORD"] ?? "cassandra",
-            TestRegion = config["OCTOCON_TEST_REGION"] ?? "nam",
+            TestScyllaUsername      = config["OCTOCON_TEST_SCYLLA_USERNAME"] ?? "cassandra",
+            TestScyllaPassword      = config["OCTOCON_TEST_SCYLLA_PASSWORD"] ?? "cassandra",
+            TestRegion              = config["OCTOCON_TEST_REGION"] ?? "nam",
         };
+    }
+
+    // --- Apply methods: single source of truth for each configuration mapping ---
+
+    internal static void ApplyCluster(ClusterConfiguration opts, IConfiguration config)
+    {
+        opts.NodeGroup = (config["FLY_PROCESS_GROUP"]
+                       ?? config["OCTOCON_NODE_GROUP"]
+                       ?? "auxiliary").ToLowerInvariant();
+    }
+
+    internal static void ApplyPersistence(PersistenceConfiguration opts, IConfiguration config)
+    {
+        var region           = config["OCTOCON_REGION"] ?? "nam";
+        var contactPointsStr = config["OCTOCON_SCYLLA_CONTACT_POINTS"];
+        opts.Mode                     = config["OCTOCON_PERSISTENCE"] ?? "scylla-postgres";
+        opts.DefaultRegion            = region;
+        opts.PostgresConnectionString = config["OCTOCON_POSTGRES_CONNECTION"]
+            ?? "Host=localhost;Port=5432;Database=octocon;Username=octocon;Password=octocon";
+        opts.ScyllaKeyspace           = config["OCTOCON_SCYLLA_KEYSPACE"] ?? region;
+        opts.ScyllaLocalDatacenter    = config["OCTOCON_SCYLLA_DATACENTER"] ?? "datacenter1";
+        opts.ScyllaContactPoints      = string.IsNullOrWhiteSpace(contactPointsStr)
+            ? ["127.0.0.1"]
+            : contactPointsStr.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        opts.ScyllaUsername           = config["OCTOCON_SCYLLA_USERNAME"];
+        opts.ScyllaPassword           = config["OCTOCON_SCYLLA_PASSWORD"];
+        opts.DbRetryAttempts          = TryParseInt(config["OCTOCON_DB_RETRY_ATTEMPTS"])         ?? 3;
+        opts.DbRetryInitialDelayMs    = TryParseInt(config["OCTOCON_DB_RETRY_INITIAL_DELAY_MS"]) ?? 100;
+        opts.DbRetryMaxDelayMs        = TryParseInt(config["OCTOCON_DB_RETRY_MAX_DELAY_MS"])     ?? 1500;
+    }
+
+    private static void ApplyAuthentication(AuthenticationConfiguration opts, IConfiguration config)
+    {
+        opts.CallbackBaseUrl         = config["OCTOCON_AUTH_CALLBACK_BASE_URL"];
+        opts.DeepLinkSecret          = config["OCTOCON_AUTH_DEEP_LINK_SECRET"];
+        opts.JwtAuthority            = config["OCTOCON_JWT_AUTHORITY"] ?? "octocon-local";
+        opts.JwtEs256PrivateKeyPem   = config["OCTOCON_AUTH_EC_PRIVATE_KEY_PEM"];
+        opts.JwtEs256PrivateKeyFile  = config["OCTOCON_AUTH_EC_PRIVATE_KEY_FILE"];
+        opts.JwtEs256PublicKeyFile   = config["OCTOCON_AUTH_EC_PUBLIC_KEY_FILE"];
+        opts.GoogleOAuthClientId     = config["OCTOCON_GOOGLE_OAUTH_CLIENT_ID"];
+        opts.GoogleOAuthClientSecret = config["OCTOCON_GOOGLE_OAUTH_CLIENT_SECRET"];
+
+        var es256VerificationKeys = new List<string>();
+        EnsureEs256KeyMaterial(opts);
+        AddIfPresent(config["OCTOCON_AUTH_EC_PUBLIC_KEY_PEM"], es256VerificationKeys);
+        AddIfPresent(config["OCTOCON_AUTH_EC_PRIVATE_KEY_PEM"], es256VerificationKeys);
+        AddIfPresent(opts.JwtEs256PrivateKeyPem, es256VerificationKeys);
+
+        if (!string.IsNullOrWhiteSpace(opts.JwtEs256PublicKeyFile) && File.Exists(opts.JwtEs256PublicKeyFile))
+        {
+            AddIfPresent(File.ReadAllText(opts.JwtEs256PublicKeyFile), es256VerificationKeys);
+        }
+
+        var publicKeysCsv = config["OCTOCON_AUTH_EC_PUBLIC_KEYS"];
+        if (!string.IsNullOrWhiteSpace(publicKeysCsv))
+        {
+            foreach (var key in publicKeysCsv.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                AddIfPresent(key, es256VerificationKeys);
+            }
+        }
+
+        opts.JwtEs256VerificationKeyPems = es256VerificationKeys
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+
+        opts.DiscordSchemeName  = config["OCTOCON_AUTH_CHALLENGE_DISCORD_SCHEME"] ?? "oauth-discord";
+        opts.DiscordEndpoint    = config["OCTOCON_AUTH_CHALLENGE_DISCORD_ENDPOINT"];
+        opts.DiscordParameters  = ParseAuthParameters(config["OCTOCON_AUTH_CHALLENGE_DISCORD_PARAMS"]);
+        opts.GoogleSchemeName   = config["OCTOCON_AUTH_CHALLENGE_GOOGLE_SCHEME"]  ?? "oauth-google";
+        opts.GoogleEndpoint     = config["OCTOCON_AUTH_CHALLENGE_GOOGLE_ENDPOINT"];
+        opts.GoogleParameters   = ParseAuthParameters(config["OCTOCON_AUTH_CHALLENGE_GOOGLE_PARAMS"]);
+        opts.AppleSchemeName    = config["OCTOCON_AUTH_CHALLENGE_APPLE_SCHEME"]   ?? "oauth-apple";
+        opts.AppleEndpoint      = config["OCTOCON_AUTH_CHALLENGE_APPLE_ENDPOINT"];
+        opts.AppleParameters    = ParseAuthParameters(config["OCTOCON_AUTH_CHALLENGE_APPLE_PARAMS"]);
+    }
+
+    private static void ApplyApi(ApiConfiguration opts, IConfiguration config)
+    {
+        opts.FrontendAddress     = config["OCTOCON_FRONTEND"];
+        opts.BetaFrontendAddress = config["OCTOCON_BETA_FRONTEND"];
+        opts.DeepLinkAddress     = config["OCTOCON_DEEPLINK_ADDRESS"];
+    }
+
+    private static void ApplyObservability(ObservabilityConfiguration opts, IConfiguration config)
+    {
+        opts.OtlpEndpoint = config["OCTOCON_OTLP_ENDPOINT"];
+    }
+
+    private static void ApplyStorage(StorageConfiguration opts, IConfiguration config)
+    {
+        opts.AvatarStorageRoot = config["OCTOCON_AVATAR_STORAGE_ROOT"];
+        opts.AvatarPublicBase  = config["OCTOCON_AVATAR_PUBLIC_BASE"];
+    }
+
+    private static void ApplySocket(SocketConfiguration opts, IConfiguration config)
+    {
+        opts.BatchBytesThreshold = TryParseInt(config["OCTOCON_SOCKET_BATCH_BYTES_THRESHOLD"]);
     }
 
     // --- Helpers ---
@@ -320,7 +228,65 @@ public static class ConfigurationServiceCollectionExtensions
         return int.TryParse(value, out var result) ? result : null;
     }
 
-    private static Dictionary<string, string>? ParseAuthParameters(string? paramsString)
+    private static void AddIfPresent(string? value, ICollection<string> target)
+    {
+        if (!string.IsNullOrWhiteSpace(value))
+        {
+            target.Add(value);
+        }
+    }
+
+    private static void EnsureEs256KeyMaterial(AuthenticationConfiguration opts)
+    {
+        if (!string.IsNullOrWhiteSpace(opts.JwtEs256PrivateKeyPem))
+        {
+            return;
+        }
+
+        var privateKeyPath = opts.JwtEs256PrivateKeyFile;
+        if (string.IsNullOrWhiteSpace(privateKeyPath))
+        {
+            privateKeyPath = Path.Combine(AppContext.BaseDirectory, "keys", "octocon-es256-private.pem");
+            opts.JwtEs256PrivateKeyFile = privateKeyPath;
+        }
+
+        var publicKeyPath = opts.JwtEs256PublicKeyFile;
+        if (string.IsNullOrWhiteSpace(publicKeyPath))
+        {
+            var keyDir = Path.GetDirectoryName(privateKeyPath) ?? AppContext.BaseDirectory;
+            publicKeyPath = Path.Combine(keyDir, "octocon-es256-public.pem");
+            opts.JwtEs256PublicKeyFile = publicKeyPath;
+        }
+
+        if (File.Exists(privateKeyPath))
+        {
+            opts.JwtEs256PrivateKeyPem = File.ReadAllText(privateKeyPath);
+            return;
+        }
+
+        var privateKeyDirectory = Path.GetDirectoryName(privateKeyPath);
+        if (!string.IsNullOrWhiteSpace(privateKeyDirectory))
+        {
+            Directory.CreateDirectory(privateKeyDirectory);
+        }
+
+        var publicKeyDirectory = Path.GetDirectoryName(publicKeyPath);
+        if (!string.IsNullOrWhiteSpace(publicKeyDirectory))
+        {
+            Directory.CreateDirectory(publicKeyDirectory);
+        }
+
+        using var ecdsa = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+        var privatePem = ecdsa.ExportECPrivateKeyPem();
+        var publicPem = ecdsa.ExportSubjectPublicKeyInfoPem();
+
+        File.WriteAllText(privateKeyPath, privatePem);
+        File.WriteAllText(publicKeyPath, publicPem);
+
+        opts.JwtEs256PrivateKeyPem = privatePem;
+    }
+
+    internal static Dictionary<string, string>? ParseAuthParameters(string? paramsString)
     {
         if (string.IsNullOrWhiteSpace(paramsString))
             return null;

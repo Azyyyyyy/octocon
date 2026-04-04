@@ -37,6 +37,32 @@ services:
       - ../msg_pgdata:/var/lib/postgresql/data
     networks:
       octo_network:
+
+  msg-db-load-schema:
+    image: timescale/timescaledb:latest-pg16
+    logging: *default-log-rotation
+    depends_on:
+      msg-db:
+        condition: service_started
+    environment:
+      PGPASSWORD: postgres
+    volumes:
+      - ../csharp/db/postgres/001_create_octocon_idempotency.sql:/schemas/001_create_octocon_idempotency.sql:ro
+      - ../csharp/db/postgres/002_create_auth_tokens.sql:/schemas/002_create_auth_tokens.sql:ro
+      - ../dev/scylla/scripts/postgres-load-schema.sh:/scripts/postgres-load-schema.sh:ro
+    restart: on-failure
+    entrypoint:
+      [
+        "/bin/bash",
+        "/scripts/postgres-load-schema.sh",
+        "msg-db",
+        "octocon",
+        "postgres",
+        "/schemas/001_create_octocon_idempotency.sql",
+        "/schemas/002_create_auth_tokens.sql"
+      ]
+    networks:
+      octo_network:
   
   scylla-load-keyspaces:
     image: scylladb/scylla:2025.1
@@ -44,6 +70,8 @@ services:
     depends_on:
       scylla:
         condition: service_healthy
+      msg-db-load-schema:
+        condition: service_completed_successfully
     volumes:
       - ../csharp/db/scylla/001_create_octocon_keyspaces.cql:/init.cql
       - ../csharp/db/scylla/001_create_octocon_schema.nam.cql:/schema.cql

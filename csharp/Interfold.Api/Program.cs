@@ -1,47 +1,36 @@
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Authentication;
 using Microsoft.IdentityModel.Tokens;
+using Microsoft.IdentityModel.JsonWebTokens;
 using Microsoft.OpenApi.Models;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Trace;
 using System.Text;
+using System.Security.Cryptography;
 using Interfold.Api;
 using Interfold.Api.Auth;
 using Interfold.Api.Services;
 using Interfold.Api.Swagger;
+using Interfold.Domain.Auth;
 using Interfold.Infrastructure.Configuration;
-using Interfold.Infrastructure.Coordination;
 using Interfold.Infrastructure.DependencyInjection;
-using Interfold.Infrastructure.Persistence;
 using System.Text.Json;
 using Interfold.Api.Socket;
+using Microsoft.Extensions.Options;
 using Microsoft.AspNetCore.Authorization;
 
 var builder = WebApplication.CreateBuilder(args);
 
 // --- Configuration ---
-// Bind startup-time values read before the DI container is built.
-var clusterConfig     = builder.Configuration.BindClusterConfiguration();
-var persistenceConfig = builder.Configuration.BindPersistenceConfiguration();
-var obsConfig         = builder.Configuration.BindObservabilityConfiguration();
-var authConfig        = builder.Configuration.BindAuthenticationConfiguration();
-
-// Register all typed options
-// Auth and API configs are consumed directly via IOptionsMonitor in services.
-// Storage and socket configs are consumed via IOptionsMonitor only — no startup local needed.
+// Register all typed options. consumed via IOptionsMonitor in services. 
+// or by their registration helpers below.
+IOptionsMonitor<AuthenticationConfiguration>? authOptionsMonitor = null;
+var authConfig = builder.Configuration.BindAuthenticationConfiguration();
 builder.Services.AddInterfoldOptions();
 
-// --- Node role ---
-builder.Services.AddInterfoldCluster(NodeGroupResolver.Resolve(clusterConfig.NodeGroup));
-
-// --- Persistence ---
-var persistenceMode = persistenceConfig.Mode switch
-{
-    "inmemory"        => PersistenceMode.InMemory,
-    "scylla-postgres" => PersistenceMode.ScyllaPostgres,
-    var x             => throw new InvalidOperationException($"Unsupported persistence mode: {x}")
-};
-
-builder.Services.AddInterfoldPersistence(persistenceMode, persistenceConfig);
+// --- Dependency Injection ---
+builder.Services.AddInterfoldCluster(builder.Configuration);
+builder.Services.AddInterfoldPersistence(builder.Configuration);
 builder.Services.AddInterfoldDomainHandlers();
 builder.Services.AddSingleton<IAvatarStorage, LocalAvatarStorage>();
 
@@ -53,8 +42,8 @@ builder.Services.AddHttpClient<GoogleOAuthService>();
 // OAuth provider authentication completes. There is no single external OIDC authority to
 // validate against — the provider is only used to identify the user;
 // the resulting JWT is issued by Interfold itself. We therefore skip issuer validation and
-// rely on audience and lifetime checks only for now. TODO: Look into how we can make this better WITHOUT breaking exisitng clients
-var jwtAudience = "octocon";
+// rely on audience and lifetime checks only for now.
+// TODO: Look into how we can make this better WITHOUT breaking exisitng clients
 builder.Services
     .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
@@ -65,39 +54,29 @@ builder.Services
             NameClaimType = "sub",
             ValidateIssuer = false,
             ValidateAudience = false,
-            ValidAudience = jwtAudience,
+            ValidAudience = authConfig.JwtAudience, //Has to be done at startup to wire into the JWT handler
             ValidateLifetime = true,
             RequireExpirationTime = true,
             ClockSkew = TimeSpan.FromMinutes(1),
             ValidateIssuerSigningKey = false,
             RequireSignedTokens = true,
-            IssuerSigningKeyResolver = ResolveJwtSigningKeys,
-            SignatureValidator = ValidateHs256TokenSignatureForBearer
+            SignatureValidator = (token, validationParameters) =>
+                ValidateJwtTokenSignatureForBearer(
+                    token,
+                    validationParameters,
+                    authOptionsMonitor?.CurrentValue ?? authConfig)
         };
+        // JTI revocation check is wired after app.Build() to access IAuthTokenRevocationRepository
     });
 
-// Register OAuth challenge schemes if authentication is enabled.  
-// These are registered once at startup and remain static; only the parameters in
-// IOptionsMonitor<AuthenticationConfiguration> are live-reloadable per request.
 // OAuth challenge schemes are registered once at startup; only the parameters in
 // IOptionsMonitor<AuthenticationConfiguration> are live-reloadable per request.
-TryAddRedirectChallengeScheme(
-    builder.Services,
-    authConfig.DiscordSchemeName,
-    authConfig.DiscordEndpoint,
-    authConfig.DiscordParameters);
+builder.Services.AddInterfoldAuthChallengeSchemes(builder.Configuration);
 
-TryAddRedirectChallengeScheme(
-    builder.Services,
-    authConfig.GoogleSchemeName,
-    authConfig.GoogleEndpoint,
-    authConfig.GoogleParameters);
-
-TryAddRedirectChallengeScheme(
-    builder.Services,
-    authConfig.AppleSchemeName,
-    authConfig.AppleEndpoint,
-    authConfig.AppleParameters);
+builder.Services.AddAuthorizationBuilder()
+            .SetFallbackPolicy(new AuthorizationPolicyBuilder()
+            .RequireAuthenticatedUser()
+            .Build());
 
 builder.Services.AddHsts(options =>
 {
@@ -109,13 +88,7 @@ builder.Services.AddHttpsRedirection(options =>
     options.RedirectStatusCode = 308; // Permanent Redirect
 });
 
-//TODO: Readd global auth requirement with exemptions for public endpoints (e.g. auth callbacks, public content) once we have a better sense of the overall auth strategy and endpoint categorization.
-/*builder.Services.AddAuthorizationBuilder()
-            .SetFallbackPolicy(new AuthorizationPolicyBuilder()
-            .RequireAuthenticatedUser()
-            .Build());*/
-
-// --- OpenTelemetry (Phase N) ---
+// --- OpenTelemetry ---
 // Traces and metrics are exported via OTLP when OCTOCON_OTLP_ENDPOINT is set.
 // Without the env var the SDK still runs in-process so metrics are always available
 // for internal /metrics scraping or future export without code changes.
@@ -127,15 +100,15 @@ builder.Services
             .AddAspNetCoreInstrumentation()
             .AddMeter(InterfoldMetrics.MeterName);
 
-        if (!string.IsNullOrWhiteSpace(obsConfig.OtlpEndpoint))
-            metrics.AddOtlpExporter(o => o.Endpoint = new Uri(obsConfig.OtlpEndpoint));
+        if (!string.IsNullOrWhiteSpace(builder.Configuration["OCTOCON_OTLP_ENDPOINT"]))
+            metrics.AddOtlpExporter(o => o.Endpoint = new Uri(builder.Configuration["OCTOCON_OTLP_ENDPOINT"]!));
     })
     .WithTracing(tracing =>
     {
         tracing.AddAspNetCoreInstrumentation();
 
-        if (!string.IsNullOrWhiteSpace(obsConfig.OtlpEndpoint))
-            tracing.AddOtlpExporter(o => o.Endpoint = new Uri(obsConfig.OtlpEndpoint));
+        if (!string.IsNullOrWhiteSpace(builder.Configuration["OCTOCON_OTLP_ENDPOINT"]))
+            tracing.AddOtlpExporter(o => o.Endpoint = new Uri(builder.Configuration["OCTOCON_OTLP_ENDPOINT"]!));
     });
 
 // --- MVC ---
@@ -206,6 +179,46 @@ builder.Services.AddSwaggerGen(options =>
 
 var app = builder.Build();
 
+// Capture once after Build so we can log ES256 configuration details.
+authOptionsMonitor = app.Services.GetRequiredService<IOptionsMonitor<AuthenticationConfiguration>>();
+
+var startupLogger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("AuthStartup");
+var effectiveAuthConfig = authOptionsMonitor.CurrentValue;
+var verificationKeyCount = effectiveAuthConfig.JwtEs256VerificationKeyPems?.Length ?? 0;
+startupLogger.LogInformation(
+    "ES256 token issuance is enabled. Verification key count: {VerificationKeyCount}.",
+    verificationKeyCount);
+startupLogger.LogInformation(
+    "ES256 key file paths. PrivateKeyFile: {PrivateKeyFile}; PublicKeyFile: {PublicKeyFile}.",
+    effectiveAuthConfig.JwtEs256PrivateKeyFile ?? "(not set)",
+    effectiveAuthConfig.JwtEs256PublicKeyFile ?? "(not set)");
+
+// JWT token revocation check middleware.
+// This runs after authentication, checking if the authenticated token's JTI has been revoked.
+app.Use(async (context, next) =>
+{
+    if (context.User?.Identity?.IsAuthenticated == true)
+    {
+        if (context.User.FindFirst("jti")?.Value is string jti && !string.IsNullOrWhiteSpace(jti))
+        {
+            var revocationRepository = context.RequestServices.GetRequiredService<IAuthTokenRevocationRepository>();
+            var isTokenValid = await revocationRepository.ValidateTokenNotRevokedAsync(jti, context.RequestAborted);
+            
+            if (!isTokenValid)
+            {
+                context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+                context.Response.ContentType = "application/json";
+                var error = new { error = "Token has been revoked.", code = "token_revoked" };
+                var json = System.Text.Json.JsonSerializer.Serialize(error);
+                await context.Response.WriteAsync(json, context.RequestAborted);
+                return;
+            }
+        }
+    }
+
+    await next();
+});
+
 // Phase N: correlation ID propagation and structured request logging.
 app.UseMiddleware<RequestCorrelationMiddleware>();
 
@@ -238,42 +251,17 @@ app.UseWebSockets(new WebSocketOptions
 });
 
 app.UseAuthorization();
-app.Map("/api/socket", socketApp => socketApp.Run(WebSocketHandler.HandleUserSocketAsync));
+app.MapGet("/api/socket/websocket", WebSocketHandler.HandleUserSocketAsync).AllowAnonymous();
 app.MapControllers();
 
 app.Run();
 return 0;
 
-SecurityKey[] ResolveJwtSigningKeys(
+// ES256 JWT token validation using ECDSA P-256 public keys.
+static SecurityToken ValidateJwtTokenSignatureForBearer(
     string token,
-    SecurityToken? securityToken,
-    string? kid,
-    TokenValidationParameters validationParameters)
-    => (builder.Configuration.BindAuthenticationConfiguration().JwtSigningSecrets ?? [])
-        .Select(static s => (SecurityKey)new SymmetricSecurityKey(Encoding.UTF8.GetBytes(s)))
-        .ToArray();
-
-static void TryAddRedirectChallengeScheme(
-    IServiceCollection services, 
-    string scheme, 
-    string? endpoint,
-    Dictionary<string, string>? additionalParameters = null)
-{
-    if (string.IsNullOrWhiteSpace(scheme) || string.IsNullOrWhiteSpace(endpoint))
-    {
-        return;
-    }
-
-    services
-        .AddAuthentication()
-        .AddScheme<RedirectChallengeOptions, RedirectChallengeAuthenticationHandler>(scheme, options =>
-        {
-            options.AuthorizationEndpoint = endpoint;
-            options.AdditionalParameters = additionalParameters;
-        });
-}
-
-static SecurityToken ValidateHs256TokenSignatureForBearer(string token, TokenValidationParameters validationParameters)
+    TokenValidationParameters validationParameters,
+    AuthenticationConfiguration config)
 {
     if (string.IsNullOrWhiteSpace(token))
     {
@@ -287,35 +275,52 @@ static SecurityToken ValidateHs256TokenSignatureForBearer(string token, TokenVal
     }
 
     var headerJson = Encoding.UTF8.GetString(parts[0].Base64UrlDecode());
+    var alg = string.Empty;
     using (var headerDoc = JsonDocument.Parse(headerJson))
     {
         if (!headerDoc.RootElement.TryGetProperty("alg", out var algProp)
-            || !string.Equals(algProp.GetString(), "HS256", StringComparison.Ordinal))
+            || string.IsNullOrWhiteSpace(algProp.GetString()))
         {
-            throw new SecurityTokenInvalidSignatureException("Unsupported JWT algorithm.");
+            throw new SecurityTokenInvalidSignatureException("Missing JWT algorithm.");
         }
+
+        alg = algProp.GetString()!;
     }
 
     var signingInput = Encoding.UTF8.GetBytes(parts[0] + "." + parts[1]);
     var signatureBytes = parts[2].Base64UrlDecode();
 
-    // Prefer the live key resolver (reads from IConfiguration per call) over the static key list.
-    var keys = (validationParameters.IssuerSigningKeyResolver != null
-        ? validationParameters.IssuerSigningKeyResolver(token, null, null, validationParameters)
-        : validationParameters.IssuerSigningKeys)
-        ?.OfType<SymmetricSecurityKey>()
-        .ToArray()
-        ?? Array.Empty<SymmetricSecurityKey>();
-
-    foreach (var key in keys)
+    // ES256 (ECDSA P-256 with SHA-256) validation
+    if (!string.Equals(alg, "ES256", StringComparison.Ordinal))
     {
-        using var hmac = new System.Security.Cryptography.HMACSHA256(key.Key);
-        var computed = hmac.ComputeHash(signingInput);
-        if (System.Security.Cryptography.CryptographicOperations.FixedTimeEquals(computed, signatureBytes))
+        throw new SecurityTokenInvalidSignatureException("Only ES256 algorithm is supported.");
+    }
+
+    var pems = config.JwtEs256VerificationKeyPems ?? [];
+    foreach (var rawPem in pems)
+    {
+        using var ecdsa = ECDsa.Create();
+        try
         {
-            return new Microsoft.IdentityModel.JsonWebTokens.JsonWebToken(token);
+            ecdsa.ImportFromPem(NormalizePem(rawPem).AsSpan());
+        }
+        catch (CryptographicException)
+        {
+            continue;
+        }
+
+        if (ecdsa.VerifyData(
+            signingInput,
+            signatureBytes,
+            HashAlgorithmName.SHA256,
+            DSASignatureFormat.IeeeP1363FixedFieldConcatenation))
+        {
+            return new JsonWebToken(token);
         }
     }
 
-    throw new SecurityTokenInvalidSignatureException("Invalid JWT signature.");
+    throw new SecurityTokenInvalidSignatureException("Invalid JWT signature: no verification key matched.");
 }
+
+static string NormalizePem(string pem)
+    => pem.Replace("\\n", "\n", StringComparison.Ordinal);

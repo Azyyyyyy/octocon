@@ -1,7 +1,9 @@
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Interfold.Domain.Abstractions;
 using Interfold.Domain.Accounts;
 using Interfold.Domain.Alters;
+using Interfold.Domain.Auth;
 using Interfold.Domain.Friendships;
 using Interfold.Domain.Fronting;
 using Interfold.Domain.InMemory;
@@ -25,7 +27,7 @@ public static partial class ServiceCollectionExtensions
         PersistenceConfiguration configuration
     ) => AddInterfoldPersistence(services, mode, cfg =>
     {
-        cfg.DefaultRegion            = configuration.DefaultRegion;
+        cfg.DefaultRegion = configuration.DefaultRegion;
         cfg.PostgresConnectionString = configuration.PostgresConnectionString;
         cfg.ScyllaKeyspace           = configuration.ScyllaKeyspace;
         cfg.ScyllaLocalDatacenter    = configuration.ScyllaLocalDatacenter;
@@ -36,6 +38,25 @@ public static partial class ServiceCollectionExtensions
         cfg.DbRetryInitialDelayMs    = configuration.DbRetryInitialDelayMs;
         cfg.DbRetryMaxDelayMs        = configuration.DbRetryMaxDelayMs;
     });
+
+    /// <summary>
+    /// Reads persistence settings from environment variables and registers the appropriate
+    /// persistence services. The mode is derived from OCTOCON_PERSISTENCE.
+    /// </summary>
+    public static IServiceCollection AddInterfoldPersistence(
+        this IServiceCollection services,
+        IConfiguration config)
+    {
+        var opts = new PersistenceConfiguration();
+        ConfigurationServiceCollectionExtensions.ApplyPersistence(opts, config);
+        var mode = opts.Mode switch
+        {
+            "inmemory"        => PersistenceMode.InMemory,
+            "scylla-postgres" => PersistenceMode.ScyllaPostgres,
+            var x             => throw new InvalidOperationException($"Unsupported persistence mode: {x}")
+        };
+        return services.AddInterfoldPersistence(mode, opts);
+    }
 
     public static IServiceCollection AddInterfoldPersistence(
         this IServiceCollection services,
@@ -64,6 +85,7 @@ public static partial class ServiceCollectionExtensions
                 .AddSingleton<IPollRepository, InMemoryPollRepository>()
                 .AddSingleton<IAggregateVersionStore, InMemoryRegionalAggregateVersionStore>()
                 .AddSingleton<IIdempotencyStore, InMemoryIdempotencyStore>()
+                .AddSingleton<IAuthTokenRevocationRepository, InMemoryAuthTokenRevocationRepository>()
                 .AddSingleton<IDatabaseBootstrapHealthChecker>(sp => 
                     new InMemoryBootstrapHealthChecker(sp.GetRequiredService<IAlterRepository>()))
                 .AddSingleton<IOperationalHealthChecker>(sp =>
@@ -86,6 +108,7 @@ public static partial class ServiceCollectionExtensions
                 .AddSingleton<IPollRepository, ScyllaPollRepository>()
                 .AddSingleton<IAggregateVersionStore, ScyllaAggregateVersionStore>()
                 .AddSingleton<IIdempotencyStore, PostgresIdempotencyStore>()
+                .AddSingleton<IAuthTokenRevocationRepository, AuthTokenRevocationRepository>()
                 .AddSingleton<IDatabaseBootstrapHealthChecker>(sp =>
                     new ScyllaPostgresBootstrapHealthChecker(
                         sp.GetRequiredService<IPostgresConnectionFactory>(),

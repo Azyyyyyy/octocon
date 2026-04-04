@@ -1,5 +1,7 @@
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Interfold.Domain.Abstractions;
+using Interfold.Infrastructure.Configuration;
 using Interfold.Infrastructure.Coordination;
 
 namespace Interfold.Infrastructure.DependencyInjection;
@@ -39,5 +41,16 @@ public static partial class ServiceCollectionExtensions
         }
 
         return services;
+    }
+
+    /// <summary>
+    /// Resolves the node role from environment variables and registers cluster coordination services.
+    /// Reads FLY_PROCESS_GROUP, then OCTOCON_NODE_GROUP, then defaults to "auxiliary".
+    /// </summary>
+    public static IServiceCollection AddInterfoldCluster(this IServiceCollection services, IConfiguration config)
+    {
+        var opts = new ClusterConfiguration();
+        ConfigurationServiceCollectionExtensions.ApplyCluster(opts, config);
+        return services.AddInterfoldCluster(NodeGroupResolver.Resolve(opts.NodeGroup));
     }
 }

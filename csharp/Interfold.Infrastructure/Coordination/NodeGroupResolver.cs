@@ -1,4 +1,6 @@
+using Cassandra;
 using Interfold.Domain.Abstractions;
+using Interfold.Infrastructure.Configuration;
 using Microsoft.Extensions.Configuration;
 
 namespace Interfold.Infrastructure.Coordination;
@@ -16,13 +18,10 @@ namespace Interfold.Infrastructure.Coordination;
 /// </summary>
 public static class NodeGroupResolver
 {
-    /// <summary>Resolves node group from <see cref="IConfiguration"/> directly.</summary>
-    public static NodeGroup Resolve(IConfiguration configuration)
+    /// <summary>Resolves node group from <see cref="ClusterConfiguration"/> directly.</summary>
+    public static NodeGroup Resolve(ClusterConfiguration configuration)
     {
-        var raw = configuration["FLY_PROCESS_GROUP"]
-               ?? configuration["OCTOCON_NODE_GROUP"];
-
-        return ResolveFromRawValue(raw);
+        return ResolveFromRawValue(configuration.NodeGroup);
     }
 
     /// <summary>Resolves node group from a pre-bound string value (e.g. from <c>ClusterConfiguration.NodeGroup</c>).</summary>

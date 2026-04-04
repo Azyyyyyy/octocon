@@ -15,23 +15,48 @@ public sealed class AuthenticationConfiguration
     public string? CallbackBaseUrl { get; set; }
 
     /// <summary>
-    /// JWT signing secrets for token validation and issuance.
-    /// Checked in order: OCTOCON_AUTH_DEEP_LINK_SECRET, GUARDIAN_SECRET_KEY,
-    /// OCTOCON_JWT_AUTHORITY (legacy), then 'octocon-local' (development fallback).
-    /// </summary>
-    public string[]? JwtSigningSecrets { get; set; }
-
-    /// <summary>
     /// Deep link JWT signing secret (phase F token exchange).
     /// Env: OCTOCON_AUTH_DEEP_LINK_SECRET
     /// </summary>
     public string? DeepLinkSecret { get; set; }
 
     /// <summary>
-    /// Legacy JWT authority fallback (deprecated, kept for backward compatibility).
+    /// JWT authority fallback
     /// Env: OCTOCON_JWT_AUTHORITY
     /// </summary>
-    public string? JwtAuthority { get; set; }
+    public string JwtAuthority { get; set; } = "";
+
+    /// <summary>
+    /// JWT audience
+    /// Env: OCTOCON_JWT_AUDIENCE
+    /// </summary>
+    public string JwtAudience { get; set; } = "octocon";
+
+    /// <summary>
+    /// ES256 private key (PEM) used for token issuance.
+    /// Env: OCTOCON_AUTH_EC_PRIVATE_KEY_PEM
+    /// </summary>
+    public string? JwtEs256PrivateKeyPem { get; set; }
+
+    /// <summary>
+    /// ES256 private key file path (PEM).
+    /// If ES256 is enabled and this file does not exist, it can be created automatically.
+    /// Env: OCTOCON_AUTH_EC_PRIVATE_KEY_FILE
+    /// </summary>
+    public string? JwtEs256PrivateKeyFile { get; set; }
+
+    /// <summary>
+    /// ES256 public key file path (PEM).
+    /// If ES256 is enabled and this file does not exist, it can be created automatically.
+    /// Env: OCTOCON_AUTH_EC_PUBLIC_KEY_FILE
+    /// </summary>
+    public string? JwtEs256PublicKeyFile { get; set; }
+
+    /// <summary>
+    /// ES256 public/private verification keys (PEM) used for token validation.
+    /// Env: OCTOCON_AUTH_EC_PUBLIC_KEY_PEM, OCTOCON_AUTH_EC_PUBLIC_KEYS
+    /// </summary>
+    public string[]? JwtEs256VerificationKeyPems { get; set; }
 
     /// <summary>
     /// Google OAuth 2.0 client ID for backend token exchange.

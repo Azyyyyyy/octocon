@@ -1763,8 +1763,8 @@ public sealed class ApiAuthSmokeTests
         using var headerDoc = System.Text.Json.JsonDocument.Parse(headerBytes);
         var alg = headerDoc.RootElement.GetProperty("alg").GetString();
         var typ = headerDoc.RootElement.GetProperty("typ").GetString();
-        Ensure(string.Equals(alg, "HS256", StringComparison.Ordinal),
-            $"Expected JWS header alg=HS256, got {alg}.");
+        Ensure(string.Equals(alg, "ES256", StringComparison.Ordinal),
+            $"Expected JWS header alg=ES256, got {alg}.");
         Ensure(string.Equals(typ, "JWT", StringComparison.Ordinal),
             $"Expected JWS header typ=JWT, got {typ}.");
 

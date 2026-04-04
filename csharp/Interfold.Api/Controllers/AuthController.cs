@@ -4,6 +4,7 @@ using Microsoft.Extensions.Options;
 using Microsoft.AspNetCore.Mvc;
 using Interfold.Contracts.Operations;
 using Interfold.Domain.Accounts;
+using Interfold.Domain.Auth;
 using Interfold.Api.Services;
 using Interfold.Infrastructure.Configuration;
 using System.Security.Cryptography;
@@ -11,33 +12,32 @@ using System.Text;
 
 namespace Interfold.Api.Controllers;
 
-[AllowAnonymous]
 [Route("auth")]
 public sealed class AuthController : ControllerBase
 {
     private const string MetadataCookieName = "octocon_auth_metadata";
 
     private readonly IAccountRepository _accounts;
-    private readonly IConfiguration _configuration;
     private readonly IOptionsMonitor<AuthenticationConfiguration> _authOptions;
     private readonly IOptionsMonitor<ApiConfiguration> _apiOptions;
     private readonly IAuthenticationSchemeProvider _schemeProvider;
     private readonly GoogleOAuthService _googleOAuth;
+    private readonly IAuthTokenRevocationRepository _tokenRevocation;
 
     public AuthController(
         IAccountRepository accounts,
-        IConfiguration configuration,
         IOptionsMonitor<AuthenticationConfiguration> authOptions,
         IOptionsMonitor<ApiConfiguration> apiOptions,
         IAuthenticationSchemeProvider schemeProvider,
-        GoogleOAuthService googleOAuth)
+        GoogleOAuthService googleOAuth,
+        IAuthTokenRevocationRepository tokenRevocation)
     {
         _accounts = accounts;
-        _configuration = configuration;
         _authOptions = authOptions;
         _apiOptions = apiOptions;
         _schemeProvider = schemeProvider;
         _googleOAuth = googleOAuth;
+        _tokenRevocation = tokenRevocation;
     }
 
     private static readonly HashSet<string> SupportedProviders = new(StringComparer.OrdinalIgnoreCase)
@@ -47,6 +47,7 @@ public sealed class AuthController : ControllerBase
         "apple"
     };
 
+    [AllowAnonymous]
     [HttpGet("{provider}")]
     public async Task<IActionResult> BeginOAuth([FromRoute] string provider)
     {
@@ -101,13 +102,40 @@ public sealed class AuthController : ControllerBase
         return StatusCode(StatusCodes.Status403Forbidden, string.Empty);
     }
 
+    [AllowAnonymous]
     [HttpGet("{provider}/callback")]
     public Task<IActionResult> CallbackGet([FromRoute] string provider)
         => Callback(provider);
 
+    [AllowAnonymous]
     [HttpPost("{provider}/callback")]
     public Task<IActionResult> CallbackPost([FromRoute] string provider)
         => Callback(provider);
+
+    /// <summary>
+    /// Revokes the current authenticated token (logout).
+    /// Requires authentication. The JTI claim from the current token is extracted and marked as revoked.
+    /// After revocation, the token cannot be used for subsequent requests.
+    /// </summary>
+    [Authorize]
+    [HttpPost("revoke")]
+    public async Task<IActionResult> RevokeToken()
+    {
+        var jti = User.FindFirst("jti")?.Value;
+        if (string.IsNullOrWhiteSpace(jti))
+        {
+            return BadRequest(new
+            {
+                error = "Token is missing JTI claim.",
+                code = "invalid_token"
+            });
+        }
+
+        await _tokenRevocation.RevokeTokenAsync(jti, HttpContext.RequestAborted);
+
+        Response.Headers["X-Interfold-OperationId"] = OperationIds.AuthRevokeToken;
+        return NoContent();
+    }
 
     private async Task<IActionResult> Callback(string provider)
     {
@@ -142,7 +170,7 @@ public sealed class AuthController : ControllerBase
             return StatusCode(StatusCodes.Status403Forbidden, "Failed to authenticate. Did you use the same account to sign in before?");
         }
 
-        var token = IssueDeepLinkToken(systemId);
+        var token = await IssueDeepLinkTokenAsync(systemId);
         var redirectBase = ResolveRedirectBase(provider);
         var redirectUrl = $"{redirectBase}?token={Uri.EscapeDataString(token)}&id={Uri.EscapeDataString(systemId)}";
 
@@ -276,30 +304,30 @@ public sealed class AuthController : ControllerBase
         return null;
     }
 
-    private string IssueDeepLinkToken(string systemId)
+    private async Task<string> IssueDeepLinkTokenAsync(string systemId)
     {
-        var secret = _configuration["OCTOCON_AUTH_DEEP_LINK_SECRET"];
-        if (string.IsNullOrWhiteSpace(secret))
-        {
-            secret = _configuration["OCTOCON_JWT_AUTHORITY"] ?? "octocon-local";
-        }
-
+        var authConfig = _authOptions.CurrentValue;
         var now = DateTimeOffset.UtcNow;
+        // Set expiry to 100 years in the future. This is practically permanent
+        // but avoids DateTimeOffset.MaxValue which can cause int64 overflow on validation.
+        // If a token is compromised, it can be revoked explicitly via POST /auth/revoke.
+        var expiresAt = now.AddYears(100);
+        var jti = Guid.NewGuid().ToString("N");
 
         var headerJson = System.Text.Json.JsonSerializer.Serialize(new Dictionary<string, string>
         {
-            ["alg"] = "HS256",
+            ["alg"] = "ES256",
             ["typ"] = "JWT"
         });
 
         var payloadJson = System.Text.Json.JsonSerializer.Serialize(new Dictionary<string, object>
         {
-            ["iss"] = _configuration["OCTOCON_JWT_AUTHORITY"] ?? "octocon-local",
+            ["iss"] = authConfig.JwtAuthority,
             ["sub"] = systemId,
             ["iat"] = now.ToUnixTimeSeconds(),
             ["nbf"] = now.ToUnixTimeSeconds(),
-            ["exp"] = now.AddDays(10).ToUnixTimeSeconds(),
-            ["jti"] = Guid.NewGuid().ToString("N"),
+            ["exp"] = expiresAt.ToUnixTimeSeconds(),
+            ["jti"] = jti,
             ["scope"] = "octocon:deeplink"
         });
 
@@ -307,12 +335,23 @@ public sealed class AuthController : ControllerBase
         var encodedPayload = Base64UrlEncode(Encoding.UTF8.GetBytes(payloadJson));
         var signingInput = $"{encodedHeader}.{encodedPayload}";
 
-        using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(secret));
-        var signature = hmac.ComputeHash(Encoding.UTF8.GetBytes(signingInput));
+        // ES256 signing with ECDSA P-256
+        using var ecdsa = ECDsa.Create();
+        ecdsa.ImportFromPem(NormalizePem(authConfig.JwtEs256PrivateKeyPem!).AsSpan());
+        var signature = ecdsa.SignData(
+            Encoding.UTF8.GetBytes(signingInput),
+            HashAlgorithmName.SHA256,
+            DSASignatureFormat.IeeeP1363FixedFieldConcatenation);
+
         var encodedSignature = Base64UrlEncode(signature);
 
+        var token = $"{signingInput}.{encodedSignature}";
+
+        // Record the issued token for revocation tracking
+        await _tokenRevocation.RecordTokenAsync(jti, systemId, expiresAt, HttpContext.RequestAborted);
+
         // JWS Compact Serialization: base64url(header).base64url(payload).base64url(signature)
-        return $"{signingInput}.{encodedSignature}";
+        return token;
     }
 
     private static string Base64UrlEncode(byte[] data)
@@ -322,6 +361,9 @@ public sealed class AuthController : ControllerBase
             .Replace('+', '-')
             .Replace('/', '_');
     }
+
+    private static string NormalizePem(string pem)
+        => pem.Replace("\\n", "\n", StringComparison.Ordinal);
 
     private string? GetChallengeScheme(string providerKey)
     {

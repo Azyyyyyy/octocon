@@ -37,6 +37,7 @@ public static class OperationIds
     public const string QuerySystemPublicBatch = "qry.system.public.batch";
     public const string QueryAuthOAuthRequest = "qry.auth.oauth.request";
     public const string AuthOAuthCallback = "cmd.auth.oauth.callback";
+    public const string AuthRevokeToken = "cmd.auth.revoke.token";
     public const string QueryAuthLinkRequest = "qry.auth.link.request";
     public const string AuthLinkCallback = "cmd.auth.link.callback";
 
