@@ -73,7 +73,7 @@ public sealed class ScyllaFriendshipRepository : IFriendshipRepository
                 var since = row.GetValue<DateTimeOffset?>("since") ?? DateTimeOffset.UtcNow;
 
                 var profile = await GetFriendProfileAsync(session, friendId);
-                var fronting = await GetFrontingAsync(session, friendId);
+                var fronting = await GetFrontingAsync(session, friendId, normalizedSystemId);
 
                 result.Add(new FriendshipReadModel(profile, new FriendshipModel(level, since), fronting));
             }
@@ -103,14 +103,13 @@ public sealed class ScyllaFriendshipRepository : IFriendshipRepository
 
             var friendId = row.GetValue<string>("friend_id");
             var since = row.GetValue<DateTimeOffset?>("since") ?? DateTimeOffset.UtcNow;
+            var level = ToDomainLevel(row.GetValue<short>("level"));
             var profile = await GetFriendProfileAsync(session, normalizedFriendSystemId);
-            var fronting = await GetFrontingAsync(session, normalizedFriendSystemId);
+            var fronting = await GetFrontingAsync(session, normalizedFriendSystemId, normalizedSystemId);
 
             return new FriendshipReadModel(
                 profile,
-                new FriendshipModel(
-                    ToDomainLevel(row.GetValue<short>("level")),
-                    since),
+                new FriendshipModel(level, since),
                 fronting);
         }, _options, cancellationToken);
     }
@@ -410,7 +409,7 @@ public sealed class ScyllaFriendshipRepository : IFriendshipRepository
             profileRow?.GetValue<string?>("discord_id"));
     }
 
-    private async Task<IReadOnlyList<FriendFrontingReadModel>> GetFrontingAsync(ISession session, string friendSystemId)
+    private async Task<IReadOnlyList<FriendFrontingReadModel>> GetFrontingAsync(ISession session, string friendSystemId, string viewerSystemId)
     {
         var regionalKeyspace = await ResolveUserRegionAsync(session, friendSystemId);
         if (string.IsNullOrWhiteSpace(regionalKeyspace))
@@ -418,6 +417,12 @@ public sealed class ScyllaFriendshipRepository : IFriendshipRepository
             return [];
         }
 
+        // Friendship level from the friend's perspective (they control their own alter visibility)
+        var levelRow = (await session.ExecuteAsync(new SimpleStatement(
+            "SELECT level FROM global.friendships WHERE user_id = ? AND friend_id = ? LIMIT 1",
+            friendSystemId,
+            viewerSystemId))).FirstOrDefault();
+        var friendshipLevel = levelRow is null ? null : ToDomainLevel(levelRow.GetValue<short>("level"));
         var activeRows = await session.ExecuteAsync(new SimpleStatement(
             $"SELECT alter_id, comment FROM {regionalKeyspace}.current_fronts WHERE user_id = ?",
             friendSystemId));
@@ -429,27 +434,56 @@ public sealed class ScyllaFriendshipRepository : IFriendshipRepository
         var primaryAlterId = primaryRow?.GetValue<int?>("primary_front");
 
         var alterRows = await session.ExecuteAsync(new SimpleStatement(
-            $"SELECT id, name, alias FROM {regionalKeyspace}.alters WHERE user_id = ?",
+            $"SELECT id, name, avatar_url, pronouns, color, description, extra_images, security_level FROM {regionalKeyspace}.alters WHERE user_id = ?",
             friendSystemId));
 
-        var alterMap = alterRows.ToDictionary(
-            row => row.GetValue<short>("id"),
-            row => (Name: row.GetValue<string?>("name"), Alias: row.GetValue<string?>("alias")));
+        var alterMap = alterRows
+            .Where(row => CanViewAlter(friendshipLevel, row.GetValue<short?>("security_level")))
+            .ToDictionary(
+                row => row.GetValue<short>("id"),
+                row => (
+                    Name: row.GetValue<string?>("name"),
+                    AvatarUrl: row.GetValue<string?>("avatar_url"),
+                    Pronouns: row.GetValue<string?>("pronouns"),
+                    Color: row.GetValue<string?>("color"),
+                    Description: row.GetValue<string?>("description"),
+                    ExtraImages: (IReadOnlyList<string>)(row.GetValue<IEnumerable<string>?>("extra_images")?.ToList() ?? [])));
 
         return activeRows
             .Select(row =>
             {
                 var alterId = row.GetValue<short>("alter_id");
-                alterMap.TryGetValue(alterId, out var alter);
+                if (!alterMap.TryGetValue(alterId, out var alter))
+                {
+                    return null;
+                }
                 return new FriendFrontingReadModel(
-                    alterId,
-                    alter.Name,
-                    alter.Alias,
-                    row.GetValue<string?>("comment"),
+                    new FriendFrontingAlterReadModel(
+                        alterId,
+                        alter.Name,
+                        alter.Pronouns,
+                        alter.Description,
+                        [],
+                        alter.AvatarUrl,
+                        alter.ExtraImages,
+                        alter.Color),
+                    new FriendFrontingFrontReadModel(alterId, row.GetValue<string?>("comment")),
                     primaryAlterId == alterId);
             })
-            .OrderBy(x => x.AlterId)
-            .ToList();
+            .Where(x => x is not null)
+            .OrderBy(x => x!.Alter.Id)
+            .ToList()!;
+    }
+
+    private static bool CanViewAlter(string? friendshipLevel, short? securityLevel)
+    {
+        return securityLevel switch
+        {
+            1 => friendshipLevel is "friend" or "trusted_friend",
+            2 => friendshipLevel is "trusted_friend",
+            3 => false,
+            _ => true
+        };
     }
 
     private static async Task<string?> ResolveUserRegionAsync(ISession session, string userId)

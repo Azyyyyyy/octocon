@@ -8,11 +8,25 @@ public sealed record FriendProfileReadModel(
     string? DiscordId
 );
 
-public sealed record FriendFrontingReadModel(
+public sealed record FriendFrontingAlterReadModel(
+    int Id,
+    string? Name,
+    string? Pronouns,
+    string? Description,
+    IReadOnlyList<object> Fields,
+    string? AvatarUrl,
+    IReadOnlyList<string> ExtraImages,
+    string? Color
+);
+
+public sealed record FriendFrontingFrontReadModel(
     int AlterId,
-    string? AlterName,
-    string? AlterAlias,
-    string? Comment,
+    string? Comment
+);
+
+public sealed record FriendFrontingReadModel(
+    FriendFrontingAlterReadModel Alter,
+    FriendFrontingFrontReadModel Front,
     bool Primary
 );
 
