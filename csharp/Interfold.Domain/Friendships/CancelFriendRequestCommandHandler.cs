@@ -56,9 +56,13 @@ public sealed class CancelFriendRequestCommandHandler : ICommandHandler<CancelFr
             return await RejectStaleVersion(command, cancellationToken);
         }
 
+        var canonicalTargetSystemId = FriendshipIdNormalization.CanonicalizeForPrincipal(
+            command.PrincipalId,
+            command.Payload.TargetSystemId);
+
         var outcome = await _repository.CancelRequestAsync(
             command.PrincipalId,
-            command.Payload.TargetSystemId,
+            canonicalTargetSystemId,
             cancellationToken);
 
         if (outcome is FriendRequestMutationOutcome.AlreadyFriends)
@@ -78,7 +82,7 @@ public sealed class CancelFriendRequestCommandHandler : ICommandHandler<CancelFr
 
         var result = new FriendshipCommandResult(
             command.PrincipalId,
-            command.Payload.TargetSystemId,
+            canonicalTargetSystemId,
             "cancelled",
             Replay: false);
 
@@ -95,10 +99,10 @@ public sealed class CancelFriendRequestCommandHandler : ICommandHandler<CancelFr
 
         await _eventBus.PublishAsync(new FriendRequestRemovedToEvent(
             command.PrincipalId,
-            command.Payload.TargetSystemId), cancellationToken);
+            canonicalTargetSystemId), cancellationToken);
 
         await _eventBus.PublishAsync(new FriendRequestRemovedFromEvent(
-            command.Payload.TargetSystemId,
+            canonicalTargetSystemId,
             command.PrincipalId), cancellationToken);
 
         return CommandExecutionResult<FriendshipCommandResult>.Success(result);

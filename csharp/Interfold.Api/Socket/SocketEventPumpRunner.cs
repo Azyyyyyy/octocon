@@ -2,6 +2,7 @@ using Interfold.Api.Socket.Handlers;
 using Interfold.Domain.Abstractions;
 using Interfold.Domain.Accounts;
 using Interfold.Domain.Alters;
+using Interfold.Domain.Friendships;
 using Interfold.Domain.Fronting;
 using Interfold.Domain.Journals;
 using Interfold.Domain.Polls;
@@ -20,6 +21,7 @@ public static class SocketEventPumpRunner
         ITagRepository tagRepository,
         ISettingsFieldRepository settingsFieldRepository,
         IAccountRepository accountRepository,
+        IFriendshipRepository friendshipRepository,
         IPollRepository pollRepository,
         IJournalRepository journalRepository,
         IEncryptionStateRepository encryptionStateRepository)
@@ -46,12 +48,12 @@ public static class SocketEventPumpRunner
             SubscribeAsync<SettingsDiscordAccountUnlinkedSignalEvent>(eventBus, context, evt => SettingsSocketEventHandlers.HandleAsync(evt, context)),
             SubscribeAsync<SettingsAppleAccountUnlinkedSignalEvent>(eventBus, context, evt => SettingsSocketEventHandlers.HandleAsync(evt, context)),
             SubscribeAsync<SettingsAccountLinkedEvent>(eventBus, context, evt => SettingsSocketEventHandlers.HandleAsync(evt, context)),
-            SubscribeAsync<FriendshipAddedEvent>(eventBus, context, evt => FriendshipSocketEventHandlers.HandleAsync(evt, context)),
+            SubscribeAsync<FriendshipAddedEvent>(eventBus, context, evt => FriendshipSocketEventHandlers.HandleAsync(evt, context, friendshipRepository)),
             SubscribeAsync<FriendshipRemovedEvent>(eventBus, context, evt => FriendshipSocketEventHandlers.HandleAsync(evt, context)),
             SubscribeAsync<FriendshipTrustedEvent>(eventBus, context, evt => FriendshipSocketEventHandlers.HandleAsync(evt, context)),
             SubscribeAsync<FriendshipUntrustedEvent>(eventBus, context, evt => FriendshipSocketEventHandlers.HandleAsync(evt, context)),
-            SubscribeAsync<FriendRequestSentEvent>(eventBus, context, evt => FriendshipSocketEventHandlers.HandleAsync(evt, context)),
-            SubscribeAsync<FriendRequestReceivedEvent>(eventBus, context, evt => FriendshipSocketEventHandlers.HandleAsync(evt, context)),
+            SubscribeAsync<FriendRequestSentEvent>(eventBus, context, evt => FriendshipSocketEventHandlers.HandleAsync(evt, context, friendshipRepository)),
+            SubscribeAsync<FriendRequestReceivedEvent>(eventBus, context, evt => FriendshipSocketEventHandlers.HandleAsync(evt, context, friendshipRepository)),
             SubscribeAsync<FriendRequestRemovedFromEvent>(eventBus, context, evt => FriendshipSocketEventHandlers.HandleAsync(evt, context)),
             SubscribeAsync<FriendRequestRemovedToEvent>(eventBus, context, evt => FriendshipSocketEventHandlers.HandleAsync(evt, context)),
             SubscribeAsync<PollCreatedEvent>(eventBus, context, evt => PollSocketEventHandlers.HandleAsync(evt, context, pollRepository)),

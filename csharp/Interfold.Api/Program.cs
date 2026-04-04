@@ -251,7 +251,7 @@ app.UseWebSockets(new WebSocketOptions
 });
 
 app.UseAuthorization();
-app.MapGet("/api/socket/websocket", WebSocketHandler.HandleUserSocketAsync).AllowAnonymous();
+app.MapMethods("/api/socket/websocket", ["GET", "CONNECT"], WebSocketHandler.HandleUserSocketAsync).AllowAnonymous();
 app.MapControllers();
 
 app.Run();
@@ -297,6 +297,11 @@ static SecurityToken ValidateJwtTokenSignatureForBearer(
     }
 
     var pems = config.JwtEs256VerificationKeyPems ?? [];
+    if (pems.Length == 0)
+    {
+        throw new SecurityTokenInvalidSignatureException("No ES256 verification keys configured.");
+    }
+
     foreach (var rawPem in pems)
     {
         using var ecdsa = ECDsa.Create();
@@ -323,4 +328,17 @@ static SecurityToken ValidateJwtTokenSignatureForBearer(
 }
 
 static string NormalizePem(string pem)
-    => pem.Replace("\\n", "\n", StringComparison.Ordinal);
+{
+    if (string.IsNullOrWhiteSpace(pem))
+        return pem;
+
+    // Normalize various line ending formats to actual newlines
+    var normalized = pem
+        .Replace("\\r\\n", "\n", StringComparison.Ordinal)  // Escaped Windows (\r\n became \\r\\n)
+        .Replace("\\r", "\n", StringComparison.Ordinal)     // Escaped carriage return
+        .Replace("\\n", "\n", StringComparison.Ordinal)     // Escaped newline
+        .Replace("\r\n", "\n", StringComparison.Ordinal)    // Windows line endings
+        .Replace("\r", "\n", StringComparison.Ordinal);     // Old Mac line endings
+
+    return normalized;
+}

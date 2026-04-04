@@ -56,9 +56,13 @@ public sealed class SendFriendRequestCommandHandler : ICommandHandler<SendFriend
             return await RejectStaleVersion(command, cancellationToken);
         }
 
+        var canonicalTargetSystemId = FriendshipIdNormalization.CanonicalizeForPrincipal(
+            command.PrincipalId,
+            command.Payload.TargetSystemId);
+
         var outcome = await _repository.SendRequestAsync(
             command.PrincipalId,
-            command.Payload.TargetSystemId,
+            canonicalTargetSystemId,
             cancellationToken);
 
         if (outcome is SendFriendRequestOutcome.AlreadyFriends)
@@ -80,7 +84,7 @@ public sealed class SendFriendRequestCommandHandler : ICommandHandler<SendFriend
 
         var result = new FriendshipCommandResult(
             command.PrincipalId,
-            command.Payload.TargetSystemId,
+            canonicalTargetSystemId,
             action,
             Replay: false);
 
@@ -99,24 +103,24 @@ public sealed class SendFriendRequestCommandHandler : ICommandHandler<SendFriend
         {
             await _eventBus.PublishAsync(new FriendshipAddedEvent(
                 command.PrincipalId,
-                command.Payload.TargetSystemId), cancellationToken);
+                canonicalTargetSystemId), cancellationToken);
 
             await _eventBus.PublishAsync(new FriendshipAddedEvent(
-                command.Payload.TargetSystemId,
+                canonicalTargetSystemId,
                 command.PrincipalId), cancellationToken);
 
             await _eventBus.PublishAsync(new FriendRequestRemovedToEvent(
-                command.Payload.TargetSystemId,
+                canonicalTargetSystemId,
                 command.PrincipalId), cancellationToken);
         }
         else
         {
             await _eventBus.PublishAsync(new FriendRequestSentEvent(
                 command.PrincipalId,
-                command.Payload.TargetSystemId), cancellationToken);
+                canonicalTargetSystemId), cancellationToken);
 
             await _eventBus.PublishAsync(new FriendRequestReceivedEvent(
-                command.Payload.TargetSystemId,
+                canonicalTargetSystemId,
                 command.PrincipalId), cancellationToken);
         }
 

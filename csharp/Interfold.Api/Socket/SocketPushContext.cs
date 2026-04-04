@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Linq;
 using System.Net.WebSockets;
 
 namespace Interfold.Api.Socket;
@@ -33,14 +34,50 @@ public sealed class SocketPushContext
         topic = $"system:{systemId}";
         if (!JoinedTopics.ContainsKey(topic))
         {
-            joinRef = null;
-            asArray = false;
-            return false;
+            var targetComparableId = ComparableSystemId(systemId);
+            var matchedTopic = JoinedTopics.Keys.FirstOrDefault(t =>
+            {
+                if (!t.StartsWith("system:", StringComparison.OrdinalIgnoreCase))
+                {
+                    return false;
+                }
+
+                var topicSystemId = t["system:".Length..];
+                return string.Equals(
+                    ComparableSystemId(topicSystemId),
+                    targetComparableId,
+                    StringComparison.Ordinal);
+            });
+
+            if (matchedTopic is null)
+            {
+                joinRef = null;
+                asArray = false;
+                return false;
+            }
+
+            topic = matchedTopic;
         }
 
         TopicJoinReference.TryGetValue(topic, out joinRef);
         TopicReplyAsArrayFrame.TryGetValue(topic, out asArray);
         return true;
+    }
+
+    private static string ComparableSystemId(string systemId)
+    {
+        if (string.IsNullOrWhiteSpace(systemId))
+        {
+            return systemId;
+        }
+
+        var separator = systemId.IndexOf(':', StringComparison.Ordinal);
+        if (separator <= 0 || separator >= systemId.Length - 1)
+        {
+            return systemId;
+        }
+
+        return systemId[(separator + 1)..];
     }
 
     public Task SendAsync(string topic, string? joinRef, bool asArray, string eventName, string payloadJson)

@@ -56,9 +56,16 @@ public sealed class RemoveFriendshipCommandHandler : ICommandHandler<RemoveFrien
             return await RejectStaleVersion(command, cancellationToken);
         }
 
+        var canonicalFriendSystemId = FriendshipIdNormalization.CanonicalizeForPrincipal(
+            command.PrincipalId,
+            command.Payload.FriendSystemId);
+        var canonicalPrincipalId = FriendshipIdNormalization.CanonicalizeForPrincipal(
+            canonicalFriendSystemId,
+            command.PrincipalId);
+
         var deleted = await _repository.RemoveFriendshipAsync(
             command.PrincipalId,
-            command.Payload.FriendSystemId,
+            canonicalFriendSystemId,
             cancellationToken);
 
         if (!deleted)
@@ -68,7 +75,7 @@ public sealed class RemoveFriendshipCommandHandler : ICommandHandler<RemoveFrien
 
         var result = new FriendshipCommandResult(
             command.PrincipalId,
-            command.Payload.FriendSystemId,
+            canonicalFriendSystemId,
             "removed",
             Replay: false);
 
@@ -84,12 +91,12 @@ public sealed class RemoveFriendshipCommandHandler : ICommandHandler<RemoveFrien
             cancellationToken);
 
         await _eventBus.PublishAsync(new FriendshipRemovedEvent(
-            command.PrincipalId,
-            command.Payload.FriendSystemId), cancellationToken);
+            canonicalPrincipalId,
+            canonicalFriendSystemId), cancellationToken);
 
         await _eventBus.PublishAsync(new FriendshipRemovedEvent(
-            command.Payload.FriendSystemId,
-            command.PrincipalId), cancellationToken);
+            canonicalFriendSystemId,
+            canonicalPrincipalId), cancellationToken);
 
         return CommandExecutionResult<FriendshipCommandResult>.Success(result);
     }

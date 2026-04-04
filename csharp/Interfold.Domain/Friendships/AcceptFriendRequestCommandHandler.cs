@@ -56,9 +56,17 @@ public sealed class AcceptFriendRequestCommandHandler : ICommandHandler<AcceptFr
             return await RejectStaleVersion(command, cancellationToken);
         }
 
+        var canonicalSourceSystemId = FriendshipIdNormalization.CanonicalizeForPrincipal(
+            command.PrincipalId,
+            command.Payload.SourceSystemId);
+
+        var canonicalPrincipalId = FriendshipIdNormalization.CanonicalizeForPrincipal(
+            command.Payload.SourceSystemId,
+            command.PrincipalId);
+
         var outcome = await _repository.AcceptRequestAsync(
             command.PrincipalId,
-            command.Payload.SourceSystemId,
+            canonicalSourceSystemId,
             cancellationToken);
 
         if (outcome is FriendRequestMutationOutcome.AlreadyFriends)
@@ -78,7 +86,7 @@ public sealed class AcceptFriendRequestCommandHandler : ICommandHandler<AcceptFr
 
         var result = new FriendshipCommandResult(
             command.PrincipalId,
-            command.Payload.SourceSystemId,
+            canonicalSourceSystemId,
             "accepted",
             Replay: false);
 
@@ -94,16 +102,20 @@ public sealed class AcceptFriendRequestCommandHandler : ICommandHandler<AcceptFr
             cancellationToken);
 
         await _eventBus.PublishAsync(new FriendshipAddedEvent(
-            command.PrincipalId,
-            command.Payload.SourceSystemId), cancellationToken);
+            canonicalPrincipalId,
+            canonicalSourceSystemId), cancellationToken);
 
         await _eventBus.PublishAsync(new FriendshipAddedEvent(
-            command.Payload.SourceSystemId,
-            command.PrincipalId), cancellationToken);
+            canonicalSourceSystemId,
+            canonicalPrincipalId), cancellationToken);
+
+        await _eventBus.PublishAsync(new FriendRequestRemovedFromEvent(
+            canonicalPrincipalId,
+            canonicalSourceSystemId), cancellationToken);
 
         await _eventBus.PublishAsync(new FriendRequestRemovedToEvent(
-            command.Payload.SourceSystemId,
-            command.PrincipalId), cancellationToken);
+            canonicalSourceSystemId,
+            canonicalPrincipalId), cancellationToken);
 
         return CommandExecutionResult<FriendshipCommandResult>.Success(result);
     }

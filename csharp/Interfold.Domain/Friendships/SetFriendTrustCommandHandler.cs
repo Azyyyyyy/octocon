@@ -56,9 +56,13 @@ public sealed class SetFriendTrustCommandHandler : ICommandHandler<SetFriendTrus
             return await RejectStaleVersion(command, cancellationToken);
         }
 
+        var canonicalFriendSystemId = FriendshipIdNormalization.CanonicalizeForPrincipal(
+            command.PrincipalId,
+            command.Payload.FriendSystemId);
+
         var updated = await _repository.SetTrustedAsync(
             command.PrincipalId,
-            command.Payload.FriendSystemId,
+            canonicalFriendSystemId,
             command.Payload.Trusted,
             cancellationToken);
 
@@ -69,7 +73,7 @@ public sealed class SetFriendTrustCommandHandler : ICommandHandler<SetFriendTrus
 
         var result = new FriendshipCommandResult(
             command.PrincipalId,
-            command.Payload.FriendSystemId,
+            canonicalFriendSystemId,
             command.Payload.Trusted ? "trusted" : "untrusted",
             Replay: false);
 
@@ -87,13 +91,13 @@ public sealed class SetFriendTrustCommandHandler : ICommandHandler<SetFriendTrus
         if (command.Payload.Trusted)
         {
             await _eventBus.PublishAsync(
-                new FriendshipTrustedEvent(command.PrincipalId, command.Payload.FriendSystemId),
+                new FriendshipTrustedEvent(command.PrincipalId, canonicalFriendSystemId),
                 cancellationToken);
         }
         else
         {
             await _eventBus.PublishAsync(
-                new FriendshipUntrustedEvent(command.PrincipalId, command.Payload.FriendSystemId),
+                new FriendshipUntrustedEvent(command.PrincipalId, canonicalFriendSystemId),
                 cancellationToken);
         }
 

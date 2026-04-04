@@ -6,6 +6,7 @@ using Interfold.Domain.Fronting;
 using Interfold.Domain.Alters;
 using Interfold.Domain.Tags;
 using Interfold.Domain.Settings;
+using Interfold.Domain.Friendships;
 using System.Text.Json;
 using System.Text;
 using Interfold.Domain.Accounts;
@@ -23,8 +24,18 @@ public static class WebSocketHandler
 {
 public static async Task HandleUserSocketAsync(HttpContext context)
 {
+    var logger = context.RequestServices.GetRequiredService<ILoggerFactory>()
+        .CreateLogger("WebSocketHandler");
+    
+    logger.LogInformation(
+        "WebSocket request received. Method: {Method}, Path: {Path}, IsWebSocketRequest: {IsWSRequest}",
+        context.Request.Method,
+        context.Request.Path,
+        context.WebSockets.IsWebSocketRequest);
+
     if (!context.WebSockets.IsWebSocketRequest)
     {
+        logger.LogWarning("Request is not a WebSocket upgrade request");
         context.Response.StatusCode = StatusCodes.Status400BadRequest;
         await context.Response.WriteAsJsonAsync(new
         {
@@ -35,8 +46,11 @@ public static async Task HandleUserSocketAsync(HttpContext context)
     }
 
     var token = context.Request.Query["token"].ToString();
+    logger.LogInformation("Token from query string length: {TokenLength}", token?.Length ?? 0);
+    
     if (string.IsNullOrWhiteSpace(token))
     {
+        logger.LogWarning("Missing or empty token in query string");
         context.Response.StatusCode = StatusCodes.Status401Unauthorized;
         await context.Response.WriteAsJsonAsync(new
         {
@@ -64,6 +78,7 @@ public static async Task HandleUserSocketAsync(HttpContext context)
     var tagRepository = context.RequestServices.GetRequiredService<ITagRepository>();
     var settingsFieldRepository = context.RequestServices.GetRequiredService<ISettingsFieldRepository>();
     var accountRepository = context.RequestServices.GetRequiredService<IAccountRepository>();
+    var friendshipRepository = context.RequestServices.GetRequiredService<IFriendshipRepository>();
     var pollRepository = context.RequestServices.GetRequiredService<IPollRepository>();
     var journalRepository = context.RequestServices.GetRequiredService<IJournalRepository>();
     var encryptionStateRepository = context.RequestServices.GetRequiredService<IEncryptionStateRepository>();
@@ -83,6 +98,7 @@ public static async Task HandleUserSocketAsync(HttpContext context)
         tagRepository,
         settingsFieldRepository,
         accountRepository,
+        friendshipRepository,
         pollRepository,
         journalRepository,
         encryptionStateRepository);
@@ -447,10 +463,16 @@ static async Task<(bool IsAuthorized, string? FailureReason)> IsSocketJoinTokenA
     string requestedSystemId,
     CancellationToken cancellationToken)
 {
+    var logger = context.RequestServices.GetRequiredService<ILoggerFactory>()
+        .CreateLogger("WebSocketTokenAuth");
+
     if (string.IsNullOrWhiteSpace(token))
     {
+        logger.LogWarning("Token is empty or whitespace");
         return (false, "missing_socket_token");
     }
+
+    logger.LogInformation("Validating token. RequestedSystemId: {SystemId}", requestedSystemId);
 
     var authConfig = context.RequestServices
         .GetRequiredService<IOptionsMonitor<AuthenticationConfiguration>>();
@@ -458,8 +480,12 @@ static async Task<(bool IsAuthorized, string? FailureReason)> IsSocketJoinTokenA
     var handler = new JwtSecurityTokenHandler { MapInboundClaims = false };
     if (!handler.CanReadToken(token))
     {
+        logger.LogWarning("Handler cannot read token");
         return (false, "invalid_socket_token");
     }
+
+    logger.LogInformation("Token is readable. Verification key count: {KeyCount}", 
+        authConfig.CurrentValue.JwtEs256VerificationKeyPems?.Length ?? 0);
 
     var parameters = new TokenValidationParameters
     {
@@ -478,15 +504,22 @@ static async Task<(bool IsAuthorized, string? FailureReason)> IsSocketJoinTokenA
 
     try
     {
+        logger.LogInformation("Starting token validation");
         var principal = handler.ValidateToken(token, parameters, out _);
         var tokenSystemId = principal.FindFirstValue("sub");
+        
+        logger.LogInformation("Token validated. TokenSystemId: {TokenSub}, RequestedSystemId: {RequestedSub}",
+            tokenSystemId, requestedSystemId);
+            
         if (string.IsNullOrWhiteSpace(tokenSystemId))
         {
+            logger.LogWarning("Token subject (sub) claim is missing or empty");
             return (false, "invalid_socket_token_subject");
         }
 
         if (!string.Equals(tokenSystemId, requestedSystemId, StringComparison.Ordinal))
         {
+            logger.LogWarning("Token subject does not match requested system ID");
             return (false, "unauthorized_topic");
         }
 
@@ -499,14 +532,17 @@ static async Task<(bool IsAuthorized, string? FailureReason)> IsSocketJoinTokenA
                 var isTokenValid = await revocationRepository.ValidateTokenNotRevokedAsync(jti, cancellationToken);
                 if (!isTokenValid)
                 {
+                    logger.LogWarning("Token has been revoked. JTI: {Jti}", jti);
                     return (false, "token_revoked");
                 }
             }
 
+            logger.LogInformation("Token authorization successful");
             return (true, null);
     }
-    catch (Exception)
+    catch (Exception ex)
     {
+        logger.LogWarning(ex, "WebSocket token validation failed: {ExceptionMessage}", ex.Message);
         return (false, "invalid_socket_token");
     }
 }
@@ -587,59 +623,107 @@ static SecurityToken ValidateJwtTokenSignatureForSocket(
     var parts = token.Split('.');
     if (parts.Length != 3)
     {
-        throw new SecurityTokenInvalidSignatureException("Token is not a valid JWS compact token.");
+        throw new SecurityTokenInvalidSignatureException($"Token has {parts.Length} segments, expected 3.");
     }
 
-    var headerJson = Encoding.UTF8.GetString(parts[0].Base64UrlDecode());
+    string headerJson;
+    try
+    {
+        headerJson = Encoding.UTF8.GetString(parts[0].Base64UrlDecode());
+    }
+    catch (Exception ex)
+    {
+        throw new SecurityTokenInvalidSignatureException($"Failed to decode header: {ex.Message}");
+    }
+
     var alg = string.Empty;
     using (var headerDoc = JsonDocument.Parse(headerJson))
     {
         if (!headerDoc.RootElement.TryGetProperty("alg", out var algProp)
             || string.IsNullOrWhiteSpace(algProp.GetString()))
         {
-            throw new SecurityTokenInvalidSignatureException("Missing JWT algorithm.");
+            throw new SecurityTokenInvalidSignatureException("Missing JWT algorithm in header.");
         }
 
         alg = algProp.GetString()!;
     }
 
     var signingInput = Encoding.UTF8.GetBytes(parts[0] + "." + parts[1]);
-    var signatureBytes = parts[2].Base64UrlDecode();
+    byte[] signatureBytes;
+    try
+    {
+        signatureBytes = parts[2].Base64UrlDecode();
+    }
+    catch (Exception ex)
+    {
+        throw new SecurityTokenInvalidSignatureException($"Failed to decode signature: {ex.Message}");
+    }
 
     // ES256 (ECDSA P-256 with SHA-256) validation
     if (!string.Equals(alg, "ES256", StringComparison.Ordinal))
     {
-        throw new SecurityTokenInvalidSignatureException("Only ES256 algorithm is supported.");
+        throw new SecurityTokenInvalidSignatureException($"Algorithm '{alg}' is not supported. Only ES256 is accepted.");
     }
 
     var pems = config.JwtEs256VerificationKeyPems ?? [];
+    if (pems.Length == 0)
+    {
+        throw new SecurityTokenInvalidSignatureException("No ES256 verification keys are configured.");
+    }
+
+    int attemptCount = 0;
     foreach (var rawPem in pems)
     {
+        attemptCount++;
         using var ecdsa = ECDsa.Create();
         try
         {
-            ecdsa.ImportFromPem(NormalizePem(rawPem).AsSpan());
+            var normalizedPem = NormalizePem(rawPem);
+            ecdsa.ImportFromPem(normalizedPem.AsSpan());
         }
         catch (CryptographicException)
         {
+            // Key import failed, try next key
             continue;
         }
 
-        if (ecdsa.VerifyData(
-            signingInput,
-            signatureBytes,
-            HashAlgorithmName.SHA256,
-            DSASignatureFormat.IeeeP1363FixedFieldConcatenation))
+        try
         {
-            return new JwtSecurityToken(token);
+            if (ecdsa.VerifyData(
+                signingInput,
+                signatureBytes,
+                HashAlgorithmName.SHA256,
+                DSASignatureFormat.IeeeP1363FixedFieldConcatenation))
+            {
+                return new JwtSecurityToken(token);
+            }
+        }
+        catch (CryptographicException)
+        {
+            // Verification failed with this key, try next
+            continue;
         }
     }
 
-    throw new SecurityTokenInvalidSignatureException("Invalid JWT signature: no verification key matched.");
+    throw new SecurityTokenInvalidSignatureException(
+        $"Invalid JWT signature: tested {attemptCount} verification key(s) but none matched.");
 }
 
 static string NormalizePem(string pem)
-    => pem.Replace("\\n", "\n", StringComparison.Ordinal);
+{
+    if (string.IsNullOrWhiteSpace(pem))
+        return pem;
+
+    // Normalize various line ending formats to actual newlines
+    var normalized = pem
+        .Replace("\\r\\n", "\n", StringComparison.Ordinal)  // Escaped Windows (\r\n became \\r\\n)
+        .Replace("\\r", "\n", StringComparison.Ordinal)     // Escaped carriage return
+        .Replace("\\n", "\n", StringComparison.Ordinal)     // Escaped newline
+        .Replace("\r\n", "\n", StringComparison.Ordinal)    // Windows line endings
+        .Replace("\r", "\n", StringComparison.Ordinal);     // Old Mac line endings
+
+    return normalized;
+}
 
 static bool TryParsePhoenixFrame(
     string frame,
