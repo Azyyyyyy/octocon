@@ -1,4 +1,5 @@
 using Cassandra;
+using System.Text.Json;
 using Interfold.Domain.Polls;
 using Interfold.Infrastructure.Configuration;
 using Interfold.Infrastructure.Persistence.Transient;
@@ -18,8 +19,8 @@ public sealed class ScyllaPollRepository : IPollRepository
 
     private static readonly Dictionary<short, string> PollCodeToType = new()
     {
-        [0] = "single_choice",
-        [1] = "multiple_choice",
+        [0] = "vote",
+        [1] = "choice",
         [2] = "approval"
     };
 
@@ -46,13 +47,13 @@ public sealed class ScyllaPollRepository : IPollRepository
             var keyspace = _keyspaceResolver.ResolveRegionalKeyspace(systemId);
 
             var query = new SimpleStatement(
-                $"SELECT id, title, description, type, data, time_end FROM {keyspace}.polls WHERE user_id = ?",
+                $"SELECT id, user_id, title, description, type, data, time_end, inserted_at, updated_at FROM {keyspace}.polls WHERE user_id = ?",
                 normalizedSystemId
             );
 
             var rows = await session.ExecuteAsync(query);
             // VERIFIED: 2026-03-17 Elixir polls.ex get_polls() has no explicit sort → database order (ascending). Matches C# OrderBy.
-            return rows.Select(ToReadModel).OrderBy(p => p.PollId, StringComparer.Ordinal).ToList();
+            return rows.Select(ToReadModel).OrderBy(p => p.Id, StringComparer.Ordinal).ToList();
         }, _options, cancellationToken);
     }
 
@@ -66,7 +67,7 @@ public sealed class ScyllaPollRepository : IPollRepository
             if (!TryParseUuid(pollId, out var pollGuid)) return null;
 
             var query = new SimpleStatement(
-                $"SELECT id, title, description, type, data, time_end FROM {keyspace}.polls WHERE user_id = ? AND id = ? LIMIT 1",
+                $"SELECT id, user_id, title, description, type, data, time_end, inserted_at, updated_at FROM {keyspace}.polls WHERE user_id = ? AND id = ? LIMIT 1",
                 normalizedSystemId,
                 pollGuid
             );
@@ -219,7 +220,7 @@ public sealed class ScyllaPollRepository : IPollRepository
         => PollTypeToCode.TryGetValue(type, out var code) ? code : (short)0;
 
     internal static string ToPollType(short code)
-        => PollCodeToType.TryGetValue(code, out var type) ? type : "single_choice";
+        => PollCodeToType.TryGetValue(code, out var type) ? type : "vote";
 
     private static DateTimeOffset? ParseTime(string? iso)
     {
@@ -230,10 +231,13 @@ public sealed class ScyllaPollRepository : IPollRepository
     private static PollReadModel ToReadModel(Row row)
         => new(
             row.GetValue<Guid>("id").ToString("N"),
+            row.GetValue<string>("user_id"),
             row.GetValue<string>("title"),
             row.GetValue<string?>("description"),
             ToPollType(row.GetValue<short>("type")),
-            row.GetValue<string?>("data") ?? "{}",
-            row.GetValue<DateTimeOffset?>("time_end")
+            JsonSerializer.Deserialize<JsonElement>(row.GetValue<string?>("data") ?? "{}"),
+            row.GetValue<DateTime?>("time_end"),
+            row.GetValue<DateTime>("inserted_at"),
+            row.GetValue<DateTime>("updated_at")
         );
 }

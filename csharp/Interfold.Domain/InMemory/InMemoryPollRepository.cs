@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Text.Json;
 using Interfold.Domain.Polls;
 
 namespace Interfold.Domain.InMemory;
@@ -8,11 +9,14 @@ public sealed class InMemoryPollRepository : IPollRepository
     private sealed class PollState
     {
         public required string PollId { get; init; }
+        public required string UserId { get; init; }
         public required string Title { get; set; }
         public string? Description { get; set; }
         public required string Type { get; set; }
-        public string DataJson { get; set; } = "{}";
+        public string Data { get; set; } = "{}";
         public string? TimeEndIso { get; set; }
+        public DateTime InsertedAt { get; set; }
+        public DateTime UpdatedAt { get; set; }
     }
 
     private readonly ConcurrentDictionary<string, ConcurrentDictionary<string, PollState>> _bySystem = new();
@@ -24,7 +28,7 @@ public sealed class InMemoryPollRepository : IPollRepository
 
         var list = store.Values
             .Select(ToReadModel)
-            .OrderBy(p => p.PollId, StringComparer.Ordinal)
+            .OrderBy(p => p.Id, StringComparer.Ordinal)
             .ToList();
 
         return Task.FromResult<IReadOnlyList<PollReadModel>>(list);
@@ -46,10 +50,13 @@ public sealed class InMemoryPollRepository : IPollRepository
         store[id] = new PollState
         {
             PollId = id,
+            UserId = systemId,
             Title = command.Title,
             Description = command.Description,
             Type = command.Type,
-            TimeEndIso = command.TimeEndIso
+            TimeEndIso = command.TimeEndIso,
+            InsertedAt = DateTime.Now,
+            UpdatedAt = DateTime.Now
         };
 
         return Task.FromResult<string?>(id);
@@ -69,7 +76,8 @@ public sealed class InMemoryPollRepository : IPollRepository
         if (command.Title is not null) poll.Title = command.Title;
         if (command.Description is not null) poll.Description = command.Description;
         if (command.TimeEndIso is not null) poll.TimeEndIso = command.TimeEndIso;
-        if (command.DataJson is not null) poll.DataJson = command.DataJson;
+        if (command.DataJson is not null) poll.Data = command.DataJson;
+        poll.UpdatedAt = DateTime.Now;
 
         return Task.FromResult(true);
     }
@@ -85,10 +93,13 @@ public sealed class InMemoryPollRepository : IPollRepository
     private static PollReadModel ToReadModel(PollState state)
         => new(
             state.PollId,
+            state.UserId,
             state.Title,
             state.Description,
             state.Type,
-            state.DataJson,
-            DateTimeOffset.TryParse(state.TimeEndIso, out var ts) ? ts : null
+            JsonSerializer.Deserialize<JsonElement>(state.Data ?? "{}"),
+            DateTime.TryParse(state.TimeEndIso, out var ts) ? ts : null,
+            state.InsertedAt,
+            state.UpdatedAt
         );
 }

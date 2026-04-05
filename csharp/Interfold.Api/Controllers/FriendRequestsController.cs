@@ -4,7 +4,6 @@ using Interfold.Domain.Friendships;
 
 namespace Interfold.Api.Controllers;
 
-//TODO: To ensure route works as expected
 [Route("api/friend-requests")]
 public sealed class FriendRequestsController : InterfoldControllerBase
 {
@@ -73,6 +72,7 @@ public sealed class FriendRequestsController : InterfoldControllerBase
         return result is OkObjectResult ? NoContent() : result;
     }
 
+    //TODO: To ensure route works as expected
     [HttpDelete("{id}")]
     public async Task<IActionResult> Cancel(string id, [FromBody] FriendRequestActionRequest? req, CancellationToken ct)
     {

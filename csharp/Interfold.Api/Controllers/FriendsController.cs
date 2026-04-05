@@ -4,7 +4,6 @@ using Interfold.Domain.Friendships;
 
 namespace Interfold.Api.Controllers;
 
-//TODO: To ensure route works as expected
 [Route("api/friends")]
 public sealed class FriendsController : InterfoldControllerBase
 {

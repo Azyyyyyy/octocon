@@ -5,7 +5,6 @@ using Interfold.Domain.Journals;
 
 namespace Interfold.Api.Controllers;
 
-//TODO: To ensure route works as expected
 [Route("api/systems/me/alters")]
 public sealed class AlterJournalsController : InterfoldControllerBase
 {
@@ -47,8 +46,8 @@ public sealed class AlterJournalsController : InterfoldControllerBase
         var alterExists = await _alterRepository.ExistsAsync(principal, alterId, ct);
         if (!alterExists) return NotFound(new { error = "Alter not found.", code = "alter_not_found" });
 
-        var entries = await _journalRepository.ListAlterAsync(principal, alterId, ct);
-        return Ok(new { data = entries });
+        IReadOnlyList<AlterJournalReadModel> entries = await _journalRepository.ListAlterAsync(principal, alterId, ct);
+        return Ok(new { data = entries ?? [] });
     }
 
     [HttpGet("journals/{journalId}")]

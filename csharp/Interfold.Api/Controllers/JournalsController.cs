@@ -4,7 +4,6 @@ using Interfold.Domain.Journals;
 
 namespace Interfold.Api.Controllers;
 
-//TODO: To ensure route works as expected
 [Route("api/journals")]
 public sealed class JournalsController : InterfoldControllerBase
 {

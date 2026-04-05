@@ -8,20 +8,26 @@ public sealed class InMemoryJournalRepository : IJournalRepository
     private sealed class EntryState
     {
         public required string EntryId { get; init; }
+        public required string UserId { get; init; }
         public required string Title { get; set; }
         public string? Content { get; set; }
         public string? Color { get; set; }
+        public required DateTime InsertedAt { get; init; }
+        public DateTime UpdatedAt { get; set; }
     }
 
     private sealed class AlterEntryState
     {
         public required string EntryId { get; init; }
+        public required string UserId { get; init; }
         public required int AlterId { get; init; }
         public required string Title { get; set; }
         public string? Content { get; set; }
         public string? Color { get; set; }
         public bool Pinned { get; set; }
         public bool Locked { get; set; }
+        public required DateTime InsertedAt { get; init; }
+        public DateTime UpdatedAt { get; set; }
     }
 
     private readonly ConcurrentDictionary<string, ConcurrentDictionary<string, EntryState>> _bySystem = new();
@@ -33,13 +39,17 @@ public sealed class InMemoryJournalRepository : IJournalRepository
     {
         var store = _bySystem.GetOrAdd(systemId, _ => new ConcurrentDictionary<string, EntryState>());
         var id = Guid.NewGuid().ToString("N");
+        var now = DateTime.Now;
 
         store[id] = new EntryState
         {
             EntryId = id,
+            UserId = systemId,
             Title = command.Title,
             Content = null,
-            Color = null
+            Color = null,
+            InsertedAt = now,
+            UpdatedAt = now
         };
 
         return Task.FromResult<string?>(id);
@@ -59,6 +69,7 @@ public sealed class InMemoryJournalRepository : IJournalRepository
         if (command.Title is not null) entry.Title = command.Title;
         if (command.Content is not null) entry.Content = command.Content;
         if (command.Color is not null) entry.Color = command.Color;
+        entry.UpdatedAt = DateTime.Now;
 
         return Task.FromResult(true);
     }
@@ -126,16 +137,20 @@ public sealed class InMemoryJournalRepository : IJournalRepository
     {
         var store = _alterEntriesBySystem.GetOrAdd(systemId, _ => new ConcurrentDictionary<string, AlterEntryState>());
         var entryId = Guid.NewGuid().ToString("N");
+        var now = DateTime.UtcNow;
 
         store[entryId] = new AlterEntryState
         {
             EntryId = entryId,
+            UserId = systemId,
             AlterId = command.AlterId,
             Title = command.Title,
             Content = null,
             Color = null,
             Pinned = false,
-            Locked = false
+            Locked = false,
+            InsertedAt = now,
+            UpdatedAt = now
         };
 
         return Task.FromResult<string?>(entryId);
@@ -157,6 +172,7 @@ public sealed class InMemoryJournalRepository : IJournalRepository
         if (command.Title is not null) entry.Title = command.Title;
         if (command.Content is not null) entry.Content = command.Content;
         if (command.Color is not null) entry.Color = command.Color;
+        entry.UpdatedAt = DateTime.UtcNow;
 
         return Task.FromResult(true);
     }
@@ -175,6 +191,7 @@ public sealed class InMemoryJournalRepository : IJournalRepository
             return Task.FromResult(false);
 
         entry.Locked = locked;
+        entry.UpdatedAt = DateTime.UtcNow;
         return Task.FromResult(true);
     }
 
@@ -184,6 +201,7 @@ public sealed class InMemoryJournalRepository : IJournalRepository
             return Task.FromResult(false);
 
         entry.Pinned = pinned;
+        entry.UpdatedAt = DateTime.UtcNow;
         return Task.FromResult(true);
     }
 
@@ -194,8 +212,8 @@ public sealed class InMemoryJournalRepository : IJournalRepository
 
         var entries = store.Values
             .Where(e => e.AlterId == alterId)
-            .OrderByDescending(e => e.EntryId)
-            .Select(e => new AlterJournalReadModel(e.EntryId, e.AlterId, e.Title, e.Content, e.Color, e.Pinned, e.Locked))
+            .OrderByDescending(e => e.InsertedAt)
+            .Select(e => new AlterJournalReadModel(e.EntryId, e.UserId, e.AlterId, e.Title, e.Content, e.Color, e.Locked, e.Pinned, e.InsertedAt, e.UpdatedAt))
             .ToArray();
 
         return Task.FromResult<IReadOnlyList<AlterJournalReadModel>>(entries);
@@ -207,7 +225,7 @@ public sealed class InMemoryJournalRepository : IJournalRepository
             return Task.FromResult<AlterJournalReadModel?>(null);
 
         return Task.FromResult<AlterJournalReadModel?>(
-            new AlterJournalReadModel(entry.EntryId, entry.AlterId, entry.Title, entry.Content, entry.Color, entry.Pinned, entry.Locked)
+            new AlterJournalReadModel(entry.EntryId, entry.UserId, entry.AlterId, entry.Title, entry.Content, entry.Color, entry.Locked, entry.Pinned, entry.InsertedAt, entry.UpdatedAt)
         );
     }
 
@@ -222,7 +240,17 @@ public sealed class InMemoryJournalRepository : IJournalRepository
             {
                 var (pinned, locked) = GetGlobalState(systemId, e.EntryId);
                 var alterIds = GetGlobalAlterIds(systemId, e.EntryId);
-                return new GlobalJournalReadModel(e.EntryId, e.Title, e.Content, e.Color, pinned, locked, alterIds);
+                return new GlobalJournalReadModel(
+                    e.EntryId,
+                    e.UserId,
+                    e.Title,
+                    e.Content,
+                    e.Color,
+                    locked,
+                    pinned,
+                    e.InsertedAt,
+                    e.UpdatedAt,
+                    alterIds);
             })
             .ToArray();
 
@@ -237,7 +265,17 @@ public sealed class InMemoryJournalRepository : IJournalRepository
         var (pinned, locked) = GetGlobalState(systemId, entryId);
         var alterIds = GetGlobalAlterIds(systemId, entryId);
         return Task.FromResult<GlobalJournalReadModel?>(
-            new GlobalJournalReadModel(entry.EntryId, entry.Title, entry.Content, entry.Color, pinned, locked, alterIds));
+            new GlobalJournalReadModel(
+                entry.EntryId,
+                entry.UserId,
+                entry.Title,
+                entry.Content,
+                entry.Color,
+                locked,
+                pinned,
+                entry.InsertedAt,
+                entry.UpdatedAt,
+                alterIds));
     }
 
     private (bool Pinned, bool Locked) GetGlobalState(string systemId, string entryId)

@@ -24,6 +24,35 @@ public sealed class ParityRegressionTests
     // -----------------------------------------------------------------------
 
     [Test]
+    public async Task AlterJournal_ListWhenEmpty_ReturnsDataAsEmptyArray()
+    {
+        if (!IntegrationTestEnvironment.ShouldRunApiIntegration) return;
+
+        var workspaceRoot = FindWorkspaceRoot();
+        var port = GetFreePort();
+        await using var api = await StartApiAsync(workspaceRoot, port);
+        using var client = new HttpClient { BaseAddress = new Uri($"http://127.0.0.1:{port}") };
+
+        var principal = "parity-alter-journal-empty-list";
+        var alterId = await CreateAlterAsync(client, principal, "NoJournalAlter");
+
+        using var listReq = new HttpRequestMessage(HttpMethod.Get, $"/api/systems/me/alters/{alterId}/journals");
+        var listRes = await client.SendAsync(listReq);
+        var listBody = await listRes.Content.ReadAsStringAsync();
+
+        Ensure(listRes.StatusCode == HttpStatusCode.OK,
+            $"Expected alter-journal list 200, got {(int)listRes.StatusCode}. Body: {listBody}");
+
+        using var doc = JsonDocument.Parse(listBody);
+        Ensure(doc.RootElement.TryGetProperty("data", out var dataProp),
+            $"Expected 'data' property in list response. Body: {listBody}");
+        Ensure(dataProp.ValueKind == JsonValueKind.Array,
+            $"Expected 'data' to be a JSON array, got {dataProp.ValueKind}. Body: {listBody}");
+        Ensure(dataProp.GetArrayLength() == 0,
+            $"Expected empty alter-journal list for new alter. Body: {listBody}");
+    }
+
+    [Test]
     public async Task AlterJournal_NestedCreate_Returns201WithDataAndReplay()
     {
         if (!IntegrationTestEnvironment.ShouldRunApiIntegration) return;
@@ -47,7 +76,9 @@ public sealed class ParityRegressionTests
         Ensure(createRes.StatusCode == HttpStatusCode.Created,
             $"Expected alter-journal create 201, got {(int)createRes.StatusCode}. Body: {createBody}");
 
-        var entryId = ReadNestedString(createBody, "data", "entryId");
+        var entryId = ReadNestedString(createBody, "data", "id");
+        if (string.IsNullOrWhiteSpace(entryId))
+            entryId = ReadNestedString(createBody, "data", "entry_id");
         Ensure(!string.IsNullOrWhiteSpace(entryId),
             $"Expected entryId in create response body. Body: {createBody}");
 
@@ -73,7 +104,9 @@ public sealed class ParityRegressionTests
         Ensure(showRes.StatusCode == HttpStatusCode.OK,
             $"Expected alter-journal show 200, got {(int)showRes.StatusCode}. Body: {showBody}");
 
-        var shownId = ReadNestedString(showBody, "data", "entryId");
+        var shownId = ReadNestedString(showBody, "data", "id");
+        if (string.IsNullOrWhiteSpace(shownId))
+            shownId = ReadNestedString(showBody, "data", "entry_id");
         Ensure(string.Equals(shownId, entryId, StringComparison.OrdinalIgnoreCase),
             $"Expected shown entryId to match created. Body: {showBody}");
 
@@ -113,7 +146,10 @@ public sealed class ParityRegressionTests
             Content = JsonContent.Create(new { title = "ToDelete" })
         };
         var createRes = await client.SendAsync(createReq);
-        var entryId = ReadNestedString(await createRes.Content.ReadAsStringAsync(), "data", "entryId");
+        var createBody = await createRes.Content.ReadAsStringAsync();
+        var entryId = ReadNestedString(createBody, "data", "id");
+        if (string.IsNullOrWhiteSpace(entryId))
+            entryId = ReadNestedString(createBody, "data", "entry_id");
 
         using var deleteReq = new HttpRequestMessage(HttpMethod.Delete, $"/api/systems/me/alters/journals/{entryId}");
         await client.SendAsync(deleteReq);
@@ -653,11 +689,11 @@ public sealed class ParityRegressionTests
             Ensure(getRes.StatusCode == HttpStatusCode.OK,
                 $"Expected get poll {type} (200), got {(int)getRes.StatusCode}. Body: {getBody}");
 
-            // Legacy types (vote, choice) should map to canonical names (single_choice, multiple_choice).
+            // Legacy aliases (single_choice, multiple_choice) should read back as canonical Elixir type names (vote, choice).
             var expectedType = type switch
             {
-                "vote" => "single_choice",
-                "choice" => "multiple_choice",
+                "single_choice" => "vote",
+                "multiple_choice" => "choice",
                 _ => type
             };
 

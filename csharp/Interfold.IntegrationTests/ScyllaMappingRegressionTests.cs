@@ -32,11 +32,11 @@ public sealed class ScyllaMappingRegressionTests
         Ensure(ScyllaPollRepository.ToPollCode("approval") == 2, "approval should map to 2.");
         Ensure(ScyllaPollRepository.ToPollCode("unknown-type") == 0, "Unknown poll type should default to 0.");
 
-        Ensure(ScyllaPollRepository.ToPollType(0) == "single_choice", "Code 0 should map to single_choice.");
-        Ensure(ScyllaPollRepository.ToPollType(1) == "multiple_choice", "Code 1 should map to multiple_choice.");
+        Ensure(ScyllaPollRepository.ToPollType(0) == "vote", "Code 0 should map to vote.");
+        Ensure(ScyllaPollRepository.ToPollType(1) == "choice", "Code 1 should map to choice.");
         Ensure(ScyllaPollRepository.ToPollType(2) == "approval", "Code 2 should map to approval.");
-        Ensure(ScyllaPollRepository.ToPollType(short.MinValue) == "single_choice", "Lower boundary should default to single_choice.");
-        Ensure(ScyllaPollRepository.ToPollType(short.MaxValue) == "single_choice", "Upper boundary should default to single_choice.");
+        Ensure(ScyllaPollRepository.ToPollType(short.MinValue) == "vote", "Lower boundary should default to vote.");
+        Ensure(ScyllaPollRepository.ToPollType(short.MaxValue) == "vote", "Upper boundary should default to vote.");
     }
 
     [Test]

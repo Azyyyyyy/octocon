@@ -477,7 +477,7 @@ public sealed class ScyllaJournalRepository : IJournalRepository
             var keyspace = _keyspaceResolver.ResolveRegionalKeyspace(systemId);
 
             var query = new SimpleStatement(
-                $"SELECT id, alter_id, title, content, color, pinned, locked FROM {keyspace}.alter_journals WHERE user_id = ? AND alter_id = ?",
+                $"SELECT id, user_id, alter_id, title, content, color, pinned, locked, inserted_at, updated_at FROM {keyspace}.alter_journals_by_alter WHERE user_id = ? AND alter_id = ?",
                 normalizedSystemId,
                 (short)alterId
             );
@@ -486,13 +486,16 @@ public sealed class ScyllaJournalRepository : IJournalRepository
             return rows
                 .Select(row => new AlterJournalReadModel(
                     row.GetValue<Guid>("id").ToString("N"),
+                    row.GetValue<string>("user_id"),
                     row.GetValue<short>("alter_id"),
                     row.GetValue<string>("title"),
                     row.GetValue<string?>("content"),
                     row.GetValue<string?>("color"),
+                    row.GetValue<bool>("locked"),
                     row.GetValue<bool>("pinned"),
-                    row.GetValue<bool>("locked")))
-                .OrderByDescending(e => e.EntryId)
+                    row.GetValue<DateTime>("inserted_at"),
+                    row.GetValue<DateTime>("updated_at")))
+                .OrderByDescending(e => e.InsertedAt)
                 .ToArray();
         }, _options, cancellationToken);
     }
@@ -511,7 +514,7 @@ public sealed class ScyllaJournalRepository : IJournalRepository
             var keyspace = _keyspaceResolver.ResolveRegionalKeyspace(systemId);
 
             var query = new SimpleStatement(
-                $"SELECT id, alter_id, title, content, color, pinned, locked FROM {keyspace}.alter_journals WHERE user_id = ? AND id = ? ALLOW FILTERING",
+                $"SELECT id, user_id, alter_id, title, content, color, pinned, locked, inserted_at, updated_at FROM {keyspace}.alter_journals WHERE user_id = ? AND id = ? ALLOW FILTERING",
                 normalizedSystemId,
                 entryGuid
             );
@@ -521,12 +524,15 @@ public sealed class ScyllaJournalRepository : IJournalRepository
                 ? null
                 : new AlterJournalReadModel(
                     row.GetValue<Guid>("id").ToString("N"),
+                    row.GetValue<string>("user_id"),
                     row.GetValue<short>("alter_id"),
                     row.GetValue<string>("title"),
                     row.GetValue<string?>("content"),
                     row.GetValue<string?>("color"),
+                    row.GetValue<bool>("locked"),
                     row.GetValue<bool>("pinned"),
-                    row.GetValue<bool>("locked"));
+                    row.GetValue<DateTime>("inserted_at"),
+                    row.GetValue<DateTime>("updated_at"));
         }, _options, cancellationToken);
     }
 
@@ -539,7 +545,7 @@ public sealed class ScyllaJournalRepository : IJournalRepository
             var keyspace = _keyspaceResolver.ResolveRegionalKeyspace(systemId);
 
             var entriesQuery = new SimpleStatement(
-                $"SELECT id, title, content, color, pinned, locked FROM {keyspace}.global_journals WHERE user_id = ?",
+                $"SELECT id, user_id, title, content, color, pinned, locked, inserted_at, updated_at FROM {keyspace}.global_journals WHERE user_id = ?",
                 normalizedSystemId
             );
             var entryRows = await session.ExecuteAsync(entriesQuery);
@@ -558,16 +564,19 @@ public sealed class ScyllaJournalRepository : IJournalRepository
 
                 result.Add(new GlobalJournalReadModel(
                     id.ToString("N"),
+                    row.GetValue<string>("user_id"),
                     row.GetValue<string>("title"),
                     row.GetValue<string?>("content"),
                     row.GetValue<string?>("color"),
-                    row.GetValue<bool>("pinned"),
                     row.GetValue<bool>("locked"),
+                    row.GetValue<bool>("pinned"),
+                    row.GetValue<DateTime>("inserted_at"),
+                    row.GetValue<DateTime>("updated_at"),
                     alterIds));
             }
 
             return (IReadOnlyList<GlobalJournalReadModel>)result
-                .OrderByDescending(e => e.EntryId)
+                .OrderByDescending(e => e.Id)
                 .ToArray();
         }, _options, cancellationToken);
     }
@@ -586,7 +595,7 @@ public sealed class ScyllaJournalRepository : IJournalRepository
             var keyspace = _keyspaceResolver.ResolveRegionalKeyspace(systemId);
 
             var entryQuery = new SimpleStatement(
-                $"SELECT id, title, content, color, pinned, locked FROM {keyspace}.global_journals WHERE user_id = ? AND id = ? LIMIT 1",
+                $"SELECT id, user_id, title, content, color, pinned, locked, inserted_at, updated_at FROM {keyspace}.global_journals WHERE user_id = ? AND id = ? LIMIT 1",
                 normalizedSystemId,
                 entryGuid
             );
@@ -605,11 +614,14 @@ public sealed class ScyllaJournalRepository : IJournalRepository
 
             return new GlobalJournalReadModel(
                 entryRow.GetValue<Guid>("id").ToString("N"),
+                entryRow.GetValue<string>("user_id"),
                 entryRow.GetValue<string>("title"),
                 entryRow.GetValue<string?>("content"),
                 entryRow.GetValue<string?>("color"),
-                entryRow.GetValue<bool>("pinned"),
                 entryRow.GetValue<bool>("locked"),
+                entryRow.GetValue<bool>("pinned"),
+                entryRow.GetValue<DateTime>("inserted_at"),
+                entryRow.GetValue<DateTime>("updated_at"),
                 alterIds);
         }, _options, cancellationToken);
     }

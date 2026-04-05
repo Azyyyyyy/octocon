@@ -5,7 +5,6 @@ using Interfold.Infrastructure.Persistence.Bootstrap;
 
 namespace Interfold.Api.Controllers;
 
-//TODO: To ensure route works as expected
 /// <summary>
 /// Exposes node-role metadata for load-balancer and ops health checks.
 /// </summary>

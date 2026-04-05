@@ -1,11 +1,17 @@
 namespace Interfold.Domain.Journals;
 
+using System;
+using System.Text.Json.Serialization;
+
 public sealed record GlobalJournalReadModel(
-    string EntryId,
+    string Id,
+    string UserId,
     string Title,
     string? Content,
     string? Color,
-    bool Pinned,
     bool Locked,
-    IReadOnlyList<int> AlterIds
+    bool Pinned,
+    DateTime InsertedAt,
+    DateTime UpdatedAt,
+    IReadOnlyList<int> Alters
 );
