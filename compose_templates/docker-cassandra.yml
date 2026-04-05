@@ -89,7 +89,7 @@ services:
         condition: service_completed_successfully
     volumes:
       - ../csharp/db/scylla/001_create_octocon_keyspaces.cql:/init.cql
-      - ../csharp/db/scylla/001_create_octocon_schema.nam.cql:/schema.cql
+      - ../csharp/db/scylla/001_create_octocon_schema.templated.cql:/schema.cql
       - ../dev/scylla/scripts/scylla-load-keyspaces.sh:/scripts/cassandra-load-keyspaces.sh
     restart: on-failure
     entrypoint: ["/bin/bash", "/scripts/cassandra-load-keyspaces.sh", "172.30.1.1"]

@@ -28,6 +28,7 @@ public static partial class ServiceCollectionExtensions
     ) => AddInterfoldPersistence(services, mode, cfg =>
     {
         cfg.DefaultRegion = configuration.DefaultRegion;
+        cfg.CompatibilityMode = configuration.CompatibilityMode;
         cfg.PostgresConnectionString = configuration.PostgresConnectionString;
         cfg.ScyllaKeyspace           = configuration.ScyllaKeyspace;
         cfg.ScyllaLocalDatacenter    = configuration.ScyllaLocalDatacenter;
@@ -91,8 +92,17 @@ public static partial class ServiceCollectionExtensions
                 .AddSingleton<IOperationalHealthChecker>(sp =>
                     sp.GetRequiredService<IDatabaseBootstrapHealthChecker>() as IOperationalHealthChecker ?? throw new InvalidOperationException()),
 
-            PersistenceMode.ScyllaPostgres => services
-                .AddSingleton<IPostgresConnectionFactory>(_ => new PostgresConnectionFactory(options.PostgresConnectionString, options))
+            PersistenceMode.ScyllaPostgres => AddScyllaPostgresPersistence(services, options),
+
+            _ => throw new InvalidOperationException($"Unsupported persistence mode: {mode}")
+        };
+    }
+
+    private static IServiceCollection AddScyllaPostgresPersistence(
+        IServiceCollection services,
+        PersistenceConfiguration options)
+    {
+        var pipeline = services
                 .AddSingleton<IScyllaSessionProvider, ScyllaSessionProvider>()
                 .AddSingleton<IScyllaKeyspaceResolver, ScyllaKeyspaceResolver>()
                 .AddSingleton<IRegionContext, ScyllaUserRegistryRegionContext>()
@@ -106,7 +116,12 @@ public static partial class ServiceCollectionExtensions
                 .AddSingleton<ITagRepository, ScyllaTagRepository>()
                 .AddSingleton<IJournalRepository, ScyllaJournalRepository>()
                 .AddSingleton<IPollRepository, ScyllaPollRepository>()
-                .AddSingleton<IAggregateVersionStore, ScyllaAggregateVersionStore>()
+                .AddSingleton<IAggregateVersionStore, ScyllaAggregateVersionStore>();
+
+        if (!options.CompatibilityMode)
+        {
+            pipeline = pipeline
+                .AddSingleton<IPostgresConnectionFactory>(_ => new PostgresConnectionFactory(options.PostgresConnectionString, options))
                 .AddSingleton<IIdempotencyStore, PostgresIdempotencyStore>()
                 .AddSingleton<IAuthTokenRevocationRepository, AuthTokenRevocationRepository>()
                 .AddSingleton<IDatabaseBootstrapHealthChecker>(sp =>
@@ -114,12 +129,24 @@ public static partial class ServiceCollectionExtensions
                         sp.GetRequiredService<IPostgresConnectionFactory>(),
                         sp.GetRequiredService<IScyllaSessionProvider>(),
                         sp.GetRequiredService<IAlterRepository>(),
-                        options))
-                .AddSingleton<IOperationalHealthChecker>(sp =>
-                    sp.GetRequiredService<IDatabaseBootstrapHealthChecker>() as IOperationalHealthChecker ?? throw new InvalidOperationException()),
+                        options));
+        }
+        else
+        {
+            pipeline = pipeline
+                .AddSingleton<IIdempotencyStore, InMemoryIdempotencyStore>()
+                .AddSingleton<IAuthTokenRevocationRepository, InMemoryAuthTokenRevocationRepository>()
+                .AddSingleton<IDatabaseBootstrapHealthChecker>(sp =>
+                    new ScyllaPostgresBootstrapHealthChecker(
+                        null,
+                        sp.GetRequiredService<IScyllaSessionProvider>(),
+                        sp.GetRequiredService<IAlterRepository>(),
+                        options));
+        }
 
-            _ => throw new InvalidOperationException($"Unsupported persistence mode: {mode}")
-        };
+        return pipeline
+            .AddSingleton<IOperationalHealthChecker>(sp =>
+                sp.GetRequiredService<IDatabaseBootstrapHealthChecker>() as IOperationalHealthChecker ?? throw new InvalidOperationException());
     }
 
     public static IServiceCollection AddInterfoldDomainHandlers(this IServiceCollection services) =>

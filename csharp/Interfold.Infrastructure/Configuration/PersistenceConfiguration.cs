@@ -35,6 +35,15 @@ public sealed class PersistenceConfiguration
         "Host=localhost;Port=5432;Database=octocon;Username=octocon;Password=octocon";
 
     /// <summary>
+    /// Compatibility mode for Scylla-only operation in 'scylla-postgres' mode.
+    /// When true, idempotency and auth token revocation use in-memory stores and
+    /// Postgres bootstrap checks are skipped.
+    /// Default: false
+    /// Env: OCTOCON_COMPATIBILITY_MODE
+    /// </summary>
+    public bool CompatibilityMode { get; set; } = false;
+
+    /// <summary>
     /// Scylla default keyspace (typically matches region).
     /// Default: 'nam' (matches DefaultRegion)
     /// Env: OCTOCON_SCYLLA_KEYSPACE

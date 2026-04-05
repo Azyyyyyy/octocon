@@ -35,13 +35,13 @@ public sealed class ScyllaPostgresBootstrapHealthChecker : IDatabaseBootstrapHea
         "alter_journals"
     ];
 
-    private readonly IPostgresConnectionFactory _postgresConnectionFactory;
+    private readonly IPostgresConnectionFactory? _postgresConnectionFactory;
     private readonly IScyllaSessionProvider _scyllaSessionProvider;
     private readonly IAlterRepository _alterRepository;
     private readonly PersistenceConfiguration _options;
 
     public ScyllaPostgresBootstrapHealthChecker(
-        IPostgresConnectionFactory postgresConnectionFactory,
+        IPostgresConnectionFactory? postgresConnectionFactory,
         IScyllaSessionProvider scyllaSessionProvider,
         IAlterRepository alterRepository,
         PersistenceConfiguration options
@@ -66,6 +66,11 @@ public sealed class ScyllaPostgresBootstrapHealthChecker : IDatabaseBootstrapHea
 
     private async Task<DatabaseStoreHealth> CheckPostgresAsync(CancellationToken cancellationToken)
     {
+        if (_options.CompatibilityMode || _postgresConnectionFactory is null)
+        {
+            return new DatabaseStoreHealth("postgres", true, "Skipped in compatibility mode.");
+        }
+
         try
         {
             await DatabaseTransientRetry.ExecutePostgresAsync(async () =>

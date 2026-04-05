@@ -1,14 +1,19 @@
 -- =====================
+-- Schema Template: Replace {{KEYSPACE}} with regional keyspace (nam, eur, ocn, eas, sam, sas, gdpr)
+-- Or create separate scripts per keyspace
+-- =====================
+
+-- =====================
 -- UDTs
 -- =====================
-CREATE TYPE IF NOT EXISTS nam.discord_server_settings (
+CREATE TYPE IF NOT EXISTS {{KEYSPACE}}.discord_server_settings (
     guild_id text,
     proxying_disabled boolean,
     autoproxy_mode smallint,
     latched_alter int
 );
 
-CREATE TYPE IF NOT EXISTS nam.discord_settings (
+CREATE TYPE IF NOT EXISTS {{KEYSPACE}}.discord_settings (
     system_tag text,
     show_system_tag boolean,
     case_insensitive_proxies boolean,
@@ -18,10 +23,10 @@ CREATE TYPE IF NOT EXISTS nam.discord_settings (
     use_proxy_delay boolean,
     global_autoproxy_mode smallint,
     global_latched_alter int,
-    server_settings list<frozen<nam.discord_server_settings>>
+    server_settings list<frozen<{{KEYSPACE}}.discord_server_settings>>
 );
 
-CREATE TYPE IF NOT EXISTS nam.field (
+CREATE TYPE IF NOT EXISTS {{KEYSPACE}}.field (
     id uuid,
     name text,
     type smallint,
@@ -29,12 +34,12 @@ CREATE TYPE IF NOT EXISTS nam.field (
     security_level smallint
 );
 
-CREATE TYPE IF NOT EXISTS nam.alter_field (
+CREATE TYPE IF NOT EXISTS {{KEYSPACE}}.alter_field (
     id uuid,
     value text
 );
 
-CREATE TYPE IF NOT EXISTS nam.server_settings_data (
+CREATE TYPE IF NOT EXISTS {{KEYSPACE}}.server_settings_data (
     log_channel text,
     force_system_tags boolean,
     proxy_disabled_users list<text>
@@ -43,7 +48,7 @@ CREATE TYPE IF NOT EXISTS nam.server_settings_data (
 -- =====================
 -- USERS TABLE
 -- =====================
-CREATE TABLE IF NOT EXISTS nam.users (
+CREATE TABLE IF NOT EXISTS {{KEYSPACE}}.users (
     id text,
     email text,
     discord_id text,
@@ -55,8 +60,8 @@ CREATE TABLE IF NOT EXISTS nam.users (
     lifetime_alter_count int,
     primary_front int,
     last_proxy_id smallint,
-    discord_settings frozen<nam.discord_settings>,
-    fields list<frozen<nam.field>>,
+    discord_settings frozen<{{KEYSPACE}}.discord_settings>,
+    fields list<frozen<{{KEYSPACE}}.field>>,
     salt text,
     encryption_initialized boolean,
     encryption_key_checksum text,
@@ -65,16 +70,16 @@ CREATE TABLE IF NOT EXISTS nam.users (
     PRIMARY KEY (id)
 );
 
-CREATE INDEX IF NOT EXISTS users_by_discord_id ON nam.users (discord_id);
-CREATE INDEX IF NOT EXISTS users_by_email ON nam.users (email);
-CREATE INDEX IF NOT EXISTS users_by_username ON nam.users (username);
-CREATE INDEX IF NOT EXISTS users_by_apple_id ON nam.users (apple_id);
-CREATE INDEX IF NOT EXISTS users_by_google_id ON nam.users (google_id);
+CREATE INDEX IF NOT EXISTS users_by_discord_id ON {{KEYSPACE}}.users (discord_id);
+CREATE INDEX IF NOT EXISTS users_by_email ON {{KEYSPACE}}.users (email);
+CREATE INDEX IF NOT EXISTS users_by_username ON {{KEYSPACE}}.users (username);
+CREATE INDEX IF NOT EXISTS users_by_apple_id ON {{KEYSPACE}}.users (apple_id);
+CREATE INDEX IF NOT EXISTS users_by_google_id ON {{KEYSPACE}}.users (google_id);
 
 -- =====================
 -- ALTERS TABLE
 -- =====================
-CREATE TABLE IF NOT EXISTS nam.alters (
+CREATE TABLE IF NOT EXISTS {{KEYSPACE}}.alters (
     user_id text,
     id smallint,
     alias text,
@@ -87,7 +92,7 @@ CREATE TABLE IF NOT EXISTS nam.alters (
     color text,
     discord_proxies list<text>,
     proxy_name text,
-    fields list<frozen<nam.alter_field>>,
+    fields list<frozen<{{KEYSPACE}}.alter_field>>,
     untracked boolean,
     archived boolean,
     pinned boolean,
@@ -97,18 +102,18 @@ CREATE TABLE IF NOT EXISTS nam.alters (
     PRIMARY KEY (user_id, id)
 );
 
-CREATE MATERIALIZED VIEW IF NOT EXISTS nam.alters_by_alias AS
+CREATE MATERIALIZED VIEW IF NOT EXISTS {{KEYSPACE}}.alters_by_alias AS
     SELECT user_id, id, alias, name, pronouns, description, avatar_url,
            security_level, extra_images, color, discord_proxies, proxy_name,
            fields, untracked, archived, pinned, last_fronted, inserted_at, updated_at
-    FROM nam.alters
+    FROM {{KEYSPACE}}.alters
     WHERE user_id IS NOT NULL AND alias IS NOT NULL AND id IS NOT NULL
     PRIMARY KEY ((user_id), alias, id);
 
 -- =====================
 -- TAGS TABLE
 -- =====================
-CREATE TABLE IF NOT EXISTS nam.tags (
+CREATE TABLE IF NOT EXISTS {{KEYSPACE}}.tags (
     user_id text,
     id uuid,
     parent_tag_id uuid,
@@ -124,7 +129,7 @@ CREATE TABLE IF NOT EXISTS nam.tags (
 -- =====================
 -- ALTER_TAGS TABLE
 -- =====================
-CREATE TABLE IF NOT EXISTS nam.alter_tags (
+CREATE TABLE IF NOT EXISTS {{KEYSPACE}}.alter_tags (
     user_id text,
     tag_id uuid,
     alter_id smallint,
@@ -133,16 +138,16 @@ CREATE TABLE IF NOT EXISTS nam.alter_tags (
     PRIMARY KEY (user_id, tag_id, alter_id)
 );
 
-CREATE MATERIALIZED VIEW IF NOT EXISTS nam.alter_tags_by_alter AS
+CREATE MATERIALIZED VIEW IF NOT EXISTS {{KEYSPACE}}.alter_tags_by_alter AS
     SELECT user_id, tag_id, alter_id, inserted_at, updated_at
-    FROM nam.alter_tags
+    FROM {{KEYSPACE}}.alter_tags
     WHERE user_id IS NOT NULL AND alter_id IS NOT NULL AND tag_id IS NOT NULL
     PRIMARY KEY ((user_id), alter_id, tag_id);
 
 -- =====================
 -- POLLS TABLE
 -- =====================
-CREATE TABLE IF NOT EXISTS nam.polls (
+CREATE TABLE IF NOT EXISTS {{KEYSPACE}}.polls (
     user_id text,
     id uuid,
     title text,
@@ -158,7 +163,7 @@ CREATE TABLE IF NOT EXISTS nam.polls (
 -- =====================
 -- GLOBAL_JOURNALS TABLE
 -- =====================
-CREATE TABLE IF NOT EXISTS nam.global_journals (
+CREATE TABLE IF NOT EXISTS {{KEYSPACE}}.global_journals (
     user_id text,
     id uuid,
     title text,
@@ -174,19 +179,19 @@ CREATE TABLE IF NOT EXISTS nam.global_journals (
 -- =====================
 -- GLOBAL_JOURNAL_ALTERS TABLE
 -- =====================
-CREATE TABLE IF NOT EXISTS nam.global_journal_alters (
+CREATE TABLE IF NOT EXISTS {{KEYSPACE}}.global_journal_alters (
     user_id text,
-    journal_id uuid,
+    global_journal_id uuid,
     alter_id smallint,
     inserted_at timestamp,
     updated_at timestamp,
-    PRIMARY KEY (user_id, journal_id, alter_id)
+    PRIMARY KEY (user_id, global_journal_id, alter_id)
 );
 
 -- =====================
 -- CURRENT_FRONTS TABLE
 -- =====================
-CREATE TABLE IF NOT EXISTS nam.current_fronts (
+CREATE TABLE IF NOT EXISTS {{KEYSPACE}}.current_fronts (
     user_id text,
     alter_id smallint,
     id uuid,
@@ -198,20 +203,9 @@ CREATE TABLE IF NOT EXISTS nam.current_fronts (
 );
 
 -- =====================
--- SERVER_SETTINGS TABLE
--- =====================
-CREATE TABLE IF NOT EXISTS nam.server_settings (
-    guild_id text,
-    data frozen<nam.server_settings_data>,
-    inserted_at timestamp,
-    updated_at timestamp,
-    PRIMARY KEY (guild_id)
-);
-
--- =====================
 -- ALTER_JOURNALS TABLE
 -- =====================
-CREATE TABLE IF NOT EXISTS nam.alter_journals (
+CREATE TABLE IF NOT EXISTS {{KEYSPACE}}.alter_journals (
     user_id text,
     id uuid,
     alter_id smallint,
@@ -225,33 +219,71 @@ CREATE TABLE IF NOT EXISTS nam.alter_journals (
     PRIMARY KEY (user_id, id, alter_id)
 );
 
-CREATE MATERIALIZED VIEW IF NOT EXISTS nam.alter_journals_by_alter AS
+CREATE MATERIALIZED VIEW IF NOT EXISTS {{KEYSPACE}}.alter_journals_by_alter AS
     SELECT user_id, id, alter_id, title, content, color, pinned, locked,
            inserted_at, updated_at
-    FROM nam.alter_journals
+    FROM {{KEYSPACE}}.alter_journals
     WHERE user_id IS NOT NULL AND alter_id IS NOT NULL AND id IS NOT NULL
     PRIMARY KEY ((user_id), alter_id, id);
 
 -- =====================
 -- FRONTS TABLE
 -- =====================
-CREATE TABLE IF NOT EXISTS nam.fronts (
-    user_id text,
+CREATE TABLE IF NOT EXISTS {{KEYSPACE}}.fronts (
     id uuid,
+    user_id text,
     alter_id smallint,
     comment text,
     time_start timestamp,
     time_end timestamp,
     inserted_at timestamp,
     updated_at timestamp,
-    PRIMARY KEY (user_id, alter_id, id, time_start)
+    PRIMARY KEY (user_id, id, time_start)
 );
 
-CREATE MATERIALIZED VIEW IF NOT EXISTS nam.fronts_by_time AS
-    SELECT * FROM nam.fronts
+CREATE MATERIALIZED VIEW IF NOT EXISTS {{KEYSPACE}}.fronts_by_alter AS
+    SELECT user_id, alter_id, id, comment, time_start, time_end, inserted_at, updated_at
+    FROM {{KEYSPACE}}.fronts
+    WHERE user_id IS NOT NULL AND alter_id IS NOT NULL AND id IS NOT NULL AND time_start IS NOT NULL
+    PRIMARY KEY (user_id, alter_id, id, time_start);
+
+CREATE MATERIALIZED VIEW IF NOT EXISTS {{KEYSPACE}}.fronts_by_time AS
+    SELECT user_id, alter_id, id, comment, time_start, time_end, inserted_at, updated_at
+    FROM {{KEYSPACE}}.fronts
     WHERE user_id IS NOT NULL AND time_start IS NOT NULL AND time_end IS NOT NULL
-      AND id IS NOT NULL AND alter_id IS NOT NULL
-    PRIMARY KEY (user_id, time_start, time_end, id, alter_id);
+            AND id IS NOT NULL
+        PRIMARY KEY (user_id, time_start, time_end, id);
+
+CREATE MATERIALIZED VIEW IF NOT EXISTS {{KEYSPACE}}.fronts_by_end_time AS
+    SELECT user_id, alter_id, id, comment, time_start, time_end, inserted_at, updated_at
+    FROM {{KEYSPACE}}.fronts
+    WHERE user_id IS NOT NULL AND time_start IS NOT NULL AND time_end IS NOT NULL
+            AND id IS NOT NULL
+        PRIMARY KEY (user_id, time_end, time_start, id);
+
+-- =====================
+-- SERVER_SETTINGS TABLE (Nam-specific)
+-- =====================
+CREATE TABLE IF NOT EXISTS {{KEYSPACE}}.server_settings (
+    guild_id text,
+    data frozen<{{KEYSPACE}}.server_settings_data>,
+    inserted_at timestamp,
+    updated_at timestamp,
+    PRIMARY KEY (guild_id)
+);
+
+-- =====================
+-- CHANNEL_BLACKLISTS TABLE (Nam-specific)
+-- =====================
+CREATE TABLE IF NOT EXISTS {{KEYSPACE}}.channel_blacklists (
+    channel_id text,
+    guild_id text,
+    inserted_at timestamp,
+    updated_at timestamp,
+    PRIMARY KEY (channel_id)
+);
+
+CREATE INDEX IF NOT EXISTS channel_blacklists_by_guild_id ON {{KEYSPACE}}.channel_blacklists (guild_id);
 
 -- =====================
 -- GLOBAL KEYSPACE TABLES
@@ -317,7 +349,7 @@ CREATE TABLE IF NOT EXISTS global.aggregate_versions_by_region (
 );
 
 -- =====================
--- METRICS KEYSPACE
+-- METRICS KEYSPACE (nam_nt)
 -- =====================
 CREATE TABLE IF NOT EXISTS nam_nt.metrics_counts (
     key text,

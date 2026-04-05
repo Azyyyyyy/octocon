@@ -133,8 +133,11 @@ public static class ConfigurationServiceCollectionExtensions
     {
         var region           = config["OCTOCON_REGION"] ?? "nam";
         var contactPointsStr = config["OCTOCON_SCYLLA_CONTACT_POINTS"];
+        var compatibilityMode = bool.TryParse(config["OCTOCON_COMPATIBILITY_MODE"], out var parsedCompatibilityMode)
+            && parsedCompatibilityMode;
         opts.Mode                     = config["OCTOCON_PERSISTENCE"] ?? "scylla-postgres";
         opts.DefaultRegion            = region;
+        opts.CompatibilityMode        = compatibilityMode;
         opts.PostgresConnectionString = config["OCTOCON_POSTGRES_CONNECTION"]
             ?? "Host=localhost;Port=5432;Database=octocon;Username=octocon;Password=octocon";
         opts.ScyllaKeyspace           = config["OCTOCON_SCYLLA_KEYSPACE"] ?? region;

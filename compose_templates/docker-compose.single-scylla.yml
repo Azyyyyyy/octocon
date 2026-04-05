@@ -5,6 +5,15 @@ x-log-rotation: &default-log-rotation
     max-file: "3"
 
 services:
+  scylla-host-aio:
+    image: scylladb/scylla:2025.1
+    privileged: true
+    pid: host
+    restart: "no"
+    volumes:
+      - ../dev/scylla/scripts/ensure-host-aio.sh:/scripts/ensure-host-aio.sh:ro
+    entrypoint: ["/bin/bash", "/scripts/ensure-host-aio.sh"]
+
   scylla:
     image: scylladb/scylla:2025.1
     ports:
@@ -23,6 +32,9 @@ services:
     networks:
       octo_network:
         ipv4_address: 172.30.1.1
+    depends_on:
+      scylla-host-aio:
+        condition: service_completed_successfully
 
   msg-db:
     image: timescale/timescaledb:latest-pg16
@@ -74,7 +86,7 @@ services:
         condition: service_completed_successfully
     volumes:
       - ../csharp/db/scylla/001_create_octocon_keyspaces.cql:/init.cql
-      - ../csharp/db/scylla/001_create_octocon_schema.nam.cql:/schema.cql
+      - ../csharp/db/scylla/001_create_octocon_schema.templated.cql:/schema.cql
       - ../dev/scylla/scripts/scylla-load-keyspaces.sh:/scripts/scylla-load-keyspaces.sh
     restart: on-failure
     entrypoint: ["/bin/bash", "/scripts/scylla-load-keyspaces.sh", "scylla"]

@@ -184,10 +184,19 @@ public sealed class ScyllaAlterRepository : IAlterRepository
                 normalizedSystemId,
                 alterIdShort));
 
-            await session.ExecuteAsync(new SimpleStatement(
-                $"DELETE FROM {keyspace}.fronts WHERE user_id = ? AND alter_id = ?",
+            var frontRows = await session.ExecuteAsync(new SimpleStatement(
+                $"SELECT id, time_start FROM {keyspace}.fronts_by_alter WHERE user_id = ? AND alter_id = ?",
                 normalizedSystemId,
                 alterIdShort));
+
+            foreach (var frontRow in frontRows)
+            {
+                await session.ExecuteAsync(new SimpleStatement(
+                    $"DELETE FROM {keyspace}.fronts WHERE user_id = ? AND id = ? AND time_start = ?",
+                    normalizedSystemId,
+                    frontRow.GetValue<Guid>("id"),
+                    frontRow.GetValue<DateTimeOffset>("time_start")));
+            }
 
             var primaryFrontRow = (await session.ExecuteAsync(new SimpleStatement(
                 $"SELECT primary_front FROM {keyspace}.users WHERE id = ? LIMIT 1",

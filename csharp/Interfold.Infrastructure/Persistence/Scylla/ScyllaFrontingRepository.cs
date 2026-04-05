@@ -114,11 +114,10 @@ public sealed class ScyllaFrontingRepository : IFrontingRepository
             var endedAt = DateTimeOffset.UtcNow;
 
             await session.ExecuteAsync(new SimpleStatement(
-                $"UPDATE {keyspace}.fronts SET time_end = ?, updated_at = ? WHERE user_id = ? AND alter_id = ? AND id = ? AND time_start = ?",
+                $"UPDATE {keyspace}.fronts SET time_end = ?, updated_at = ? WHERE user_id = ? AND id = ? AND time_start = ?",
                 endedAt,
                 endedAt,
                 normalizedSystemId,
-                current.AlterId,
                 current.FrontId,
                 current.StartedAt));
 
@@ -406,9 +405,8 @@ public sealed class ScyllaFrontingRepository : IFrontingRepository
             }
 
             await session.ExecuteAsync(new SimpleStatement(
-                $"DELETE FROM {keyspace}.fronts WHERE user_id = ? AND alter_id = ? AND id = ? AND time_start = ?",
+                $"DELETE FROM {keyspace}.fronts WHERE user_id = ? AND id = ? AND time_start = ?",
                 normalizedSystemId,
-                alterId,
                 Guid.Parse(frontId),
                 timeStart));
 
@@ -438,10 +436,9 @@ public sealed class ScyllaFrontingRepository : IFrontingRepository
             await session.ExecuteAsync(update);
 
             var updateHistory = new SimpleStatement(
-                $"UPDATE {keyspace}.fronts SET comment = ?, updated_at = toTimestamp(now()) WHERE user_id = ? AND alter_id = ? AND id = ? AND time_start = ?",
+                $"UPDATE {keyspace}.fronts SET comment = ?, updated_at = toTimestamp(now()) WHERE user_id = ? AND id = ? AND time_start = ?",
                 comment,
                 normalizedSystemId,
-                (short)existing.Front.AlterId,
                 Guid.Parse(existing.Front.Id),
                 existing.Front.TimeStart);
 

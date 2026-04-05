@@ -271,6 +271,9 @@ static CliRuntime BuildRuntime(IConfiguration configuration, IReadOnlyDictionary
         cfg.PostgresConnectionString =
             TryGet(options, "postgres-connection") ?? persistenceConfig.PostgresConnectionString;
 
+        cfg.CompatibilityMode =
+            TryBool(options, "compatibility-mode") ?? persistenceConfig.CompatibilityMode;
+
         cfg.ScyllaKeyspace =
             TryGet(options, "scylla-keyspace") ?? persistenceConfig.ScyllaKeyspace;
 
@@ -378,6 +381,7 @@ static void PrintHelp()
     Console.WriteLine("  --persistence <inmemory|scylla-postgres> (default: scylla-postgres)");
     Console.WriteLine("  --region <nam|eur|ocn|sam|sas|gdpr> (default: nam)");
     Console.WriteLine("  --postgres-connection <connection-string>");
+    Console.WriteLine("  --compatibility-mode <true|false> (default: false)");
     Console.WriteLine("  --scylla-contact-points <host1,host2>");
     Console.WriteLine("  --scylla-keyspace <name> (default: --region value)");
     Console.WriteLine("  --scylla-datacenter <name>");

@@ -26,6 +26,7 @@ var builder = WebApplication.CreateBuilder(args);
 // or by their registration helpers below.
 IOptionsMonitor<AuthenticationConfiguration>? authOptionsMonitor = null;
 var authConfig = builder.Configuration.BindAuthenticationConfiguration();
+var persistenceConfig = builder.Configuration.BindPersistenceConfiguration();
 builder.Services.AddInterfoldOptions();
 
 // --- Dependency Injection ---
@@ -192,6 +193,14 @@ startupLogger.LogInformation(
     "ES256 key file paths. PrivateKeyFile: {PrivateKeyFile}; PublicKeyFile: {PublicKeyFile}.",
     effectiveAuthConfig.JwtEs256PrivateKeyFile ?? "(not set)",
     effectiveAuthConfig.JwtEs256PublicKeyFile ?? "(not set)");
+
+var persistenceStartupLogger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("PersistenceStartup");
+persistenceStartupLogger.LogInformation(
+    "Compatibility mode is {CompatibilityMode}. {Behavior}",
+    persistenceConfig.CompatibilityMode,
+    persistenceConfig.CompatibilityMode
+        ? "Postgres idempotency and token revocation are using in-memory stores."
+        : "Postgres idempotency and token revocation are using durable Postgres stores.");
 
 // JWT token revocation check middleware.
 // This runs after authentication, checking if the authenticated token's JTI has been revoked.
