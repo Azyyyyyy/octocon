@@ -21,6 +21,17 @@ public sealed class InMemoryFriendshipRepository : IFriendshipRepository
     private readonly ConcurrentDictionary<string, ConcurrentDictionary<string, FriendshipState>> _friendships = new();
     private readonly ConcurrentDictionary<string, ConcurrentDictionary<string, RequestState>> _outgoingRequests = new();
 
+    public Task<string?> ResolveUserIdAsync(string userNameOrId, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(userNameOrId))
+        {
+            return Task.FromResult<string?>(null);
+        }
+
+        // In-memory mode has no user registry; treat provided value as canonical id.
+        return Task.FromResult<string?>(userNameOrId);
+    }
+
     public Task<string?> GetFriendshipLevelAsync(string systemId, string? viewerSystemId, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(viewerSystemId))

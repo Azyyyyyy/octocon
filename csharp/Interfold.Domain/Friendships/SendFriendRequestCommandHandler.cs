@@ -56,13 +56,18 @@ public sealed class SendFriendRequestCommandHandler : ICommandHandler<SendFriend
             return await RejectStaleVersion(command, cancellationToken);
         }
 
-        var canonicalTargetSystemId = FriendshipIdNormalization.CanonicalizeForPrincipal(
-            command.PrincipalId,
-            command.Payload.TargetSystemId);
+        var resolvedTargetSystemId = await _repository.ResolveUserIdAsync(
+            command.Payload.TargetSystemId,
+            cancellationToken);
+
+        if (resolvedTargetSystemId is null)
+        {
+            return RejectInvariant(command, "friend_request:no_user");
+        }
 
         var outcome = await _repository.SendRequestAsync(
             command.PrincipalId,
-            canonicalTargetSystemId,
+            resolvedTargetSystemId,
             cancellationToken);
 
         if (outcome is SendFriendRequestOutcome.AlreadyFriends)
@@ -84,7 +89,7 @@ public sealed class SendFriendRequestCommandHandler : ICommandHandler<SendFriend
 
         var result = new FriendshipCommandResult(
             command.PrincipalId,
-            canonicalTargetSystemId,
+            resolvedTargetSystemId,
             action,
             Replay: false);
 
@@ -99,28 +104,29 @@ public sealed class SendFriendRequestCommandHandler : ICommandHandler<SendFriend
             resultJson,
             cancellationToken);
 
+        //TODO: Check this path sends the required events
         if (outcome is SendFriendRequestOutcome.Accepted)
         {
             await _eventBus.PublishAsync(new FriendshipAddedEvent(
                 command.PrincipalId,
-                canonicalTargetSystemId), cancellationToken);
+                resolvedTargetSystemId), cancellationToken);
 
             await _eventBus.PublishAsync(new FriendshipAddedEvent(
-                canonicalTargetSystemId,
+                resolvedTargetSystemId,
                 command.PrincipalId), cancellationToken);
 
             await _eventBus.PublishAsync(new FriendRequestRemovedToEvent(
-                canonicalTargetSystemId,
+                resolvedTargetSystemId,
                 command.PrincipalId), cancellationToken);
         }
         else
         {
             await _eventBus.PublishAsync(new FriendRequestSentEvent(
                 command.PrincipalId,
-                canonicalTargetSystemId), cancellationToken);
+                resolvedTargetSystemId), cancellationToken);
 
             await _eventBus.PublishAsync(new FriendRequestReceivedEvent(
-                canonicalTargetSystemId,
+                resolvedTargetSystemId,
                 command.PrincipalId), cancellationToken);
         }
 

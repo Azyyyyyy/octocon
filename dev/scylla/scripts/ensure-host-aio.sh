@@ -2,9 +2,9 @@
 set -euo pipefail
 
 # Ensures the host AIO limit is sufficient for Scylla/Seastar startup.
-# Required minimum is 219641; recommended is 269640.
-MIN_REQUIRED="${AIO_MIN_REQUIRED:-219641}"
-TARGET="${AIO_TARGET:-269640}"
+# Required minimum is 270667; recommended is 320666.
+MIN_REQUIRED="${AIO_MIN_REQUIRED:-270667}"
+TARGET="${AIO_TARGET:-320666}"
 AIO_SYSCTL_PATH="/proc/sys/fs/aio-max-nr"
 
 if [ ! -r "$AIO_SYSCTL_PATH" ]; then

@@ -136,6 +136,26 @@ services:
       octo_network:
         ipv4_address: 172.18.1.6
 
+  scylla-gdpr:
+    image: scylladb/scylla:2025.1
+    restart: always
+    command: --seeds=172.18.1.1,172.18.1.2 --smp 1 --memory 750M --overprovisioned 1 --developer-mode 1 --endpoint-snitch GossipingPropertyFileSnitch --api-address 0.0.0.0 --broadcast-address scylla-gdpr
+    volumes:
+      - ../dev/scylla/cassandra-rackdc.gdpr.properties:/etc/scylla/cassandra-rackdc.properties
+      - scylla_gdpr_data:/var/lib/scylla
+    logging: *default-log-rotation
+    depends_on:
+      scylla-ocn:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "/bin/bash", "-c", "cqlsh --execute='describe keyspaces'"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+    networks:
+      octo_network:
+        ipv4_address: 172.18.1.7
+
   scylla-load-keyspaces:
     image: scylladb/scylla:2025.1
     depends_on:
@@ -148,7 +168,7 @@ services:
       - ../csharp/db/scylla/001_create_octocon_schema.templated.cql:/schema.cql
       - ../dev/scylla/scripts/scylla-load-keyspaces.sh:/scripts/scylla-load-keyspaces.sh
     restart: on-failure
-    entrypoint: ["/bin/bash", "/scripts/scylla-load-keyspaces.sh", "scylla-nam", "eur", "sam", "sas", "eas", "ocn"]
+    entrypoint: ["/bin/bash", "/scripts/scylla-load-keyspaces.sh", "scylla-nam", "eur", "sam", "sas", "eas", "ocn", "gdpr"]
     networks:
       octo_network:
 
@@ -208,3 +228,4 @@ volumes:
   scylla_sas_data:
   scylla_eas_data:
   scylla_ocn_data:
+  scylla_gdpr_data:

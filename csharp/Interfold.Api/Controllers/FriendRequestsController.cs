@@ -72,7 +72,6 @@ public sealed class FriendRequestsController : InterfoldControllerBase
         return result is OkObjectResult ? NoContent() : result;
     }
 
-    //TODO: To ensure route works as expected
     [HttpDelete("{id}")]
     public async Task<IActionResult> Cancel(string id, [FromBody] FriendRequestActionRequest? req, CancellationToken ct)
     {

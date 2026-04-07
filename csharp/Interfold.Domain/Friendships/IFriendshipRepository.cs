@@ -2,6 +2,8 @@ namespace Interfold.Domain.Friendships;
 
 public interface IFriendshipRepository
 {
+    Task<string?> ResolveUserIdAsync(string userNameOrId, CancellationToken cancellationToken = default);
+
     Task<string?> GetFriendshipLevelAsync(string systemId, string? viewerSystemId, CancellationToken cancellationToken = default);
 
     Task<IReadOnlyList<FriendshipReadModel>> ListFriendshipsAsync(string systemId, CancellationToken cancellationToken = default);

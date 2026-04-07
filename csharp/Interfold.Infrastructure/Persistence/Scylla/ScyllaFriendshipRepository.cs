@@ -9,6 +9,15 @@ public sealed class ScyllaFriendshipRepository : IFriendshipRepository
 {
     private const short FriendLevel = 0;
     private const short TrustedFriendLevel = 1;
+    private static readonly string[] CanonicalRegions = [    
+        "nam",
+        "eur",
+        "ocn",
+        "eas",
+        "sam",
+        "sas",
+        "gdpr" 
+    ];
 
     private readonly IScyllaSessionProvider _sessionProvider;
     private readonly IScyllaKeyspaceResolver _keyspaceResolver;
@@ -22,6 +31,15 @@ public sealed class ScyllaFriendshipRepository : IFriendshipRepository
         _sessionProvider = sessionProvider;
         _keyspaceResolver = keyspaceResolver;
         _options = options;
+    }
+
+    public async Task<string?> ResolveUserIdAsync(string userNameOrId, CancellationToken cancellationToken = default)
+    {
+        return await DatabaseTransientRetry.ExecuteScyllaAsync(async () =>
+        {
+            var session = await _sessionProvider.GetSessionAsync(cancellationToken);
+            return await ResolveUserIdInScyllaAsync(session, _keyspaceResolver.NormalizeSystemId(userNameOrId));
+        }, _options, cancellationToken);
     }
 
     public async Task<string?> GetFriendshipLevelAsync(string systemId, string? viewerSystemId, CancellationToken cancellationToken = default)
@@ -211,10 +229,12 @@ public sealed class ScyllaFriendshipRepository : IFriendshipRepository
             var normalizedSystemId = _keyspaceResolver.NormalizeSystemId(systemId);
             var normalizedTargetSystemId = _keyspaceResolver.NormalizeSystemId(targetSystemId);
 
-            if (!await SystemExistsAsync(session, normalizedTargetSystemId))
+            var resolvedTargetUserId = await ResolveUserIdInScyllaAsync(session, normalizedTargetSystemId);
+            if (resolvedTargetUserId is null)
             {
                 return SendFriendRequestOutcome.NoUser;
             }
+            normalizedTargetSystemId = resolvedTargetUserId;
 
             if (await ExistsFriendshipAsync(session, normalizedSystemId, normalizedTargetSystemId))
             {
@@ -247,10 +267,12 @@ public sealed class ScyllaFriendshipRepository : IFriendshipRepository
             var normalizedSystemId = _keyspaceResolver.NormalizeSystemId(systemId);
             var normalizedSourceSystemId = _keyspaceResolver.NormalizeSystemId(sourceSystemId);
 
-            if (!await SystemExistsAsync(session, normalizedSourceSystemId))
+            var resolvedSourceUserId = await ResolveUserIdInScyllaAsync(session, normalizedSourceSystemId);
+            if (resolvedSourceUserId is null)
             {
                 return FriendRequestMutationOutcome.NoUser;
             }
+            normalizedSourceSystemId = resolvedSourceUserId;
 
             if (await ExistsFriendshipAsync(session, normalizedSystemId, normalizedSourceSystemId))
             {
@@ -277,10 +299,12 @@ public sealed class ScyllaFriendshipRepository : IFriendshipRepository
             var normalizedSystemId = _keyspaceResolver.NormalizeSystemId(systemId);
             var normalizedSourceSystemId = _keyspaceResolver.NormalizeSystemId(sourceSystemId);
 
-            if (!await SystemExistsAsync(session, normalizedSourceSystemId))
+            var resolvedSourceUserId = await ResolveUserIdInScyllaAsync(session, normalizedSourceSystemId);
+            if (resolvedSourceUserId is null)
             {
                 return FriendRequestMutationOutcome.NoUser;
             }
+            normalizedSourceSystemId = resolvedSourceUserId;
 
             if (await ExistsFriendshipAsync(session, normalizedSystemId, normalizedSourceSystemId))
             {
@@ -305,10 +329,12 @@ public sealed class ScyllaFriendshipRepository : IFriendshipRepository
             var normalizedSystemId = _keyspaceResolver.NormalizeSystemId(systemId);
             var normalizedTargetSystemId = _keyspaceResolver.NormalizeSystemId(targetSystemId);
 
-            if (!await SystemExistsAsync(session, normalizedTargetSystemId))
+            var resolvedTargetUserId = await ResolveUserIdInScyllaAsync(session, normalizedTargetSystemId);
+            if (resolvedTargetUserId is null)
             {
                 return FriendRequestMutationOutcome.NoUser;
             }
+            normalizedTargetSystemId = resolvedTargetUserId;
 
             if (await ExistsFriendshipAsync(session, normalizedSystemId, normalizedTargetSystemId))
             {
@@ -344,6 +370,59 @@ public sealed class ScyllaFriendshipRepository : IFriendshipRepository
             userId);
 
         return (await session.ExecuteAsync(query)).Any();
+    }
+
+    private static async Task<string?> ResolveUserIdInScyllaAsync(ISession session, string userNameOrId)
+    {
+        // First, try direct lookup in user_registry (handles 7-char IDs)
+        var directQuery = new SimpleStatement(
+            "SELECT user_id FROM global.user_registry WHERE user_id = ? LIMIT 1",
+            userNameOrId);
+        var directRow = (await session.ExecuteAsync(directQuery)).FirstOrDefault();
+        if (directRow != null)
+        {
+            return directRow.GetValue<string>("user_id");
+        }
+
+        // If not found as direct ID, try as username across known regional keyspaces that exist.
+        var existingKeyspaces = await GetExistingRegionalKeyspacesAsync(session);
+
+        foreach (var region in existingKeyspaces.Where(CanonicalRegions.Contains))
+        {
+            try
+            {
+                var userQuery = new SimpleStatement(
+                    $"SELECT id FROM {region}.users WHERE username = ? LIMIT 1",
+                    userNameOrId);
+                var userRow = (await session.ExecuteAsync(userQuery)).FirstOrDefault();
+                if (userRow != null)
+                {
+                    return userRow.GetValue<string>("id");
+                }
+            }
+            catch (UnavailableException)
+            {
+                // Region keyspace/table temporarily unavailable; skip and try next region
+                continue;
+            }
+            catch (InvalidQueryException)
+            {
+                // Table doesn't exist in this keyspace; skip and try next region
+                continue;
+            }
+        }
+
+        return null;
+    }
+
+    private static async Task<HashSet<string>> GetExistingRegionalKeyspacesAsync(ISession session)
+    {
+        var keyspacesQuery = new SimpleStatement("SELECT keyspace_name FROM system_schema.keyspaces");
+        var keyspaceRows = await session.ExecuteAsync(keyspacesQuery);
+
+        return keyspaceRows
+            .Select(row => row.GetValue<string>("keyspace_name").ToLowerInvariant())
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
     }
 
     private static async Task<bool> ExistsRequestAsync(ISession session, string fromId, string toId)
