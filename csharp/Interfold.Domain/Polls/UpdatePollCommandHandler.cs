@@ -29,7 +29,7 @@ public sealed class UpdatePollCommandHandler : ICommandHandler<UpdatePollCommand
         CancellationToken cancellationToken = default)
     {
         if (command.Payload.Title is null && command.Payload.Description is null &&
-            command.Payload.TimeEndIso is null && command.Payload.DataJson is null)
+            !command.Payload.HasTimeEnd && command.Payload.Data is null)
             return RejectInvariant(command, "poll:no_fields");
 
         if (command.Payload.Title is not null && command.Payload.Title.Length > 100)
@@ -54,7 +54,7 @@ public sealed class UpdatePollCommandHandler : ICommandHandler<UpdatePollCommand
                 return CommandExecutionResult<PollCommandResult>.Success(replay with { Replay = true });
         }
 
-        var exists = await _pollRepository.ExistsAsync(command.PrincipalId, command.Payload.PollId, cancellationToken);
+        var exists = await _pollRepository.ExistsAsync(command.PrincipalId, command.Payload.Id, cancellationToken);
         if (!exists)
             return RejectInvariant(command, "poll:not_found");
 
@@ -67,14 +67,14 @@ public sealed class UpdatePollCommandHandler : ICommandHandler<UpdatePollCommand
         if (!updated)
             return RejectInvariant(command, "poll:update_failed");
 
-        var result = new PollCommandResult(command.PrincipalId, command.Payload.PollId, Replay: false);
+        var result = new PollCommandResult(command.PrincipalId, command.Payload.Id, Replay: false);
         var resultJson = CommandSerialization.Serialize(result);
 
         await _idempotencyStore.SaveAsync(
             command.PrincipalId, command.OperationId, command.IdempotencyKey,
             payloadHash, CommandSerialization.Hash(resultJson), resultJson, cancellationToken);
 
-        await _eventBus.PublishAsync(new PollUpdatedEvent(command.PrincipalId, command.Payload.PollId), cancellationToken);
+        await _eventBus.PublishAsync(new PollUpdatedEvent(command.PrincipalId, command.Payload.Id), cancellationToken);
         return CommandExecutionResult<PollCommandResult>.Success(result);
     }
 

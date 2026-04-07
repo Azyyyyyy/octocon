@@ -94,7 +94,7 @@ public sealed class ScyllaPollRepository : IPollRepository
                 command.Description,
                 ToPollCode(command.Type),
                 "{}",
-                ParseTime(command.TimeEndIso)
+                command.TimeEnd
             );
 
             await session.ExecuteAsync(insert);
@@ -130,7 +130,7 @@ public sealed class ScyllaPollRepository : IPollRepository
     {
         return await DatabaseTransientRetry.ExecuteScyllaAsync(async () =>
         {
-            if (!TryParseUuid(command.PollId, out var pollGuid))
+            if (!TryParseUuid(command.Id, out var pollGuid))
             {
                 return false;
             }
@@ -139,7 +139,7 @@ public sealed class ScyllaPollRepository : IPollRepository
             var normalizedSystemId = _keyspaceResolver.NormalizeSystemId(systemId);
             var keyspace = _keyspaceResolver.ResolveRegionalKeyspace(systemId);
 
-            var exists = await ExistsAsync(systemId, command.PollId, cancellationToken);
+            var exists = await ExistsAsync(systemId, command.Id, cancellationToken);
             if (!exists)
                 return false;
 
@@ -161,20 +161,20 @@ public sealed class ScyllaPollRepository : IPollRepository
                     pollGuid));
             }
 
-            if (command.TimeEndIso is not null)
+            if (command.HasTimeEnd)
             {
                 await session.ExecuteAsync(new SimpleStatement(
                     $"UPDATE {keyspace}.polls SET time_end = ?, updated_at = toTimestamp(now()) WHERE user_id = ? AND id = ?",
-                    ParseTime(command.TimeEndIso),
+                    command.TimeEnd,
                     normalizedSystemId,
                     pollGuid));
             }
 
-            if (command.DataJson is not null)
+            if (command.Data is not null)
             {
                 await session.ExecuteAsync(new SimpleStatement(
                     $"UPDATE {keyspace}.polls SET data = ?, updated_at = toTimestamp(now()) WHERE user_id = ? AND id = ?",
-                    command.DataJson,
+                    command.Data.Value.ToString(),
                     normalizedSystemId,
                     pollGuid));
             }

@@ -13,8 +13,8 @@ public sealed class InMemoryPollRepository : IPollRepository
         public required string Title { get; set; }
         public string? Description { get; set; }
         public required string Type { get; set; }
-        public string Data { get; set; } = "{}";
-        public string? TimeEndIso { get; set; }
+        public JsonElement Data { get; set; } = JsonElement.Parse("{}");
+        public DateTime? TimeEnd { get; set; }
         public DateTime InsertedAt { get; set; }
         public DateTime UpdatedAt { get; set; }
     }
@@ -54,7 +54,7 @@ public sealed class InMemoryPollRepository : IPollRepository
             Title = command.Title,
             Description = command.Description,
             Type = command.Type,
-            TimeEndIso = command.TimeEndIso,
+            TimeEnd = command.TimeEnd,
             InsertedAt = DateTime.Now,
             UpdatedAt = DateTime.Now
         };
@@ -70,13 +70,13 @@ public sealed class InMemoryPollRepository : IPollRepository
 
     public Task<bool> UpdateAsync(string systemId, UpdatePollCommand command, CancellationToken cancellationToken = default)
     {
-        if (!_bySystem.TryGetValue(systemId, out var store) || !store.TryGetValue(command.PollId, out var poll))
+        if (!_bySystem.TryGetValue(systemId, out var store) || !store.TryGetValue(command.Id, out var poll))
             return Task.FromResult(false);
 
         if (command.Title is not null) poll.Title = command.Title;
         if (command.Description is not null) poll.Description = command.Description;
-        if (command.TimeEndIso is not null) poll.TimeEndIso = command.TimeEndIso;
-        if (command.DataJson is not null) poll.Data = command.DataJson;
+        if (command.HasTimeEnd) poll.TimeEnd = command.TimeEnd;
+        if (command.Data is not null) poll.Data = command.Data.Value;
         poll.UpdatedAt = DateTime.Now;
 
         return Task.FromResult(true);
@@ -97,8 +97,8 @@ public sealed class InMemoryPollRepository : IPollRepository
             state.Title,
             state.Description,
             state.Type,
-            JsonSerializer.Deserialize<JsonElement>(state.Data ?? "{}"),
-            DateTime.TryParse(state.TimeEndIso, out var ts) ? ts : null,
+            state.Data,
+            state.TimeEnd,
             state.InsertedAt,
             state.UpdatedAt
         );

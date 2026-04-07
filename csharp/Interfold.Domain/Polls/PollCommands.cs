@@ -1,18 +1,21 @@
+using System.Text.Json;
+
 namespace Interfold.Domain.Polls;
 
 public sealed record CreatePollCommand(
     string Title,
     string? Description,
     string Type,
-    string? TimeEndIso
+    DateTime? TimeEnd
 );
 
 public sealed record UpdatePollCommand(
-    string PollId,
+    string Id,
     string? Title,
     string? Description,
-    string? TimeEndIso,
-    string? DataJson
+    DateTime? TimeEnd,
+    bool HasTimeEnd,
+    JsonElement? Data
 );
 
 public sealed record DeletePollCommand(string PollId);

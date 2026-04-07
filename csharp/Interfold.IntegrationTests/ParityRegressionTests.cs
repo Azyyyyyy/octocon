@@ -703,6 +703,62 @@ public sealed class ParityRegressionTests
     }
 
     [Test]
+    public async Task PollUpdate_TimeEndNullOnly_ClearsExistingTimeEnd()
+    {
+        if (!IntegrationTestEnvironment.ShouldRunApiIntegration) return;
+
+        var workspaceRoot = FindWorkspaceRoot();
+        var port = GetFreePort();
+        await using var api = await StartApiAsync(workspaceRoot, port);
+        using var client = new HttpClient { BaseAddress = new Uri($"http://127.0.0.1:{port}") };
+
+        var initialTimeEnd = DateTime.UtcNow.AddHours(1);
+
+        using var createReq = new HttpRequestMessage(HttpMethod.Post, "/api/polls")
+        {
+            Content = JsonContent.Create(new { title = "TimeEndEdgeCase", time_end = initialTimeEnd })
+        };
+        var createRes = await client.SendAsync(createReq);
+        var createBody = await createRes.Content.ReadAsStringAsync();
+
+        Ensure(createRes.StatusCode == HttpStatusCode.Created,
+            $"Expected poll create 201, got {(int)createRes.StatusCode}. Body: {createBody}");
+
+        using var createDoc = JsonDocument.Parse(createBody);
+        var pollId = createDoc.RootElement
+            .GetProperty("data")
+            .GetProperty("id")
+            .GetString();
+
+        Ensure(!string.IsNullOrEmpty(pollId),
+            $"Expected poll ID in create response. Body: {createBody}");
+
+        using var patchReq = new HttpRequestMessage(HttpMethod.Patch, $"/api/polls/{pollId}")
+        {
+            Content = JsonContent.Create(new { time_end = (DateTime?)null })
+        };
+        var patchRes = await client.SendAsync(patchReq);
+        var patchBody = await patchRes.Content.ReadAsStringAsync();
+
+        Ensure(patchRes.StatusCode == HttpStatusCode.NoContent,
+            $"Expected patch with only time_end null to return 204, got {(int)patchRes.StatusCode}. Body: {patchBody}");
+
+        var getRes = await client.GetAsync($"/api/polls/{pollId}");
+        var getBody = await getRes.Content.ReadAsStringAsync();
+
+        Ensure(getRes.StatusCode == HttpStatusCode.OK,
+            $"Expected get poll 200, got {(int)getRes.StatusCode}. Body: {getBody}");
+
+        using var getDoc = JsonDocument.Parse(getBody);
+        var timeEndElement = getDoc.RootElement
+            .GetProperty("data")
+            .GetProperty("time_end");
+
+        Ensure(timeEndElement.ValueKind == JsonValueKind.Null,
+            $"Expected time_end to be null after clear update. Body: {getBody}");
+    }
+
+    [Test]
     public async Task PollValidation_TitleTooLong_Returns422()
     {
         if (!IntegrationTestEnvironment.ShouldRunApiIntegration) return;

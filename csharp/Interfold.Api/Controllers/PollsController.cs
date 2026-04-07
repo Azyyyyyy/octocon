@@ -2,10 +2,10 @@ using Microsoft.AspNetCore.Mvc;
 using System.Text.Json.Serialization;
 using Interfold.Contracts.Operations;
 using Interfold.Domain.Polls;
+using System.Text.Json;
 
 namespace Interfold.Api.Controllers;
 
-//TODO: To ensure route works as expected
 [Route("api/polls")]
 public sealed class PollsController : InterfoldControllerBase
 {
@@ -36,6 +36,7 @@ public sealed class PollsController : InterfoldControllerBase
         return Ok(new { data = polls });
     }
 
+    //TODO: To ensure route works as expected
     [HttpGet("{id}")]
     public async Task<IActionResult> Show(string id, CancellationToken ct)
     {
@@ -61,7 +62,7 @@ public sealed class PollsController : InterfoldControllerBase
             IdempotencyKey: GetIdempotencyKey(req.IdempotencyKey),
             ExpectedVersion: req.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
-            Payload: new CreatePollCommand(req.Title, req.Description, req.Type ?? "vote", req.ResolveTimeEndIso())
+            Payload: new CreatePollCommand(req.Title, req.Description, req.Type ?? "vote", req.TimeEnd)
         );
 
         var execution = await _create.HandleAsync(envelope, ct);
@@ -81,6 +82,11 @@ public sealed class PollsController : InterfoldControllerBase
         var principal = GetPrincipalId();
         if (principal is null) return Unauthorized();
 
+        if (!req.TryResolveTimeEnd(out var resolvedTimeEnd))
+        {
+            return BadRequest(new { error = "Invalid time_end.", code = "poll_invalid_time_end" });
+        }
+
         var envelope = new CommandEnvelope<UpdatePollCommand>(
             OperationIds.PollUpdate,
             Guid.NewGuid(),
@@ -88,7 +94,7 @@ public sealed class PollsController : InterfoldControllerBase
             IdempotencyKey: GetIdempotencyKey(req.IdempotencyKey),
             ExpectedVersion: req.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
-            Payload: new UpdatePollCommand(id, req.Title, req.Description, req.ResolveTimeEndIso(), req.ResolveDataJson())
+            Payload: new UpdatePollCommand(id, req.Title, req.Description, resolvedTimeEnd, req.HasTimeEnd, req.Data)
         );
 
         var result = ToHttpResult(await _update.HandleAsync(envelope, ct));
@@ -120,28 +126,38 @@ public sealed record CreatePollRequest(
     string Title,
     string? Description = null,
     string? Type = null,
-    string? TimeEndIso = null,
-    [property: JsonPropertyName("time_end")] string? TimeEnd = null,
+    DateTime? TimeEnd = null,
     string? IdempotencyKey = null,
     long? ExpectedVersion = null
-)
-{
-    public string? ResolveTimeEndIso() => TimeEndIso ?? TimeEnd;
-}
+);
 
 public sealed record UpdatePollRequest(
     string? Title = null,
     string? Description = null,
-    string? TimeEndIso = null,
-    string? DataJson = null,
-    [property: JsonPropertyName("time_end")] string? TimeEnd = null,
-    [property: JsonPropertyName("data")] string? Data = null,
+    JsonElement TimeEnd = default,
+    JsonElement? Data = null,
     string? IdempotencyKey = null,
     long? ExpectedVersion = null
 )
 {
-    public string? ResolveTimeEndIso() => TimeEndIso ?? TimeEnd;
-    public string? ResolveDataJson() => DataJson ?? Data;
+    [JsonIgnore]
+    public bool HasTimeEnd => TimeEnd.ValueKind != JsonValueKind.Undefined;
+
+    public bool TryResolveTimeEnd(out DateTime? timeEnd)
+    {
+        timeEnd = null;
+
+        if (!HasTimeEnd || TimeEnd.ValueKind == JsonValueKind.Null)
+            return true;
+
+        if (TimeEnd.ValueKind == JsonValueKind.String && TimeEnd.TryGetDateTime(out var parsed))
+        {
+            timeEnd = parsed;
+            return true;
+        }
+
+        return false;
+    }
 }
 
 public sealed record DeletePollRequest(
