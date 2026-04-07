@@ -1,4 +1,3 @@
-using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Interfold.Domain.Accounts;
 using Interfold.Domain.Alters;
@@ -8,8 +7,6 @@ using Interfold.Domain.Tags;
 
 namespace Interfold.Api.Controllers;
 
-//TODO: To ensure route works as expected
-[AllowAnonymous]
 [Route("api/systems")]
 public sealed class PublicSystemsController : InterfoldControllerBase
 {
@@ -47,13 +44,14 @@ public sealed class PublicSystemsController : InterfoldControllerBase
             data = new
             {
                 id = profile.SystemId,
-                avatar_url = profile.AvatarUrl,
+                avatar_url = QualifyUrl(profile.AvatarUrl),
                 username = profile.Username,
                 description = profile.Description
             }
         });
     }
 
+    //TODO: To ensure route works as expected
     [HttpGet("{systemId}/alters")]
     public async Task<IActionResult> ListAlters([FromRoute] string systemId, CancellationToken ct)
     {
@@ -64,6 +62,7 @@ public sealed class PublicSystemsController : InterfoldControllerBase
 
         var callerId = GetPrincipalId();
         var alters = await _alters.ListGuardedAsync(systemId, callerId, ct);
+        foreach (var a in alters) a.AvatarUrl = QualifyUrl(a.AvatarUrl);
         return Ok(new { data = alters });
     }
 
@@ -82,11 +81,13 @@ public sealed class PublicSystemsController : InterfoldControllerBase
 
         var callerId = GetPrincipalId();
         var alter = await _alters.GetGuardedAsync(systemId, alterId, callerId, ct);
+        if (alter is not null) alter.AvatarUrl = QualifyUrl(alter.AvatarUrl);
         return alter is null
             ? NotFound(new { error = "Alter not found.", code = "alter_not_found" })
             : Ok(new { data = alter });
     }
 
+    //TODO: To ensure route works as expected
     [HttpGet("{systemId}/tags")]
     public async Task<IActionResult> ListTags([FromRoute] string systemId, CancellationToken ct)
     {
@@ -115,6 +116,7 @@ public sealed class PublicSystemsController : InterfoldControllerBase
             : Ok(new { data = tag });
     }
 
+    //TODO: To ensure route works as expected
     [HttpGet("{systemId}/fronting")]
     public async Task<IActionResult> ListFronting([FromRoute] string systemId, CancellationToken ct)
     {
@@ -154,13 +156,28 @@ public sealed class PublicSystemsController : InterfoldControllerBase
 
         await Task.WhenAll(altersTask, tagsTask, friendshipTask);
 
+        var batchAlters = altersTask.Result;
+        foreach (var a in batchAlters) a.AvatarUrl = QualifyUrl(a.AvatarUrl);
+
+        var friendship = friendshipTask.Result;
+        if (friendship is not null)
+        {
+            friendship = friendship with
+            {
+                Friend = friendship.Friend with { AvatarUrl = QualifyUrl(friendship.Friend.AvatarUrl) },
+                Fronting = friendship.Fronting
+                    .Select(f => f with { Alter = f.Alter with { AvatarUrl = QualifyUrl(f.Alter.AvatarUrl) } })
+                    .ToList()
+            };
+        }
+
         return Ok(new
         {
             data = new
             {
-                friendship = friendshipTask.Result,
+                friendship,
                 tags = tagsTask.Result,
-                alters = altersTask.Result
+                alters = batchAlters
             }
         });
     }

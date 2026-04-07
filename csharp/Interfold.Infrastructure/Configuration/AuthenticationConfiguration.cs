@@ -70,6 +70,30 @@ public sealed class AuthenticationConfiguration
     /// </summary>
     public string? GoogleOAuthClientSecret { get; set; }
 
+    /// <summary>
+    /// Apple OAuth 2.0 client ID for backend token exchange.
+    /// Env: OCTOCON_APPLE_OAUTH_CLIENT_ID
+    /// </summary>
+    public string? AppleOAuthClientId { get; set; }
+
+    /// <summary>
+    /// Apple OAuth 2.0 client secret for token exchange.
+    /// Env: OCTOCON_APPLE_OAUTH_CLIENT_SECRET
+    /// </summary>
+    public string? AppleOAuthClientSecret { get; set; }
+
+    /// <summary>
+    /// Discord OAuth 2.0 client ID for backend token exchange.
+    /// Env: OCTOCON_DISCORD_OAUTH_CLIENT_ID
+    /// </summary>
+    public string? DiscordOAuthClientId { get; set; }
+
+    /// <summary>
+    /// Discord OAuth 2.0 client secret for token exchange.
+    /// Env: OCTOCON_DISCORD_OAUTH_CLIENT_SECRET
+    /// </summary>
+    public string? DiscordOAuthClientSecret { get; set; }
+
     // --- Discord OAuth Challenge ----
 
     /// <summary>

@@ -12,7 +12,8 @@ public sealed class SocketPushContext
         ConcurrentDictionary<string, string?> topicJoinReference,
         ConcurrentDictionary<string, bool> topicReplyAsArrayFrame,
         SemaphoreSlim sendGate,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? requestOrigin = null)
     {
         Socket = socket;
         JoinedTopics = joinedTopics;
@@ -20,6 +21,7 @@ public sealed class SocketPushContext
         TopicReplyAsArrayFrame = topicReplyAsArrayFrame;
         SendGate = sendGate;
         CancellationToken = cancellationToken;
+        RequestOrigin = requestOrigin;
     }
 
     public WebSocket Socket { get; }
@@ -28,6 +30,11 @@ public sealed class SocketPushContext
     public ConcurrentDictionary<string, bool> TopicReplyAsArrayFrame { get; }
     public SemaphoreSlim SendGate { get; }
     public CancellationToken CancellationToken { get; }
+    /// <summary>
+    /// The origin of the HTTP request that upgraded to this WebSocket
+    /// (e.g. <c>https://api.example.com</c>). Used to qualify relative avatar URLs.
+    /// </summary>
+    public string? RequestOrigin { get; }
 
     public bool TryGetSystemTopic(string systemId, out string topic, out string? joinRef, out bool asArray)
     {

@@ -1,4 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.WebUtilities;
+using Microsoft.Net.Http.Headers;
+using System.Text;
 using Interfold.Api.Services;
 using Interfold.Contracts.Operations;
 using Interfold.Domain.Alters;
@@ -143,49 +146,8 @@ public sealed class AltersController : InterfoldControllerBase
 
     //TODO: To ensure route works as expected
     [HttpPut("{id}/avatar")]
-    [Consumes("application/json")]
-    public async Task<IActionResult> UploadAvatar(string id, [FromBody] AlterAvatarRequest req, CancellationToken ct)
-    {
-        var principal = GetPrincipalId();
-        if (principal is null) return Unauthorized();
-
-        if (!TryParseAlterId(id, out var alterId))
-            return BadRequest(new { error = "Invalid alter ID.", code = "invalid_alter_id" });
-
-        var payload = new UpdateAlterCommand(
-            AlterId: alterId,
-            Name: null,
-            Description: null,
-            AvatarUrl: req.AvatarUrl,
-            Color: null,
-            Pronouns: null,
-            SecurityLevel: null,
-            Fields: null,
-            ProxyName: null,
-            Alias: null,
-            Untracked: null,
-            Archived: null,
-            Pinned: null
-        );
-
-        var envelope = new CommandEnvelope<UpdateAlterCommand>(
-            OperationIds.AlterAvatarUpload,
-            Guid.NewGuid(),
-            PrincipalId: principal,
-            IdempotencyKey: GetIdempotencyKey(req.IdempotencyKey),
-            ExpectedVersion: req.ExpectedVersion,
-            OccurredAt: DateTimeOffset.UtcNow,
-            Payload: payload
-        );
-
-        var result = ToHttpResult(await _updateHandler.HandleAsync(envelope, ct));
-        return result is OkObjectResult ? NoContent() : result;
-    }
-
-    //TODO: To ensure route works as expected
-    [HttpPut("{id}/avatar")]
     [Consumes("multipart/form-data")]
-    public async Task<IActionResult> UploadAvatarMultipart(string id, [FromForm] AlterAvatarMultipartRequest req, CancellationToken ct)
+    public async Task<IActionResult> UploadAvatarMultipart(string id, CancellationToken ct)
     {
         var principal = GetPrincipalId();
         if (principal is null) return Unauthorized();
@@ -193,13 +155,23 @@ public sealed class AltersController : InterfoldControllerBase
         if (!TryParseAlterId(id, out var alterId))
             return BadRequest(new { error = "Invalid alter ID.", code = "invalid_alter_id" });
 
-        if (req.File is null || req.File.Length <= 0)
+        var upload = await ResolveMultipartUploadAsync(ct);
+        var avatarStream = upload.Stream;
+        if (avatarStream is null)
+        {
+            if (upload.EmptyFilePart)
+                return BadRequest(new { error = "Avatar file is empty.", code = "avatar_file_empty" });
+
             return BadRequest(new { error = "No avatar file provided.", code = "avatar_file_required" });
+        }
 
         string avatarUrl;
         try
         {
-            avatarUrl = await _avatarStorage.SaveAlterAvatarAsync(principal, alterId, req.File, ct);
+            using (avatarStream)
+            {
+                avatarUrl = await _avatarStorage.SaveAlterAvatarAsync(principal, alterId, avatarStream, ct);
+            }
         }
         catch
         {
@@ -226,8 +198,8 @@ public sealed class AltersController : InterfoldControllerBase
             OperationIds.AlterAvatarUpload,
             Guid.NewGuid(),
             PrincipalId: principal,
-            IdempotencyKey: GetIdempotencyKey(req.IdempotencyKey),
-            ExpectedVersion: req.ExpectedVersion,
+            IdempotencyKey: GetIdempotencyKey(upload.IdempotencyKey),
+            ExpectedVersion: upload.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
             Payload: payload
         );
@@ -235,6 +207,82 @@ public sealed class AltersController : InterfoldControllerBase
         var result = ToHttpResult(await _updateHandler.HandleAsync(envelope, ct));
         return result is OkObjectResult ? NoContent() : result;
     }
+
+    private async Task<AvatarUploadPayload> ResolveMultipartUploadAsync(CancellationToken ct)
+    {
+        string? idempotencyKey = null;
+        long? expectedVersion = null;
+        var emptyFilePart = false;
+
+        if (Request.Body is null)
+            return new AvatarUploadPayload(null, idempotencyKey, expectedVersion, emptyFilePart);
+
+        Request.EnableBuffering();
+
+        if (Request.Body.CanSeek)
+            Request.Body.Position = 0;
+
+        if (!MediaTypeHeaderValue.TryParse(Request.ContentType, out var mediaType)
+            || !mediaType.MediaType.HasValue
+            || !mediaType.MediaType.Value.StartsWith("multipart/", StringComparison.OrdinalIgnoreCase))
+        {
+            return new AvatarUploadPayload(null, idempotencyKey, expectedVersion, emptyFilePart);
+        }
+
+        var boundary = HeaderUtilities.RemoveQuotes(mediaType.Boundary).Value;
+        if (string.IsNullOrWhiteSpace(boundary))
+            return new AvatarUploadPayload(null, idempotencyKey, expectedVersion, emptyFilePart);
+
+        try
+        {
+            var reader = new MultipartReader(boundary, Request.Body);
+            MultipartSection? section;
+
+            while ((section = await reader.ReadNextSectionAsync(ct)) is not null)
+            {
+                if (!ContentDispositionHeaderValue.TryParse(section.ContentDisposition, out var disposition))
+                    continue;
+
+                var fieldName = HeaderUtilities.RemoveQuotes(disposition.Name).Value;
+                var fileName = HeaderUtilities.RemoveQuotes(disposition.FileNameStar).Value
+                               ?? HeaderUtilities.RemoveQuotes(disposition.FileName).Value;
+
+                if (!string.IsNullOrWhiteSpace(fileName))
+                {
+                    var payload = new MemoryStream();
+                    await section.Body.CopyToAsync(payload, ct);
+                    if (payload.Length <= 0)
+                    {
+                        emptyFilePart = true;
+                        await payload.DisposeAsync();
+                        continue;
+                    }
+
+                    payload.Position = 0;
+                    return new AvatarUploadPayload(payload, idempotencyKey, expectedVersion, emptyFilePart);
+                }
+
+                if (string.IsNullOrWhiteSpace(fieldName))
+                    continue;
+
+                using var readerText = new StreamReader(section.Body, Encoding.UTF8, true, 1024, leaveOpen: true);
+                var value = (await readerText.ReadToEndAsync()).Trim();
+                if (fieldName.Equals("idempotencyKey", StringComparison.OrdinalIgnoreCase))
+                    idempotencyKey = string.IsNullOrWhiteSpace(value) ? null : value;
+                else if (fieldName.Equals("expectedVersion", StringComparison.OrdinalIgnoreCase)
+                         && long.TryParse(value, out var parsed))
+                    expectedVersion = parsed;
+            }
+        }
+        catch (IOException)
+        {
+            return new AvatarUploadPayload(null, idempotencyKey, expectedVersion, emptyFilePart);
+        }
+
+        return new AvatarUploadPayload(null, idempotencyKey, expectedVersion, emptyFilePart);
+    }
+
+    private sealed record AvatarUploadPayload(Stream? Stream, string? IdempotencyKey, long? ExpectedVersion, bool EmptyFilePart = false);
 
     //TODO: To ensure route works as expected
     [HttpDelete("{id}/avatar")]
@@ -245,6 +293,9 @@ public sealed class AltersController : InterfoldControllerBase
 
         if (!TryParseAlterId(id, out var alterId))
             return BadRequest(new { error = "Invalid alter ID.", code = "invalid_alter_id" });
+
+        var existingAlter = await _alterRepository.GetAsync(principal, alterId, ct);
+        var currentAvatarUrl = existingAlter?.AvatarUrl;
 
         var payload = new UpdateAlterCommand(
             AlterId: alterId,
@@ -272,7 +323,20 @@ public sealed class AltersController : InterfoldControllerBase
             Payload: payload
         );
 
-        var result = ToHttpResult(await _updateHandler.HandleAsync(envelope, ct));
+        var execution = await _updateHandler.HandleAsync(envelope, ct);
+        if (execution.Accepted)
+        {
+            try
+            {
+                await _avatarStorage.DeleteByUrlAsync(currentAvatarUrl, ct);
+            }
+            catch
+            {
+                // Alter metadata update succeeded; tolerate storage cleanup failures.
+            }
+        }
+
+        var result = ToHttpResult(execution);
         return result is OkObjectResult ? NoContent() : result;
     }
 

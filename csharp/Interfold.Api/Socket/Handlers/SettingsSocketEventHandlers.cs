@@ -69,7 +69,7 @@ public static class SettingsSocketEventHandlers
             ["id"] = profile?.SystemId ?? evt.SystemId,
             ["username"] = profile?.Username,
             ["description"] = profile?.Description,
-            ["avatar_url"] = profile?.AvatarUrl,
+            ["avatar_url"] = AvatarUrlQualifier.Qualify(profile?.AvatarUrl, context.RequestOrigin),
             ["discord_id"] = null,
             ["google_id"] = null,
             ["apple_id"] = null,

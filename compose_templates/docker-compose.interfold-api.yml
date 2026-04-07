@@ -1,4 +1,4 @@
-version: '3.8'
+name: interfold-api
 
 services:
   interfold-api:

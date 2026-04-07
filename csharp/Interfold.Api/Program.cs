@@ -29,6 +29,35 @@ var authConfig = builder.Configuration.BindAuthenticationConfiguration();
 var persistenceConfig = builder.Configuration.BindPersistenceConfiguration();
 builder.Services.AddInterfoldOptions();
 
+//TODO: Add Cors:AllowedOrigins?
+var configuredCorsOrigins = new[]
+{
+    builder.Configuration["OCTOCON_FRONTEND"],
+    builder.Configuration["OCTOCON_BETA_FRONTEND"]
+}
+    .Where(static origin => !string.IsNullOrWhiteSpace(origin))
+    .Select(static origin => origin!.Trim().TrimEnd('/'))
+    .Distinct(StringComparer.OrdinalIgnoreCase)
+    .ToArray();
+
+builder.Services.AddCors(options =>
+{
+    options.AddDefaultPolicy(policy =>
+    {
+        if (configuredCorsOrigins.Length > 0)
+        {
+            policy.WithOrigins(configuredCorsOrigins)
+                .AllowAnyHeader()
+                .AllowAnyMethod();
+            return;
+        }
+
+        policy.SetIsOriginAllowed(_ => true)
+            .AllowAnyHeader()
+            .AllowAnyMethod();
+    });
+});
+
 // --- Dependency Injection ---
 builder.Services.AddInterfoldCluster(builder.Configuration);
 builder.Services.AddInterfoldPersistence(builder.Configuration);
@@ -37,6 +66,8 @@ builder.Services.AddSingleton<IAvatarStorage, LocalAvatarStorage>();
 
 // --- HTTP Client Factory (for OAuth token exchange, etc.) ---
 builder.Services.AddHttpClient<GoogleOAuthService>();
+builder.Services.AddHttpClient<DiscordOAuthService>();
+builder.Services.AddHttpClient<AppleOAuthService>();
 
 // --- Auth ---
 // Tokens are always self-issued by this backend after
@@ -194,6 +225,24 @@ startupLogger.LogInformation(
     effectiveAuthConfig.JwtEs256PrivateKeyFile ?? "(not set)",
     effectiveAuthConfig.JwtEs256PublicKeyFile ?? "(not set)");
 
+// Ensure avatar multipart uploads are buffered before any component touches Request.Body.
+app.Use(async (context, next) =>
+{
+    if (HttpMethods.IsPut(context.Request.Method)
+        && context.Request.HasFormContentType)
+    {
+        var path = context.Request.Path.Value ?? string.Empty;
+        if (path.Equals("/api/settings/avatar", StringComparison.OrdinalIgnoreCase)
+            || (path.StartsWith("/api/systems/me/alters/", StringComparison.OrdinalIgnoreCase)
+                && path.EndsWith("/avatar", StringComparison.OrdinalIgnoreCase)))
+        {
+            context.Request.EnableBuffering();
+        }
+    }
+
+    await next();
+});
+
 var persistenceStartupLogger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("PersistenceStartup");
 persistenceStartupLogger.LogInformation(
     "Compatibility mode is {CompatibilityMode}. {Behavior}",
@@ -252,6 +301,7 @@ app.Use(async (ctx, next) =>
 
 app.UseHsts();
 app.UseHttpsRedirection();
+app.UseCors();
 app.UseAuthentication();
 app.UseStaticFiles();
 app.UseWebSockets(new WebSocketOptions

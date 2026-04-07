@@ -88,7 +88,8 @@ public static async Task HandleUserSocketAsync(HttpContext context)
         topicJoinReference,
         topicReplyAsArrayFrame,
         sendGate,
-        pushCts.Token);
+        pushCts.Token,
+        requestOrigin: $"{context.Request.Scheme}://{context.Request.Host}");
 
     var socketPushTask = SocketEventPumpRunner.RunAllAsync(
         eventBus,

@@ -22,6 +22,8 @@ public sealed class AuthController : ControllerBase
     private readonly IOptionsMonitor<ApiConfiguration> _apiOptions;
     private readonly IAuthenticationSchemeProvider _schemeProvider;
     private readonly GoogleOAuthService _googleOAuth;
+    private readonly DiscordOAuthService _discordOAuth;
+    private readonly AppleOAuthService _appleOAuth;
     private readonly IAuthTokenRevocationRepository _tokenRevocation;
 
     public AuthController(
@@ -30,6 +32,8 @@ public sealed class AuthController : ControllerBase
         IOptionsMonitor<ApiConfiguration> apiOptions,
         IAuthenticationSchemeProvider schemeProvider,
         GoogleOAuthService googleOAuth,
+        DiscordOAuthService discordOAuth,
+        AppleOAuthService appleOAuth,
         IAuthTokenRevocationRepository tokenRevocation)
     {
         _accounts = accounts;
@@ -37,6 +41,8 @@ public sealed class AuthController : ControllerBase
         _apiOptions = apiOptions;
         _schemeProvider = schemeProvider;
         _googleOAuth = googleOAuth;
+        _discordOAuth = discordOAuth;
+        _appleOAuth = appleOAuth;
         _tokenRevocation = tokenRevocation;
     }
 
@@ -246,6 +252,15 @@ public sealed class AuthController : ControllerBase
     {
         if (provider.Equals("discord", StringComparison.OrdinalIgnoreCase))
         {
+            // Discord OAuth2 callback delivers an authorization code; exchange it for the user ID.
+            var code = await GetValueAsync("code");
+            if (!string.IsNullOrWhiteSpace(code))
+            {
+                var redirectUri = BuildCallbackBaseUri(provider);
+                return await _discordOAuth.ExchangeCodeForDiscordIdAsync(code, redirectUri, HttpContext.RequestAborted);
+            }
+
+            // Fallback for legacy flows that deliver the ID directly.
             return await GetValueAsync("uid", "discord_id", "id");
         }
 
@@ -261,16 +276,40 @@ public sealed class AuthController : ControllerBase
             }
 
             // Build the redirect URI for token exchange
-            var redirectUri = BuildGoogleRedirectUri(provider);
+            var redirectUri = BuildCallbackBaseUri(provider);
             var email = await _googleOAuth.ExchangeCodeForEmailAsync(code, redirectUri, HttpContext.RequestAborted);
-            
+
             return email ?? await GetValueAsync("email");
         }
 
-        return await GetValueAsync("uid", "apple_id", "id");
+        //TODO: See if this actually works, we're currently not enrolled into Apple's program so can't test the full flow.
+        if (provider.Equals("apple", StringComparison.OrdinalIgnoreCase))
+        {
+            var code = await GetValueAsync("code");
+            if (!string.IsNullOrWhiteSpace(code))
+            {
+                var redirectUri = BuildCallbackBaseUri(provider);
+                var appleId = await _appleOAuth.ExchangeCodeForAppleIdAsync(code, redirectUri, HttpContext.RequestAborted);
+                if (!string.IsNullOrWhiteSpace(appleId))
+                {
+                    return appleId;
+                }
+            }
+
+            var idToken = await GetValueAsync("id_token");
+            var sub = _appleOAuth.ExtractSubFromJwt(idToken);
+            if (!string.IsNullOrWhiteSpace(sub))
+            {
+                return sub;
+            }
+
+            return await GetValueAsync("uid", "apple_id", "id", "sub");
+        }
+
+        return null;
     }
 
-    private string BuildGoogleRedirectUri(string provider)
+    private string BuildCallbackBaseUri(string provider)
     {
         var providerKey = provider.ToLowerInvariant();
         var authConfig = _authOptions.CurrentValue;

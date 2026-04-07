@@ -1,4 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.WebUtilities;
+using Microsoft.Net.Http.Headers;
+using System.Text;
 using System.Text.Json.Serialization;
 using Interfold.Api.Services;
 using Interfold.Contracts.Operations;
@@ -8,7 +11,6 @@ using Interfold.Domain.Settings;
 
 namespace Interfold.Api.Controllers;
 
-//TODO: To ensure route works as expected
 [Route("api/settings")]
 public sealed class SettingsController : InterfoldControllerBase
 {
@@ -86,6 +88,7 @@ public sealed class SettingsController : InterfoldControllerBase
         _relocateFieldHandler = relocateFieldHandler;
     }
 
+    //TODO: To ensure route works as expected
     [HttpGet("link_token")]
     public async Task<IActionResult> GetLinkToken(CancellationToken ct)
     {
@@ -149,6 +152,7 @@ public sealed class SettingsController : InterfoldControllerBase
         return result is OkObjectResult ? NoContent() : result;
     }
 
+    //TODO: To ensure route works as expected
     [HttpPost("push-token")]
     public async Task<IActionResult> AddPushToken([FromBody] SettingsPushTokenRequest req, CancellationToken ct)
     {
@@ -173,6 +177,7 @@ public sealed class SettingsController : InterfoldControllerBase
         return result is OkObjectResult ? NoContent() : result;
     }
 
+    //TODO: To ensure route works as expected
     [HttpDelete("push-token")]
     public async Task<IActionResult> RemovePushToken([FromBody] SettingsPushTokenRequest req, CancellationToken ct)
     {
@@ -220,6 +225,7 @@ public sealed class SettingsController : InterfoldControllerBase
         return ToHttpResult(execution);
     }
 
+    //TODO: To ensure route works as expected
     [HttpPost("recover-encryption")]
     public async Task<IActionResult> RecoverEncryption([FromBody] SettingsEncryptionRequest req, CancellationToken ct)
     {
@@ -243,6 +249,7 @@ public sealed class SettingsController : InterfoldControllerBase
         return ToHttpResult(execution);
     }
 
+    //TODO: To ensure route works as expected - does not delete journal entries currently which need adding
     [HttpPost("reset-encryption")]
     public async Task<IActionResult> ResetEncryption([FromBody] SettingsCommandRequest? req, CancellationToken ct)
     {
@@ -264,42 +271,29 @@ public sealed class SettingsController : InterfoldControllerBase
     }
 
     [HttpPut("avatar")]
-    [Consumes("application/json")]
-    public async Task<IActionResult> UploadAvatar([FromBody] SettingsAvatarRequest req, CancellationToken ct)
-    {
-        var principal = GetPrincipalId();
-        if (principal is null) return Unauthorized();
-
-        var envelope = new CommandEnvelope<UploadAvatarCommand>(
-            OperationIds.SettingsAvatarUpload,
-            Guid.NewGuid(),
-            PrincipalId: principal,
-            IdempotencyKey: GetIdempotencyKey(req.IdempotencyKey),
-            ExpectedVersion: req.ExpectedVersion,
-            OccurredAt: DateTimeOffset.UtcNow,
-            Payload: new UploadAvatarCommand(req.AvatarUrl)
-        );
-
-        var result = ToHttpResult(await _uploadAvatarHandler.HandleAsync(envelope, ct));
-        return result is OkObjectResult ? NoContent() : result;
-    }
-
-    [HttpPut("avatar")]
     [Consumes("multipart/form-data")]
-    public async Task<IActionResult> UploadAvatarMultipart([FromForm] SettingsAvatarMultipartRequest req, CancellationToken ct)
+    public async Task<IActionResult> UploadAvatarMultipart(CancellationToken ct)
     {
         var principal = GetPrincipalId();
         if (principal is null) return Unauthorized();
 
-        if (req.File is null || req.File.Length <= 0)
+        var upload = await ResolveMultipartUploadAsync(ct);
+        var avatarStream = upload.Stream;
+        if (avatarStream is null)
         {
+            if (upload.EmptyFilePart)
+                return BadRequest(new { error = "Avatar file is empty.", code = "avatar_file_empty" });
+
             return BadRequest(new { error = "No avatar file provided.", code = "avatar_file_required" });
         }
 
         string avatarUrl;
         try
         {
-            avatarUrl = await _avatarStorage.SaveSystemAvatarAsync(principal, req.File, ct);
+            using (avatarStream)
+            {
+                avatarUrl = await _avatarStorage.SaveSystemAvatarAsync(principal, avatarStream, ct);
+            }
         }
         catch
         {
@@ -310,8 +304,8 @@ public sealed class SettingsController : InterfoldControllerBase
             OperationIds.SettingsAvatarUpload,
             Guid.NewGuid(),
             PrincipalId: principal,
-            IdempotencyKey: GetIdempotencyKey(req.IdempotencyKey),
-            ExpectedVersion: req.ExpectedVersion,
+            IdempotencyKey: GetIdempotencyKey(upload.IdempotencyKey),
+            ExpectedVersion: upload.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
             Payload: new UploadAvatarCommand(avatarUrl)
         );
@@ -326,6 +320,9 @@ public sealed class SettingsController : InterfoldControllerBase
         var principal = GetPrincipalId();
         if (principal is null) return Unauthorized();
 
+        var currentProfile = await _accountRepository.GetPublicProfileAsync(principal, ct);
+        var currentAvatarUrl = currentProfile?.AvatarUrl;
+
         var envelope = new CommandEnvelope<DeleteAvatarCommand>(
             OperationIds.SettingsAvatarDelete,
             Guid.NewGuid(),
@@ -336,10 +333,24 @@ public sealed class SettingsController : InterfoldControllerBase
             Payload: new DeleteAvatarCommand()
         );
 
-        var result = ToHttpResult(await _deleteAvatarHandler.HandleAsync(envelope, ct));
+        var execution = await _deleteAvatarHandler.HandleAsync(envelope, ct);
+        if (execution.Accepted)
+        {
+            try
+            {
+                await _avatarStorage.DeleteByUrlAsync(currentAvatarUrl, ct);
+            }
+            catch
+            {
+                // Avatar metadata was cleared successfully; tolerate storage cleanup failures.
+            }
+        }
+
+        var result = ToHttpResult(execution);
         return result is OkObjectResult ? NoContent() : result;
     }
 
+    //TODO: To ensure route works as expected
     [HttpPost("import-pk")]
     public async Task<IActionResult> ImportPk([FromBody] SettingsImportRequest req, CancellationToken ct)
     {
@@ -360,6 +371,7 @@ public sealed class SettingsController : InterfoldControllerBase
         return result is OkObjectResult ? NoContent() : result;
     }
 
+    //TODO: To ensure route works as expected
     [HttpPost("import-sp")]
     public async Task<IActionResult> ImportSp([FromBody] SettingsImportRequest req, CancellationToken ct)
     {
@@ -380,6 +392,7 @@ public sealed class SettingsController : InterfoldControllerBase
         return result is OkObjectResult ? NoContent() : result;
     }
 
+    //TODO: To ensure route works as expected
     [HttpPost("unlink_discord")]
     public async Task<IActionResult> UnlinkDiscord([FromBody] SettingsCommandRequest? req, CancellationToken ct)
     {
@@ -400,6 +413,7 @@ public sealed class SettingsController : InterfoldControllerBase
         return result is OkObjectResult ? NoContent() : result;
     }
 
+    //TODO: To ensure route works as expected
     [HttpPost("unlink_email")]
     public async Task<IActionResult> UnlinkEmail([FromBody] SettingsCommandRequest? req, CancellationToken ct)
     {
@@ -420,6 +434,7 @@ public sealed class SettingsController : InterfoldControllerBase
         return result is OkObjectResult ? NoContent() : result;
     }
 
+    //TODO: To ensure route works as expected
     [HttpPost("unlink_apple")]
     public async Task<IActionResult> UnlinkApple([FromBody] SettingsCommandRequest? req, CancellationToken ct)
     {
@@ -440,6 +455,7 @@ public sealed class SettingsController : InterfoldControllerBase
         return result is OkObjectResult ? NoContent() : result;
     }
 
+    //TODO: To ensure route works as expected
     [HttpPost("delete-account")]
     public async Task<IActionResult> DeleteAccount([FromBody] SettingsCommandRequest? req, CancellationToken ct)
     {
@@ -460,6 +476,7 @@ public sealed class SettingsController : InterfoldControllerBase
         return result is OkObjectResult ? NoContent() : result;
     }
 
+    //TODO: To ensure route works as expected
     [HttpPost("wipe-alters")]
     public async Task<IActionResult> WipeAlters([FromBody] SettingsCommandRequest? req, CancellationToken ct)
     {
@@ -500,6 +517,7 @@ public sealed class SettingsController : InterfoldControllerBase
         return result is OkObjectResult ? NoContent() : result;
     }
 
+    //TODO: To ensure route works as expected
     [HttpPatch("fields/{id}")]
     public async Task<IActionResult> UpdateField([FromRoute] string id, [FromBody] SettingsUpdateFieldRequest req, CancellationToken ct)
     {
@@ -520,6 +538,7 @@ public sealed class SettingsController : InterfoldControllerBase
         return result is OkObjectResult ? NoContent() : result;
     }
 
+    //TODO: To ensure route works as expected
     [HttpDelete("fields/{id}")]
     public async Task<IActionResult> DeleteField([FromRoute] string id, [FromBody] SettingsCommandRequest? req, CancellationToken ct)
     {
@@ -540,6 +559,7 @@ public sealed class SettingsController : InterfoldControllerBase
         return result is OkObjectResult ? NoContent() : result;
     }
 
+    //TODO: To ensure route works as expected
     [HttpPost("fields/{id}/relocate")]
     public async Task<IActionResult> RelocateField([FromRoute] string id, [FromBody] SettingsRelocateFieldRequest req, CancellationToken ct)
     {
@@ -559,6 +579,82 @@ public sealed class SettingsController : InterfoldControllerBase
         var result = ToHttpResult(await _relocateFieldHandler.HandleAsync(envelope, ct));
         return result is OkObjectResult ? NoContent() : result;
     }
+
+    private async Task<AvatarUploadPayload> ResolveMultipartUploadAsync(CancellationToken ct)
+    {
+        string? idempotencyKey = null;
+        long? expectedVersion = null;
+        var emptyFilePart = false;
+
+        if (Request.Body is null)
+            return new AvatarUploadPayload(null, idempotencyKey, expectedVersion, emptyFilePart);
+
+        Request.EnableBuffering();
+
+        if (Request.Body.CanSeek)
+            Request.Body.Position = 0;
+
+        if (!MediaTypeHeaderValue.TryParse(Request.ContentType, out var mediaType)
+            || !mediaType.MediaType.HasValue
+            || !mediaType.MediaType.Value.StartsWith("multipart/", StringComparison.OrdinalIgnoreCase))
+        {
+            return new AvatarUploadPayload(null, idempotencyKey, expectedVersion, emptyFilePart);
+        }
+
+        var boundary = HeaderUtilities.RemoveQuotes(mediaType.Boundary).Value;
+        if (string.IsNullOrWhiteSpace(boundary))
+            return new AvatarUploadPayload(null, idempotencyKey, expectedVersion, emptyFilePart);
+
+        try
+        {
+            var reader = new MultipartReader(boundary, Request.Body);
+            MultipartSection? section;
+
+            while ((section = await reader.ReadNextSectionAsync(ct)) is not null)
+            {
+                if (!ContentDispositionHeaderValue.TryParse(section.ContentDisposition, out var disposition))
+                    continue;
+
+                var fieldName = HeaderUtilities.RemoveQuotes(disposition.Name).Value;
+                var fileName = HeaderUtilities.RemoveQuotes(disposition.FileNameStar).Value
+                               ?? HeaderUtilities.RemoveQuotes(disposition.FileName).Value;
+
+                if (!string.IsNullOrWhiteSpace(fileName))
+                {
+                    var payload = new MemoryStream();
+                    await section.Body.CopyToAsync(payload, ct);
+                    if (payload.Length <= 0)
+                    {
+                        emptyFilePart = true;
+                        await payload.DisposeAsync();
+                        continue;
+                    }
+
+                    payload.Position = 0;
+                    return new AvatarUploadPayload(payload, idempotencyKey, expectedVersion, emptyFilePart);
+                }
+
+                if (string.IsNullOrWhiteSpace(fieldName))
+                    continue;
+
+                using var readerText = new StreamReader(section.Body, Encoding.UTF8, true, 1024, leaveOpen: true);
+                var value = (await readerText.ReadToEndAsync()).Trim();
+                if (fieldName.Equals("idempotencyKey", StringComparison.OrdinalIgnoreCase))
+                    idempotencyKey = string.IsNullOrWhiteSpace(value) ? null : value;
+                else if (fieldName.Equals("expectedVersion", StringComparison.OrdinalIgnoreCase)
+                         && long.TryParse(value, out var parsed))
+                    expectedVersion = parsed;
+            }
+        }
+        catch (IOException)
+        {
+            return new AvatarUploadPayload(null, idempotencyKey, expectedVersion, emptyFilePart);
+        }
+
+        return new AvatarUploadPayload(null, idempotencyKey, expectedVersion, emptyFilePart);
+    }
+
+    private sealed record AvatarUploadPayload(Stream? Stream, string? IdempotencyKey, long? ExpectedVersion, bool EmptyFilePart = false);
 }
 
 public sealed record SettingsUsernameRequest(
@@ -594,14 +690,8 @@ public sealed record SettingsCommandRequest(
     long? ExpectedVersion = null
 );
 
-public sealed record SettingsAvatarRequest(
-    string AvatarUrl,
-    string? IdempotencyKey = null,
-    long? ExpectedVersion = null
-);
-
 public sealed record SettingsAvatarMultipartRequest(
-    IFormFile? File,
+    IFormFile File,
     string? IdempotencyKey = null,
     long? ExpectedVersion = null
 );

@@ -1,3 +1,4 @@
+name: interfold-db
 x-log-rotation: &default-log-rotation
   driver: "json-file"
   options:

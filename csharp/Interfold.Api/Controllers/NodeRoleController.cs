@@ -8,6 +8,7 @@ namespace Interfold.Api.Controllers;
 /// <summary>
 /// Exposes node-role metadata for load-balancer and ops health checks.
 /// </summary>
+[AllowAnonymous]
 [Route("health")]
 public sealed class NodeRoleController : InterfoldControllerBase
 {
@@ -26,7 +27,6 @@ public sealed class NodeRoleController : InterfoldControllerBase
     /// Equivalent to <c>Octocon.RPC.NodeTracker.current_group/0</c> from the legacy runtime.
     /// </para>
     /// </summary>
-    [AllowAnonymous]
     [HttpGet("node-role")]
     public IActionResult GetNodeRole()
     {
@@ -40,7 +40,6 @@ public sealed class NodeRoleController : InterfoldControllerBase
     /// <summary>
     /// Returns the operational health status of the database and guarded paths.
     /// </summary>
-    [AllowAnonymous]
     [HttpGet("database")]
     public async Task<IActionResult> GetDatabaseHealth()
     {

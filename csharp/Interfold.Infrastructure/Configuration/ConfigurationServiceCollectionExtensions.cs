@@ -160,8 +160,12 @@ public static class ConfigurationServiceCollectionExtensions
         opts.JwtEs256PrivateKeyPem   = config["OCTOCON_AUTH_EC_PRIVATE_KEY_PEM"];
         opts.JwtEs256PrivateKeyFile  = config["OCTOCON_AUTH_EC_PRIVATE_KEY_FILE"];
         opts.JwtEs256PublicKeyFile   = config["OCTOCON_AUTH_EC_PUBLIC_KEY_FILE"];
+        opts.DiscordOAuthClientId    = config["OCTOCON_DISCORD_OAUTH_CLIENT_ID"];
+        opts.DiscordOAuthClientSecret = config["OCTOCON_DISCORD_OAUTH_CLIENT_SECRET"];
         opts.GoogleOAuthClientId     = config["OCTOCON_GOOGLE_OAUTH_CLIENT_ID"];
         opts.GoogleOAuthClientSecret = config["OCTOCON_GOOGLE_OAUTH_CLIENT_SECRET"];
+        opts.AppleOAuthClientId      = config["OCTOCON_APPLE_OAUTH_CLIENT_ID"];
+        opts.AppleOAuthClientSecret  = config["OCTOCON_APPLE_OAUTH_CLIENT_SECRET"];
 
         var es256VerificationKeys = new List<string>();
         EnsureEs256KeyMaterial(opts);
@@ -196,6 +200,16 @@ public static class ConfigurationServiceCollectionExtensions
         opts.AppleSchemeName    = config["OCTOCON_AUTH_CHALLENGE_APPLE_SCHEME"]   ?? "oauth-apple";
         opts.AppleEndpoint      = config["OCTOCON_AUTH_CHALLENGE_APPLE_ENDPOINT"];
         opts.AppleParameters    = ParseAuthParameters(config["OCTOCON_AUTH_CHALLENGE_APPLE_PARAMS"]);
+
+        if (!string.IsNullOrWhiteSpace(opts.DiscordOAuthClientId) && opts.DiscordParameters != null)
+        {
+            opts.DiscordParameters.Add("client_id", opts.DiscordOAuthClientId);
+        }
+
+        if (!string.IsNullOrWhiteSpace(opts.AppleOAuthClientId) && opts.AppleParameters != null)
+        {
+            opts.AppleParameters["client_id"] = opts.AppleOAuthClientId;
+        }
     }
 
     private static void ApplyApi(ApiConfiguration opts, IConfiguration config)

@@ -154,12 +154,15 @@ public static async Task<string> BuildJoinInitJsonAsync(
 
     var primaryFront = fronts.FirstOrDefault(x => x.Primary)?.Front.AlterId;
 
+    var qualifyUrl = (string? url) =>
+        AvatarUrlQualifier.Qualify(url, context.Request.Scheme, context.Request.Host);
+
     var system = new Dictionary<string, object?>
     {
         ["id"] = profile?.SystemId ?? systemId,
         ["username"] = profile?.Username,
         ["description"] = profile?.Description,
-        ["avatar_url"] = profile?.AvatarUrl,
+        ["avatar_url"] = qualifyUrl(profile?.AvatarUrl),
         ["discord_id"] = null,
         ["google_id"] = null,
         ["apple_id"] = null,
@@ -172,6 +175,9 @@ public static async Task<string> BuildJoinInitJsonAsync(
         ["fields"] = fields,
         ["encryption_initialized"] = encryptionState?.Initialized ?? false
     };
+
+    foreach (var alter in alters)
+        alter.AvatarUrl = qualifyUrl(alter.AvatarUrl);
 
     var initData = new
     {

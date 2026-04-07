@@ -33,6 +33,13 @@ public abstract class InterfoldControllerBase : ControllerBase
     }
 
     /// <summary>
+    /// Returns <paramref name="url"/> with the server origin prepended when the stored
+    /// value is a relative path. Already-absolute URLs are returned unchanged.
+    /// </summary>
+    protected string? QualifyUrl(string? url)
+        => AvatarUrlQualifier.Qualify(url, Request.Scheme, Request.Host);
+
+    /// <summary>
     /// Executes a command handler with:
     /// <list type="bullet">
     ///   <item>Latency measurement recorded in <see cref="InterfoldMetrics.CommandLatencyMs"/>.</item>
