@@ -1,3 +1,4 @@
+using Cassandra;
 using Interfold.Infrastructure.Configuration;
 using Interfold.Domain.Settings;
 using Interfold.Infrastructure.Persistence.Transient;
@@ -48,16 +49,19 @@ public sealed class ScyllaNotificationTokenRepository : INotificationTokenReposi
                 WHERE push_token = ?");
 
             var rows = await session.ExecuteAsync(findByToken.Bind(token));
-            foreach (var row in rows)
+            
+            // Batch all deletes instead of executing individually
+            if (rows.Any())
             {
-                var userId = row.GetValue<string>("user_id");
-                var pushToken = row.GetValue<string>("push_token");
-
-                var deleteByPrimaryKey = await session.PrepareAsync(@"
-                    DELETE FROM global.notification_tokens
-                    WHERE user_id = ? AND push_token = ?");
-
-                await session.ExecuteAsync(deleteByPrimaryKey.Bind(userId, pushToken));
+                var deleteBatch = new BatchStatement();
+                foreach (var row in rows)
+                {
+                    deleteBatch.Add(new SimpleStatement(
+                        "DELETE FROM global.notification_tokens WHERE user_id = ? AND push_token = ?",
+                        row.GetValue<string>("user_id"),
+                        row.GetValue<string>("push_token")));
+                }
+                await session.ExecuteAsync(deleteBatch);
             }
 
             return true;

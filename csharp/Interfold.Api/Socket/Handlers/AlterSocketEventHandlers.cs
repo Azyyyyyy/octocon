@@ -35,6 +35,7 @@ public static class AlterSocketEventHandlers
             return;
         }
 
+        alter.AvatarUrl = AvatarUrlQualifier.Qualify(alter.AvatarUrl, context.RequestOrigin);
         var payloadJson = WebSocketEvents.SerializeSocketJson(new { alter });
         await context.SendAsync(topic, joinRef, asArray, eventName, payloadJson);
     }

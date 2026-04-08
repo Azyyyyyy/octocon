@@ -87,6 +87,8 @@ public sealed class ScyllaJournalRepository : IJournalRepository
             if (!exists)
                 return false;
 
+            var updateBatch = new BatchStatement();
+
             if (command.Title is not null)
             {
                 var q = new SimpleStatement(
@@ -95,7 +97,7 @@ public sealed class ScyllaJournalRepository : IJournalRepository
                     normalizedSystemId,
                     entryGuid
                 );
-                await session.ExecuteAsync(q);
+                updateBatch.Add(q);
             }
 
             if (command.Content is not null)
@@ -106,7 +108,7 @@ public sealed class ScyllaJournalRepository : IJournalRepository
                     normalizedSystemId,
                     entryGuid
                 );
-                await session.ExecuteAsync(q);
+                updateBatch.Add(q);
             }
 
             if (command.Color is not null)
@@ -117,7 +119,12 @@ public sealed class ScyllaJournalRepository : IJournalRepository
                     normalizedSystemId,
                     entryGuid
                 );
-                await session.ExecuteAsync(q);
+                updateBatch.Add(q);
+            }
+
+            if (!updateBatch.IsEmpty)
+            {
+                await session.ExecuteAsync(updateBatch);
             }
 
             return true;
@@ -141,19 +148,18 @@ public sealed class ScyllaJournalRepository : IJournalRepository
             if (!exists)
                 return false;
 
-            var delete = new SimpleStatement(
+            var deleteBatch = new BatchStatement();
+            deleteBatch.Add(new SimpleStatement(
                 $"DELETE FROM {keyspace}.global_journals WHERE user_id = ? AND id = ?",
                 normalizedSystemId,
                 entryGuid
-            );
-            await session.ExecuteAsync(delete);
-
-            var deleteAlters = new SimpleStatement(
+            ));
+            deleteBatch.Add(new SimpleStatement(
                 $"DELETE FROM {keyspace}.global_journal_alters WHERE user_id = ? AND global_journal_id = ?",
                 normalizedSystemId,
                 entryGuid
-            );
-            await session.ExecuteAsync(deleteAlters);
+            ));
+            await session.ExecuteAsync(deleteBatch);
 
             return true;
         }, _options, cancellationToken);
@@ -348,6 +354,8 @@ public sealed class ScyllaJournalRepository : IJournalRepository
             var normalizedSystemId = _keyspaceResolver.NormalizeSystemId(systemId);
             var keyspace = _keyspaceResolver.ResolveRegionalKeyspace(systemId);
 
+            var updateBatch = new BatchStatement();
+
             if (command.Title is not null)
             {
                 var q = new SimpleStatement(
@@ -357,7 +365,7 @@ public sealed class ScyllaJournalRepository : IJournalRepository
                     entryGuid,
                     (short)reference.AlterId
                 );
-                await session.ExecuteAsync(q);
+                updateBatch.Add(q);
             }
 
             if (command.Content is not null)
@@ -369,7 +377,7 @@ public sealed class ScyllaJournalRepository : IJournalRepository
                     entryGuid,
                     (short)reference.AlterId
                 );
-                await session.ExecuteAsync(q);
+                updateBatch.Add(q);
             }
 
             if (command.Color is not null)
@@ -381,7 +389,12 @@ public sealed class ScyllaJournalRepository : IJournalRepository
                     entryGuid,
                     (short)reference.AlterId
                 );
-                await session.ExecuteAsync(q);
+                updateBatch.Add(q);
+            }
+
+            if (!updateBatch.IsEmpty)
+            {
+                await session.ExecuteAsync(updateBatch);
             }
 
             return true;

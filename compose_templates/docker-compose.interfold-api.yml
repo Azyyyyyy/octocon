@@ -1,10 +1,16 @@
 name: interfold-api
+x-log-rotation: &default-log-rotation
+  driver: "json-file"
+  options:
+    max-size: "10m"
+    max-file: "3"
 
 services:
   interfold-api:
     image: ghcr.io/azyyyyyy/interfold-api:latest
     ports:
       - "8081:8080"
+    logging: *default-log-rotation
     environment:
       # Add any required environment variables here
       ASPNETCORE_ENVIRONMENT: Development

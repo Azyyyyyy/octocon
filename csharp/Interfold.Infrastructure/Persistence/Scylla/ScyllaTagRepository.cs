@@ -196,20 +196,18 @@ public sealed class ScyllaTagRepository : ITagRepository
                 return false;
             }
 
-            var deleteTag = new SimpleStatement(
+            var deleteBatch = new BatchStatement();
+            deleteBatch.Add(new SimpleStatement(
                 $"DELETE FROM {keyspace}.tags WHERE user_id = ? AND id = ?",
                 normalizedSystemId,
                 tagGuid
-            );
-            await session.ExecuteAsync(deleteTag);
-
-            // Remove all tag memberships for this tag.
-            var deleteMemberships = new SimpleStatement(
+            ));
+            deleteBatch.Add(new SimpleStatement(
                 $"DELETE FROM {keyspace}.alter_tags WHERE user_id = ? AND tag_id = ?",
                 normalizedSystemId,
                 tagGuid
-            );
-            await session.ExecuteAsync(deleteMemberships);
+            ));
+            await session.ExecuteAsync(deleteBatch);
 
             return true;
         }, _options, cancellationToken);
@@ -443,6 +441,7 @@ public sealed class ScyllaTagRepository : ITagRepository
             var normalizedSystemId = _keyspaceResolver.NormalizeSystemId(systemId);
             var keyspace = _keyspaceResolver.ResolveRegionalKeyspace(systemId);
             var friendshipLevel = await ResolveFriendshipLevelAsync(session, normalizedSystemId, viewerSystemId);
+            var hydrationConcurrency = _options.HydrationMaxConcurrency;
 
             var query = new SimpleStatement(
                 $"SELECT id, name, color, description, parent_tag_id, inserted_at, updated_at, security_level, user_id FROM {keyspace}.tags WHERE user_id = ?",
@@ -464,7 +463,11 @@ public sealed class ScyllaTagRepository : ITagRepository
                 var alterIds = await GetGuardedAlterIdsAsync(session, keyspace, normalizedSystemId, row.GetValue<Guid>("id"), friendshipLevel);
                 var alters = alterIds.Count == 0
                     ? Array.Empty<BareAlter>()
-                    : (await Task.WhenAll(alterIds.Select(id => _alterRepository.GetGuardedAsync(systemId, id, viewerSystemId, cancellationToken))))
+                    : (await ConcurrentProjection.SelectWithConcurrencyAsync(
+                            alterIds,
+                            hydrationConcurrency,
+                            id => _alterRepository.GetGuardedAsync(systemId, id, viewerSystemId, cancellationToken),
+                            cancellationToken))
                         .Where(x => x != null)
                         .ToArray();
                 tags.Add(new TagPublicReadModel(
@@ -541,6 +544,7 @@ public sealed class ScyllaTagRepository : ITagRepository
             var normalizedSystemId = _keyspaceResolver.NormalizeSystemId(systemId);
             var keyspace = _keyspaceResolver.ResolveRegionalKeyspace(systemId);
             var friendshipLevel = await ResolveFriendshipLevelAsync(session, normalizedSystemId, viewerSystemId);
+            var hydrationConcurrency = _options.HydrationMaxConcurrency;
 
             var query = new SimpleStatement(
                 $"SELECT id, name, color, description, parent_tag_id, inserted_at, updated_at, security_level, user_id FROM {keyspace}.tags WHERE user_id = ? AND id = ? LIMIT 1",
@@ -563,7 +567,11 @@ public sealed class ScyllaTagRepository : ITagRepository
             var alterIds = await GetGuardedAlterIdsAsync(session, keyspace, normalizedSystemId, tagGuid, friendshipLevel);
             var alters = alterIds.Count == 0
                 ? Array.Empty<BareAlter>()
-                : (await Task.WhenAll(alterIds.Select(id => _alterRepository.GetGuardedAsync(systemId, id, viewerSystemId, cancellationToken))))
+                : (await ConcurrentProjection.SelectWithConcurrencyAsync(
+                        alterIds,
+                        hydrationConcurrency,
+                        id => _alterRepository.GetGuardedAsync(systemId, id, viewerSystemId, cancellationToken),
+                        cancellationToken))
                     .Where(x => x != null)
                     .ToArray();
             return new TagPublicReadModel(

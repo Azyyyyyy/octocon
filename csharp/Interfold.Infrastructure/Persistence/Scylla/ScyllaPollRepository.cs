@@ -139,13 +139,15 @@ public sealed class ScyllaPollRepository : IPollRepository
             var normalizedSystemId = _keyspaceResolver.NormalizeSystemId(systemId);
             var keyspace = _keyspaceResolver.ResolveRegionalKeyspace(systemId);
 
-            var exists = await ExistsAsync(systemId, command.Id, cancellationToken);
+            var exists = await ExistsAsync(session, keyspace, normalizedSystemId, pollGuid);
             if (!exists)
                 return false;
 
+            var updateBatch = new BatchStatement();
+
             if (command.Title is not null)
             {
-                await session.ExecuteAsync(new SimpleStatement(
+                updateBatch.Add(new SimpleStatement(
                     $"UPDATE {keyspace}.polls SET title = ?, updated_at = toTimestamp(now()) WHERE user_id = ? AND id = ?",
                     command.Title,
                     normalizedSystemId,
@@ -154,7 +156,7 @@ public sealed class ScyllaPollRepository : IPollRepository
 
             if (command.Description is not null)
             {
-                await session.ExecuteAsync(new SimpleStatement(
+                updateBatch.Add(new SimpleStatement(
                     $"UPDATE {keyspace}.polls SET description = ?, updated_at = toTimestamp(now()) WHERE user_id = ? AND id = ?",
                     command.Description,
                     normalizedSystemId,
@@ -163,7 +165,7 @@ public sealed class ScyllaPollRepository : IPollRepository
 
             if (command.HasTimeEnd)
             {
-                await session.ExecuteAsync(new SimpleStatement(
+                updateBatch.Add(new SimpleStatement(
                     $"UPDATE {keyspace}.polls SET time_end = ?, updated_at = toTimestamp(now()) WHERE user_id = ? AND id = ?",
                     command.TimeEnd,
                     normalizedSystemId,
@@ -172,11 +174,16 @@ public sealed class ScyllaPollRepository : IPollRepository
 
             if (command.Data is not null)
             {
-                await session.ExecuteAsync(new SimpleStatement(
+                updateBatch.Add(new SimpleStatement(
                     $"UPDATE {keyspace}.polls SET data = ?, updated_at = toTimestamp(now()) WHERE user_id = ? AND id = ?",
                     command.Data.Value.ToString(),
                     normalizedSystemId,
                     pollGuid));
+            }
+
+            if (!updateBatch.IsEmpty)
+            {
+                await session.ExecuteAsync(updateBatch);
             }
 
             return true;
@@ -196,7 +203,7 @@ public sealed class ScyllaPollRepository : IPollRepository
             var normalizedSystemId = _keyspaceResolver.NormalizeSystemId(systemId);
             var keyspace = _keyspaceResolver.ResolveRegionalKeyspace(systemId);
 
-            var exists = await ExistsAsync(systemId, pollId, cancellationToken);
+            var exists = await ExistsAsync(session, keyspace, normalizedSystemId, pollGuid);
             if (!exists)
                 return false;
 
@@ -221,6 +228,18 @@ public sealed class ScyllaPollRepository : IPollRepository
 
     internal static string ToPollType(short code)
         => PollCodeToType.TryGetValue(code, out var type) ? type : "vote";
+
+    private static async Task<bool> ExistsAsync(ISession session, string keyspace, string normalizedSystemId, Guid pollGuid)
+    {
+        var query = new SimpleStatement(
+            $"SELECT id FROM {keyspace}.polls WHERE user_id = ? AND id = ? LIMIT 1",
+            normalizedSystemId,
+            pollGuid
+        );
+
+        var rows = await session.ExecuteAsync(query);
+        return rows.Any();
+    }
 
     private static DateTimeOffset? ParseTime(string? iso)
     {

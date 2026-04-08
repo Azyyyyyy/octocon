@@ -91,7 +91,7 @@ public sealed class ScyllaAlterRepository : IAlterRepository
 
             var batch = new BatchStatement();
 
-            var exists = await ExistsAsync(systemId, command.AlterId, cancellationToken);
+            var exists = await ExistsAsync(session, keyspace, normalizedSystemId, (short)command.AlterId);
             if (!exists)
             {
                 return false;
@@ -168,40 +168,60 @@ public sealed class ScyllaAlterRepository : IAlterRepository
             var keyspace = _keyspaceResolver.ResolveRegionalKeyspace(systemId);
             var alterIdShort = (short)alterId;
 
-            var exists = await ExistsAsync(systemId, alterId, cancellationToken);
+            var exists = await ExistsAsync(session, keyspace, normalizedSystemId, alterIdShort);
             if (!exists)
             {
                 return false;
             }
 
-            await session.ExecuteAsync(new SimpleStatement(
+            var deleteBatch = new BatchStatement();
+            deleteBatch.Add(new SimpleStatement(
                 $"DELETE FROM {keyspace}.alters WHERE user_id = ? AND id = ?",
                 normalizedSystemId,
                 alterIdShort));
-
-            await session.ExecuteAsync(new SimpleStatement(
+            deleteBatch.Add(new SimpleStatement(
                 $"DELETE FROM {keyspace}.current_fronts WHERE user_id = ? AND alter_id = ?",
                 normalizedSystemId,
                 alterIdShort));
+            await session.ExecuteAsync(deleteBatch);
 
-            var frontRows = await session.ExecuteAsync(new SimpleStatement(
+            // Parallelize the three cascade queries
+            var frontsTask = session.ExecuteAsync(new SimpleStatement(
                 $"SELECT id, time_start FROM {keyspace}.fronts_by_alter WHERE user_id = ? AND alter_id = ?",
                 normalizedSystemId,
                 alterIdShort));
 
-            foreach (var frontRow in frontRows)
+            var primaryTask = session.ExecuteAsync(new SimpleStatement(
+                $"SELECT primary_front FROM {keyspace}.users WHERE id = ? LIMIT 1",
+                normalizedSystemId));
+
+            var tagsTask = session.ExecuteAsync(new SimpleStatement(
+                $"SELECT tag_id FROM {keyspace}.alter_tags_by_alter WHERE user_id = ? AND alter_id = ?",
+                normalizedSystemId,
+                alterIdShort));
+
+            await Task.WhenAll(frontsTask, primaryTask, tagsTask);
+
+            var frontRows = await frontsTask;
+            var primaryFrontRow = (await primaryTask).FirstOrDefault();
+            var membershipRows = await tagsTask;
+
+            // Batch all front deletes
+            if (frontRows.Any())
             {
-                await session.ExecuteAsync(new SimpleStatement(
-                    $"DELETE FROM {keyspace}.fronts WHERE user_id = ? AND id = ? AND time_start = ?",
-                    normalizedSystemId,
-                    frontRow.GetValue<Guid>("id"),
-                    frontRow.GetValue<DateTimeOffset>("time_start")));
+                var frontBatch = new BatchStatement();
+                foreach (var frontRow in frontRows)
+                {
+                    frontBatch.Add(new SimpleStatement(
+                        $"DELETE FROM {keyspace}.fronts WHERE user_id = ? AND id = ? AND time_start = ?",
+                        normalizedSystemId,
+                        frontRow.GetValue<Guid>("id"),
+                        frontRow.GetValue<DateTimeOffset>("time_start")));
+                }
+                await session.ExecuteAsync(frontBatch);
             }
 
-            var primaryFrontRow = (await session.ExecuteAsync(new SimpleStatement(
-                $"SELECT primary_front FROM {keyspace}.users WHERE id = ? LIMIT 1",
-                normalizedSystemId))).FirstOrDefault();
-
+            // Handle primary_front update if needed
             if (primaryFrontRow?.GetValue<short?>("primary_front") == alterIdShort)
             {
                 await session.ExecuteAsync(new SimpleStatement(
@@ -209,19 +229,20 @@ public sealed class ScyllaAlterRepository : IAlterRepository
                     normalizedSystemId));
             }
 
-            var membershipRows = await session.ExecuteAsync(new SimpleStatement(
-                $"SELECT tag_id FROM {keyspace}.alter_tags WHERE user_id = ? AND alter_id = ?",
-                normalizedSystemId,
-                alterIdShort));
-
-            foreach (var row in membershipRows)
+            // Batch all tag deletes
+            if (membershipRows.Any())
             {
-                var tagId = row.GetValue<Guid>("tag_id");
-                await session.ExecuteAsync(new SimpleStatement(
-                    $"DELETE FROM {keyspace}.alter_tags WHERE user_id = ? AND tag_id = ? AND alter_id = ?",
-                    normalizedSystemId,
-                    tagId,
-                    alterIdShort));
+                var tagBatch = new BatchStatement();
+                foreach (var row in membershipRows)
+                {
+                    var tagId = row.GetValue<Guid>("tag_id");
+                    tagBatch.Add(new SimpleStatement(
+                        $"DELETE FROM {keyspace}.alter_tags WHERE user_id = ? AND tag_id = ? AND alter_id = ?",
+                        normalizedSystemId,
+                        tagId,
+                        alterIdShort));
+                }
+                await session.ExecuteAsync(tagBatch);
             }
 
             return true;
@@ -462,6 +483,18 @@ public sealed class ScyllaAlterRepository : IAlterRepository
             "private" => 3,
             _ => 0
         };
+    }
+
+    private static async Task<bool> ExistsAsync(ISession session, string keyspace, string normalizedSystemId, short alterId)
+    {
+        var query = new SimpleStatement(
+            $"SELECT id FROM {keyspace}.alters WHERE user_id = ? AND id = ? LIMIT 1",
+            normalizedSystemId,
+            alterId
+        );
+
+        var rows = await session.ExecuteAsync(query);
+        return rows.Any();
     }
 
     private async Task<IReadOnlyList<SettingsFieldReadModel>> ResolveVisibleDefinitionsAsync(

@@ -8,6 +8,7 @@ namespace Interfold.Infrastructure.Configuration;
 ///   - OCTOCON_POSTGRES_CONNECTION
 ///   - OCTOCON_SCYLLA_* (keyspace, datacenter, contact points, credentials)
 ///   - OCTOCON_DB_RETRY_* (retry strategy parameters)
+///   - OCTOCON_HYDRATION_MAX_CONCURRENCY
 /// </summary>
 public sealed class PersistenceConfiguration
 {
@@ -96,4 +97,12 @@ public sealed class PersistenceConfiguration
     /// Env: OCTOCON_DB_RETRY_MAX_DELAY_MS
     /// </summary>
     public int DbRetryMaxDelayMs { get; set; } = 1500;
+
+    /// <summary>
+    /// Maximum concurrent friendship profile/fronting hydration tasks per request.
+    /// Used to cap fan-out in friendship query paths to avoid unbounded bursts.
+    /// Default: 8
+    /// Env: OCTOCON_HYDRATION_MAX_CONCURRENCY
+    /// </summary>
+    public int HydrationMaxConcurrency { get; set; } = 8;
 }

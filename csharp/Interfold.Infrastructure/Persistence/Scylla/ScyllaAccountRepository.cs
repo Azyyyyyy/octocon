@@ -278,23 +278,21 @@ public sealed class ScyllaAccountRepository : IAccountRepository
             var newUserId = Random.Shared.GetString(idChars, 7);
             var keyspace = newRegion; // ResolveRegionalKeyspace would just return the newRegion
 
-            // Insert into regional users table
-            var userInsert = new SimpleStatement(
-                $"INSERT INTO {keyspace}.users (id, {columnName}, inserted_at, updated_at) VALUES (?, ?, toTimestamp(now()), toTimestamp(now()))",
-                newUserId,
-                value
-            );
+            // Write regional user + global registry together to reduce split-write orphans.
+            var createUserBatch = new BatchStatement()
+                .Add(new SimpleStatement(
+                    $"INSERT INTO {keyspace}.users (id, {columnName}, inserted_at, updated_at) VALUES (?, ?, toTimestamp(now()), toTimestamp(now()))",
+                    newUserId,
+                    value
+                ))
+                .Add(new SimpleStatement(
+                    $"INSERT INTO global.user_registry (user_id, {columnName}, region, inserted_at, updated_at) VALUES (?, ?, ?, toTimestamp(now()), toTimestamp(now()))",
+                    newUserId,
+                    value,
+                    newRegion
+                ));
 
-            // Insert into global user registry
-            var registryInsert = new SimpleStatement(
-                $"INSERT INTO global.user_registry (user_id, {columnName}, region, inserted_at, updated_at) VALUES (?, ?, ?, toTimestamp(now()), toTimestamp(now()))",
-                newUserId,
-                value,
-                newRegion
-            );
-
-            await session.ExecuteAsync(userInsert);
-            await session.ExecuteAsync(registryInsert);
+            await session.ExecuteAsync(createUserBatch);
 
             return $"{newRegion}:{newUserId}";
         }, _options, cancellationToken);
@@ -338,15 +336,16 @@ public sealed class ScyllaAccountRepository : IAccountRepository
                 return AccountLinkResult.AlreadyLinked;
             }
 
-            await session.ExecuteAsync(new SimpleStatement(
+            var linkBatch = new BatchStatement();
+            linkBatch.Add(new SimpleStatement(
                 $"UPDATE {keyspace}.users SET {columnName} = ?, updated_at = toTimestamp(now()) WHERE id = ?",
                 value,
                 normalizedSystemId));
-
-            await session.ExecuteAsync(new SimpleStatement(
+            linkBatch.Add(new SimpleStatement(
                 $"UPDATE global.user_registry SET {columnName} = ?, updated_at = toTimestamp(now()) WHERE user_id = ?",
                 value,
                 normalizedSystemId));
+            await session.ExecuteAsync(linkBatch);
 
             return AccountLinkResult.Success;
         }, _options, cancellationToken);

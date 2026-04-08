@@ -149,6 +149,8 @@ public sealed class ScyllaPostgresBootstrapHealthChecker : IDatabaseBootstrapHea
 
     private static async Task<List<string>> GetMissingTablesAsync(ISession session, string keyspace, IEnumerable<string> tableNames)
     {
+        //TODO: This should be optimized to query system_schema.tables once per keyspace and check for all required tables in-memory, 
+        // rather than querying for each table individually.
         var missingTables = new List<string>();
         foreach (var tableName in tableNames)
         {

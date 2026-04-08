@@ -56,6 +56,7 @@ public sealed class AltersController : InterfoldControllerBase
             return NotFound(new { error = "Alter not found.", code = "alter_not_found" });
         }
 
+        alter.AvatarUrl = QualifyUrl(alter.AvatarUrl);
         return Ok(new { data = alter });
     }
 

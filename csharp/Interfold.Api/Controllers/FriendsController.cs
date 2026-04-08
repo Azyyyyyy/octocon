@@ -28,7 +28,8 @@ public sealed class FriendsController : InterfoldControllerBase
         if (principal is null) return Unauthorized();
 
         var friendships = await _repository.ListFriendshipsAsync(principal, ct);
-        return Ok(new { data = friendships });
+        var qualified = friendships.Select(QualifyFriendship).ToArray();
+        return Ok(new { data = qualified });
     }
 
     [HttpGet("{id}")]
@@ -49,7 +50,18 @@ public sealed class FriendsController : InterfoldControllerBase
         var friendship = await _repository.GetFriendshipAsync(principal, id, ct);
         return friendship is null
             ? NotFound(new { error = "You are not friends with that system.", code = "friendship_not_found" })
-            : Ok(new { data = friendship });
+            : Ok(new { data = QualifyFriendship(friendship) });
+    }
+
+    private FriendshipReadModel QualifyFriendship(FriendshipReadModel friendship)
+    {
+        return friendship with
+        {
+            Friend = friendship.Friend with { AvatarUrl = QualifyUrl(friendship.Friend.AvatarUrl) },
+            Fronting = friendship.Fronting
+                .Select(f => f with { Alter = f.Alter with { AvatarUrl = QualifyUrl(f.Alter.AvatarUrl) } })
+                .ToArray()
+        };
     }
 
     [HttpDelete("{id}")]

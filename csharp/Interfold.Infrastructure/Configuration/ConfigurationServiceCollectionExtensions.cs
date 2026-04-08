@@ -150,6 +150,7 @@ public static class ConfigurationServiceCollectionExtensions
         opts.DbRetryAttempts          = TryParseInt(config["OCTOCON_DB_RETRY_ATTEMPTS"])         ?? 3;
         opts.DbRetryInitialDelayMs    = TryParseInt(config["OCTOCON_DB_RETRY_INITIAL_DELAY_MS"]) ?? 100;
         opts.DbRetryMaxDelayMs        = TryParseInt(config["OCTOCON_DB_RETRY_MAX_DELAY_MS"])     ?? 1500;
+        opts.HydrationMaxConcurrency = TryParseInt(config["OCTOCON_HYDRATION_MAX_CONCURRENCY"]) ?? 8;
     }
 
     private static void ApplyAuthentication(AuthenticationConfiguration opts, IConfiguration config)

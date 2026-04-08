@@ -34,12 +34,25 @@ public sealed class FriendRequestsController : InterfoldControllerBase
         if (principal is null) return Unauthorized();
 
         var requests = await _repository.GetFriendRequestsAsync(principal, ct);
+        var incoming = requests.Incoming
+            .Select(x => x with
+            {
+                System = x.System with { AvatarUrl = QualifyUrl(x.System.AvatarUrl) }
+            })
+            .ToArray();
+        var outgoing = requests.Outgoing
+            .Select(x => x with
+            {
+                System = x.System with { AvatarUrl = QualifyUrl(x.System.AvatarUrl) }
+            })
+            .ToArray();
+
         return Ok(new
         {
             data = new
             {
-                incoming = requests.Incoming,
-                outgoing = requests.Outgoing
+                incoming,
+                outgoing
             }
         });
     }
