@@ -15,7 +15,8 @@ public sealed record UpdateAlterCommand(
     string? Alias,
     bool? Untracked,
     bool? Archived,
-    bool? Pinned
+    bool? Pinned,
+    bool ClearAvatar = false
 );
 
 public sealed record DeleteAlterCommand(int AlterId);

@@ -300,6 +300,16 @@ public sealed class SettingsController : InterfoldControllerBase
             return StatusCode(500, new { error = "An error occurred while uploading the file.", code = "unknown_error" });
         }
 
+        string? currentAvatarUrl = null;
+        try
+        {
+            var currentProfile = await _accountRepository.GetPublicProfileAsync(principal, ct);
+            currentAvatarUrl = currentProfile?.AvatarUrl;
+        }
+        catch
+        {
+        }
+
         var envelope = new CommandEnvelope<UploadAvatarCommand>(
             OperationIds.SettingsAvatarUpload,
             Guid.NewGuid(),
@@ -311,7 +321,22 @@ public sealed class SettingsController : InterfoldControllerBase
         );
 
         var result = ToHttpResult(await _uploadAvatarHandler.HandleAsync(envelope, ct));
-        return result is OkObjectResult ? NoContent() : result;
+
+        if (result is not OkObjectResult)
+        {
+            return result;
+        }
+
+        try
+        {
+            await _avatarStorage.DeleteByUrlAsync(currentAvatarUrl, ct);
+        }
+        catch
+        {
+            // Avatar metadata was updated successfully; tolerate storage cleanup failures.
+        }
+
+        return NoContent();
     }
 
     [HttpDelete("avatar")]

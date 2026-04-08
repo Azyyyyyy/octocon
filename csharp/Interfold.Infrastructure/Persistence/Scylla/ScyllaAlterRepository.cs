@@ -99,7 +99,19 @@ public sealed class ScyllaAlterRepository : IAlterRepository
 
             UpdateIfNotNull(batch, keyspace, command, "name", command.Name, normalizedSystemId);
             UpdateIfNotNull(batch, keyspace, command, "description", command.Description, normalizedSystemId);
-            UpdateIfNotNull(batch, keyspace, command, "avatar_url", command.AvatarUrl, normalizedSystemId);
+            if (command.ClearAvatar)
+            {
+                batch.Add(new SimpleStatement(
+                    $"UPDATE {keyspace}.alters SET avatar_url = ?, updated_at = toTimestamp(now()) WHERE user_id = ? AND id = ?",
+                    null,
+                    normalizedSystemId,
+                    (short)command.AlterId
+                ));
+            }
+            else
+            {
+                UpdateIfNotNull(batch, keyspace, command, "avatar_url", command.AvatarUrl, normalizedSystemId);
+            }
             UpdateIfNotNull(batch, keyspace, command, "color", command.Color, normalizedSystemId);
             UpdateIfNotNull(batch, keyspace, command, "pronouns", command.Pronouns, normalizedSystemId);
             UpdateIfNotNull(batch, keyspace, command, "security_level", command.SecurityLevel == null ? null : ToSecurityLevel(command.SecurityLevel), normalizedSystemId);

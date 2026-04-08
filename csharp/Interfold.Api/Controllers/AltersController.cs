@@ -145,7 +145,6 @@ public sealed class AltersController : InterfoldControllerBase
         return result is OkObjectResult ? NoContent() : result;
     }
 
-    //TODO: To ensure route works as expected
     [HttpPut("{id}/avatar")]
     [Consumes("multipart/form-data")]
     public async Task<IActionResult> UploadAvatarMultipart(string id, CancellationToken ct)
@@ -179,6 +178,17 @@ public sealed class AltersController : InterfoldControllerBase
             return StatusCode(500, new { error = "An error occurred while uploading the file.", code = "unknown_error" });
         }
 
+        string? currentAvatarUrl = null;
+        try
+        {
+            var existingAlter = await _alterRepository.GetAsync(principal, alterId, ct);
+            currentAvatarUrl = existingAlter?.AvatarUrl;
+        }
+        catch
+        {
+            // Best effort to clean up old avatar; this isn't critical but ideal for costs/storage
+        }
+
         var payload = new UpdateAlterCommand(
             AlterId: alterId,
             Name: null,
@@ -206,7 +216,21 @@ public sealed class AltersController : InterfoldControllerBase
         );
 
         var result = ToHttpResult(await _updateHandler.HandleAsync(envelope, ct));
-        return result is OkObjectResult ? NoContent() : result;
+        if (result is not OkObjectResult) 
+        {
+            return result;
+        }
+
+        try
+        {
+            await _avatarStorage.DeleteByUrlAsync(currentAvatarUrl, ct);
+        }
+        catch
+        {
+            // Alter metadata update succeeded; tolerate storage cleanup failures.
+        }
+
+        return NoContent();
     }
 
     private async Task<AvatarUploadPayload> ResolveMultipartUploadAsync(CancellationToken ct)
@@ -285,7 +309,6 @@ public sealed class AltersController : InterfoldControllerBase
 
     private sealed record AvatarUploadPayload(Stream? Stream, string? IdempotencyKey, long? ExpectedVersion, bool EmptyFilePart = false);
 
-    //TODO: To ensure route works as expected
     [HttpDelete("{id}/avatar")]
     public async Task<IActionResult> DeleteAvatar(string id, [FromBody] DeleteAlterRequest? req, CancellationToken ct)
     {
@@ -311,7 +334,8 @@ public sealed class AltersController : InterfoldControllerBase
             Alias: null,
             Untracked: null,
             Archived: null,
-            Pinned: null
+            Pinned: null,
+            ClearAvatar: true
         );
 
         var envelope = new CommandEnvelope<UpdateAlterCommand>(

@@ -126,6 +126,7 @@ public sealed class UpdateAlterCommandHandler : ICommandHandler<UpdateAlterComma
         payload.Name is not null ||
         payload.Description is not null ||
         payload.AvatarUrl is not null ||
+        payload.ClearAvatar ||
         payload.Color is not null ||
         payload.Pronouns is not null ||
         payload.SecurityLevel is not null ||
