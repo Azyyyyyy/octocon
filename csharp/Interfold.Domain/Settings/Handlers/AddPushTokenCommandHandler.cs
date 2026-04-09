@@ -1,9 +1,9 @@
 using Interfold.Contracts.Operations;
 using Interfold.Domain.Abstractions;
 
-namespace Interfold.Domain.Settings;
+namespace Interfold.Domain.Settings.Handlers;
 
-public sealed class RemovePushTokenCommandHandler : ICommandHandler<RemovePushTokenCommand, SettingsCommandResult>
+public sealed class AddPushTokenCommandHandler : ICommandHandler<AddPushTokenCommand, SettingsCommandResult>
 {
     private const string AggregateType = "settings";
 
@@ -11,7 +11,7 @@ public sealed class RemovePushTokenCommandHandler : ICommandHandler<RemovePushTo
     private readonly IIdempotencyStore _idempotencyStore;
     private readonly IAggregateVersionStore _versionStore;
 
-    public RemovePushTokenCommandHandler(
+    public AddPushTokenCommandHandler(
         INotificationTokenRepository repository,
         IIdempotencyStore idempotencyStore,
         IAggregateVersionStore versionStore)
@@ -22,7 +22,7 @@ public sealed class RemovePushTokenCommandHandler : ICommandHandler<RemovePushTo
     }
 
     public async Task<CommandExecutionResult<SettingsCommandResult>> HandleAsync(
-        CommandEnvelope<RemovePushTokenCommand> command,
+        CommandEnvelope<AddPushTokenCommand> command,
         CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(command.Payload.Token))
@@ -40,7 +40,7 @@ public sealed class RemovePushTokenCommandHandler : ICommandHandler<RemovePushTo
         if (previous is not null)
         {
             if (!string.Equals(previous.PayloadHash, payloadHash, StringComparison.Ordinal))
-                return RejectDuplicate(command, "settings:push_token:remove");
+                return RejectDuplicate(command, "settings:push_token:add");
 
             var replay = CommandSerialization.Deserialize<SettingsCommandResult>(previous.OutcomePayload);
             if (replay is not null)
@@ -56,10 +56,11 @@ public sealed class RemovePushTokenCommandHandler : ICommandHandler<RemovePushTo
         if (!versionAdvanced)
             return await RejectStaleVersion(command, cancellationToken);
 
-        // Removal is treated as idempotent for retry safety.
-        await _repository.RemoveAsync(command.Payload.Token.Trim(), cancellationToken);
+        var persisted = await _repository.AddAsync(command.PrincipalId, command.Payload.Token.Trim(), cancellationToken);
+        if (!persisted)
+            return RejectInvariant(command, "settings:push_token_add_failed");
 
-        var result = new SettingsCommandResult(command.PrincipalId, "push_token_removed", Replay: false);
+        var result = new SettingsCommandResult(command.PrincipalId, "push_token_added", Replay: false);
         var resultJson = CommandSerialization.Serialize(result);
 
         await _idempotencyStore.SaveAsync(
@@ -75,19 +76,19 @@ public sealed class RemovePushTokenCommandHandler : ICommandHandler<RemovePushTo
     }
 
     private static CommandExecutionResult<SettingsCommandResult> RejectDuplicate(
-        CommandEnvelope<RemovePushTokenCommand> command,
+        CommandEnvelope<AddPushTokenCommand> command,
         string entityRef) =>
         CommandExecutionResult<SettingsCommandResult>.Rejected(
             new ConflictResult(ConflictCode.ConflictDuplicate, command.OperationId, entityRef, null, "no_retry", null));
 
     private static CommandExecutionResult<SettingsCommandResult> RejectInvariant(
-        CommandEnvelope<RemovePushTokenCommand> command,
+        CommandEnvelope<AddPushTokenCommand> command,
         string entityRef) =>
         CommandExecutionResult<SettingsCommandResult>.Rejected(
             new ConflictResult(ConflictCode.ConflictInvariant, command.OperationId, entityRef, null, "manual_merge_required", null));
 
     private async Task<CommandExecutionResult<SettingsCommandResult>> RejectStaleVersion(
-        CommandEnvelope<RemovePushTokenCommand> command,
+        CommandEnvelope<AddPushTokenCommand> command,
         CancellationToken cancellationToken)
     {
         var current = await _versionStore.GetVersionAsync(AggregateType, command.PrincipalId, cancellationToken);

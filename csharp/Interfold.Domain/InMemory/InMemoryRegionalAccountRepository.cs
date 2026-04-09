@@ -166,20 +166,56 @@ public sealed class InMemoryRegionalAccountRepository : IAccountRepository
     public Task<AccountLinkResult> LinkAppleToUserAsync(string systemId, string appleId, CancellationToken cancellationToken = default)
         => Task.FromResult(LinkIdentifier(systemId, appleId, _appleBySystem, _systemByApple));
 
+    public Task<bool> UnlinkDiscordAsync(string systemId, CancellationToken cancellationToken = default)
+    {
+        var systemKey = GetSystemKey(systemId);
+        if (_discordBySystem.TryRemove(systemKey, out var discordId) && !string.IsNullOrWhiteSpace(discordId))
+        {
+            _systemByDiscord.TryRemove(discordId, out _);
+        }
+
+        return Task.FromResult(true);
+    }
+
+    public Task<bool> UnlinkEmailAsync(string systemId, CancellationToken cancellationToken = default)
+    {
+        var systemKey = GetSystemKey(systemId);
+        if (_emailBySystem.TryRemove(systemKey, out var email) && !string.IsNullOrWhiteSpace(email))
+        {
+            _systemByEmail.TryRemove(email, out _);
+        }
+
+        return Task.FromResult(true);
+    }
+
+    public Task<bool> UnlinkAppleAsync(string systemId, CancellationToken cancellationToken = default)
+    {
+        var systemKey = GetSystemKey(systemId);
+        if (_appleBySystem.TryRemove(systemKey, out var appleId) && !string.IsNullOrWhiteSpace(appleId))
+        {
+            _systemByApple.TryRemove(appleId, out _);
+        }
+
+        return Task.FromResult(true);
+    }
+
     public Task<AccountPublicProfileReadModel?> GetPublicProfileAsync(string systemId, CancellationToken cancellationToken = default)
     {
         var systemKey = GetSystemKey(systemId);
         var username = _usernameBySystem.TryGetValue(systemKey, out var u) ? u : null;
         var description = _descriptionBySystem.TryGetValue(systemKey, out var d) ? d : null;
         var avatarUrl = _avatarBySystem.TryGetValue(systemKey, out var a) ? a : null;
+        var discordId = _discordBySystem.TryGetValue(systemKey, out var discord) ? discord : null;
+        var email = _emailBySystem.TryGetValue(systemKey, out var e) ? e : null;
+        var appleId = _appleBySystem.TryGetValue(systemKey, out var apple) ? apple : null;
 
-        if (username is null && description is null && avatarUrl is null)
+        if (username is null && description is null && avatarUrl is null && discordId is null && email is null && appleId is null)
         {
             return Task.FromResult<AccountPublicProfileReadModel?>(null);
         }
 
         return Task.FromResult<AccountPublicProfileReadModel?>(
-            new AccountPublicProfileReadModel(systemId, username, description, avatarUrl));
+            new AccountPublicProfileReadModel(systemId, username, description, avatarUrl, discordId, email, appleId));
     }
 
     private string GetSystemKey(string systemId)

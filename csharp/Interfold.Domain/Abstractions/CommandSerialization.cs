@@ -8,7 +8,7 @@ internal static class CommandSerialization
 {
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase   
     };
 
     public static string Serialize<T>(T value) => JsonSerializer.Serialize(value, JsonOptions);

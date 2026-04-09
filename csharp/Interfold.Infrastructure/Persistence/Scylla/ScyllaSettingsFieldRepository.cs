@@ -161,6 +161,45 @@ public sealed class ScyllaSettingsFieldRepository : ISettingsFieldRepository
         }, _options, cancellationToken);
     }
 
+    private static async Task<BatchStatement> RemoveFieldValuesFromAltersAsync(
+        ISession session,
+        string keyspace,
+        string normalizedSystemId,
+        Guid fieldId)
+    {
+        ScyllaAlterRepository.EnsureAlterFieldUdtMapping(session, keyspace);
+
+        var rows = await session.ExecuteAsync(new SimpleStatement(
+            $"SELECT id, fields FROM {keyspace}.alters WHERE user_id = ?",
+            normalizedSystemId));
+
+        var batch = new BatchStatement();
+
+        foreach (var row in rows)
+        {
+            var alterId = row.GetValue<short>("id");
+            var fields = row.GetValue<IEnumerable<ScyllaAlterRepository.AlterFieldUdt>?>("fields")?.ToList();
+            if (fields is null || fields.Count == 0)
+            {
+                continue;
+            }
+
+            var removedAny = fields.RemoveAll(x => x.Id == fieldId) > 0;
+            if (!removedAny)
+            {
+                continue;
+            }
+
+            batch.Add(new SimpleStatement(
+                $"UPDATE {keyspace}.alters SET fields = ?, updated_at = toTimestamp(now()) WHERE user_id = ? AND id = ?",
+                fields,
+                normalizedSystemId,
+                alterId));
+        }
+
+        return batch;
+    }
+
     public async Task<bool> DeleteAsync(string systemId, string fieldId, CancellationToken cancellationToken = default)
     {
         return await DatabaseTransientRetry.ExecuteScyllaAsync(async () =>
@@ -187,10 +226,15 @@ public sealed class ScyllaSettingsFieldRepository : ISettingsFieldRepository
                 return false;
             }
 
-            await session.ExecuteAsync(new SimpleStatement(
+            // Remove the field values from all alters before deleting the field itself
+            // We want to ensure that the field values are removed to ensure no leakage of deleted field data
+            var batch = await RemoveFieldValuesFromAltersAsync(session, keyspace, normalizedSystemId, fieldGuid);
+            batch.Add(new SimpleStatement(
                 $"UPDATE {keyspace}.users SET fields = ?, updated_at = toTimestamp(now()) WHERE id = ?",
                 fields,
                 normalizedSystemId));
+
+            await session.ExecuteAsync(batch);
 
             return true;
         }, _options, cancellationToken);

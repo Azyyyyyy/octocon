@@ -1,33 +1,33 @@
 using Interfold.Contracts.Operations;
 using Interfold.Domain.Abstractions;
 
-namespace Interfold.Domain.Settings;
+namespace Interfold.Domain.Settings.Handlers;
 
-public sealed class ResetEncryptionCommandHandler : ICommandHandler<ResetEncryptionCommand, SettingsCommandResult>
+public sealed class RemovePushTokenCommandHandler : ICommandHandler<RemovePushTokenCommand, SettingsCommandResult>
 {
     private const string AggregateType = "settings";
 
-    private readonly IEncryptionStateRepository _repository;
+    private readonly INotificationTokenRepository _repository;
     private readonly IIdempotencyStore _idempotencyStore;
     private readonly IAggregateVersionStore _versionStore;
-    private readonly IClusterEventBus _eventBus;
 
-    public ResetEncryptionCommandHandler(
-        IEncryptionStateRepository repository,
+    public RemovePushTokenCommandHandler(
+        INotificationTokenRepository repository,
         IIdempotencyStore idempotencyStore,
-        IAggregateVersionStore versionStore,
-        IClusterEventBus eventBus)
+        IAggregateVersionStore versionStore)
     {
         _repository = repository;
         _idempotencyStore = idempotencyStore;
         _versionStore = versionStore;
-        _eventBus = eventBus;
     }
 
     public async Task<CommandExecutionResult<SettingsCommandResult>> HandleAsync(
-        CommandEnvelope<ResetEncryptionCommand> command,
+        CommandEnvelope<RemovePushTokenCommand> command,
         CancellationToken cancellationToken = default)
     {
+        if (string.IsNullOrWhiteSpace(command.Payload.Token))
+            return RejectInvariant(command, "settings:push_token_invalid");
+
         var payloadJson = CommandSerialization.Serialize(command.Payload);
         var payloadHash = CommandSerialization.Hash(payloadJson);
 
@@ -40,7 +40,7 @@ public sealed class ResetEncryptionCommandHandler : ICommandHandler<ResetEncrypt
         if (previous is not null)
         {
             if (!string.Equals(previous.PayloadHash, payloadHash, StringComparison.Ordinal))
-                return RejectDuplicate(command, "settings:encryption:reset");
+                return RejectDuplicate(command, "settings:push_token:remove");
 
             var replay = CommandSerialization.Deserialize<SettingsCommandResult>(previous.OutcomePayload);
             if (replay is not null)
@@ -56,11 +56,10 @@ public sealed class ResetEncryptionCommandHandler : ICommandHandler<ResetEncrypt
         if (!versionAdvanced)
             return await RejectStaleVersion(command, cancellationToken);
 
-        var persisted = await _repository.UpsertAsync(command.PrincipalId, false, null, cancellationToken);
-        if (!persisted)
-            return RejectInvariant(command, "settings:encryption_reset_failed");
+        // Removal is treated as idempotent for retry safety.
+        await _repository.RemoveAsync(command.Payload.Token.Trim(), cancellationToken);
 
-        var result = new SettingsCommandResult(command.PrincipalId, "encryption_reset", Replay: false);
+        var result = new SettingsCommandResult(command.PrincipalId, "push_token_removed", Replay: false);
         var resultJson = CommandSerialization.Serialize(result);
 
         await _idempotencyStore.SaveAsync(
@@ -72,24 +71,23 @@ public sealed class ResetEncryptionCommandHandler : ICommandHandler<ResetEncrypt
             resultJson,
             cancellationToken);
 
-        await _eventBus.PublishAsync(new SettingsEncryptedDataWipedSignalEvent(command.PrincipalId), cancellationToken);
         return CommandExecutionResult<SettingsCommandResult>.Success(result);
     }
 
     private static CommandExecutionResult<SettingsCommandResult> RejectDuplicate(
-        CommandEnvelope<ResetEncryptionCommand> command,
+        CommandEnvelope<RemovePushTokenCommand> command,
         string entityRef) =>
         CommandExecutionResult<SettingsCommandResult>.Rejected(
             new ConflictResult(ConflictCode.ConflictDuplicate, command.OperationId, entityRef, null, "no_retry", null));
 
     private static CommandExecutionResult<SettingsCommandResult> RejectInvariant(
-        CommandEnvelope<ResetEncryptionCommand> command,
+        CommandEnvelope<RemovePushTokenCommand> command,
         string entityRef) =>
         CommandExecutionResult<SettingsCommandResult>.Rejected(
             new ConflictResult(ConflictCode.ConflictInvariant, command.OperationId, entityRef, null, "manual_merge_required", null));
 
     private async Task<CommandExecutionResult<SettingsCommandResult>> RejectStaleVersion(
-        CommandEnvelope<ResetEncryptionCommand> command,
+        CommandEnvelope<RemovePushTokenCommand> command,
         CancellationToken cancellationToken)
     {
         var current = await _versionStore.GetVersionAsync(AggregateType, command.PrincipalId, cancellationToken);

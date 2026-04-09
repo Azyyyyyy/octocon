@@ -33,8 +33,8 @@ public sealed class ScyllaNotificationTokenRepository : INotificationTokenReposi
                 INSERT INTO global.notification_tokens (user_id, push_token, inserted_at, updated_at)
                 VALUES (?, ?, ?, ?)");
 
-            await session.ExecuteAsync(write.Bind(normalizedSystemId, token, now.UtcDateTime, now.UtcDateTime));
-            return true;
+            var addtion = await session.ExecuteAsync(write.Bind(normalizedSystemId, token, now.UtcDateTime, now.UtcDateTime));
+            return addtion is not null;
         }, _options, cancellationToken);
     }
 
@@ -50,18 +50,20 @@ public sealed class ScyllaNotificationTokenRepository : INotificationTokenReposi
 
             var rows = await session.ExecuteAsync(findByToken.Bind(token));
             
-            // Batch all deletes instead of executing individually
-            if (rows.Any())
+            // Batch all deletes instead of executing individually, 
+            // in case multiple entries exist with the same token (shouldn't happen, but just in case)
+            var deleteBatch = new BatchStatement();
+            foreach (var row in rows)
             {
-                var deleteBatch = new BatchStatement();
-                foreach (var row in rows)
-                {
-                    deleteBatch.Add(new SimpleStatement(
-                        "DELETE FROM global.notification_tokens WHERE user_id = ? AND push_token = ?",
-                        row.GetValue<string>("user_id"),
-                        row.GetValue<string>("push_token")));
-                }
-                await session.ExecuteAsync(deleteBatch);
+                deleteBatch.Add(new SimpleStatement(
+                    "DELETE FROM global.notification_tokens WHERE user_id = ? AND push_token = ?",
+                    row.GetValue<string>("user_id"),
+                    row.GetValue<string>("push_token")));
+            }
+
+            if (!deleteBatch.IsEmpty)
+            {
+                await session.ExecuteAsync(deleteBatch);                
             }
 
             return true;

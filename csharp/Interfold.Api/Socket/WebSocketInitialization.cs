@@ -94,7 +94,7 @@ static async Task SendBatchedDataAsync(
     }
 }
      
-     static async Task<(
+static async Task<(
     AccountPublicProfileReadModel? profile,
     IReadOnlyList<AlterReadModel> alters,
     IReadOnlyList<FrontActiveReadModel> fronts,
@@ -156,6 +156,7 @@ public static async Task<string> BuildJoinInitJsonAsync(
 
     var qualifyUrl = (string? url) =>
         AvatarUrlQualifier.Qualify(url, context.Request.Scheme, context.Request.Host);
+    var linkedFlag = (string? value) => string.IsNullOrWhiteSpace(value) ? null : "SET";
 
     var system = new Dictionary<string, object?>
     {
@@ -163,10 +164,10 @@ public static async Task<string> BuildJoinInitJsonAsync(
         ["username"] = profile?.Username,
         ["description"] = profile?.Description,
         ["avatar_url"] = qualifyUrl(profile?.AvatarUrl),
-        ["discord_id"] = null,
+        ["discord_id"] = linkedFlag(profile?.DiscordId),
         ["google_id"] = null,
-        ["apple_id"] = null,
-        ["email"] = null,
+        ["apple_id"] = linkedFlag(profile?.AppleId),
+        ["email"] = linkedFlag(profile?.Email),
         // Keep parity with Elixir's SystemJSON.data_me defaults.
         ["autoproxy_mode"] = "off",
         ["show_system_tag"] = false,

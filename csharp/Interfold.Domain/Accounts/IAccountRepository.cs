@@ -4,7 +4,10 @@ public sealed record AccountPublicProfileReadModel(
     string SystemId,
     string? Username,
     string? Description,
-    string? AvatarUrl
+    string? AvatarUrl,
+    string? DiscordId,
+    string? Email,
+    string? AppleId
 );
 
 public enum AccountLinkResult
@@ -49,6 +52,12 @@ public interface IAccountRepository
     Task<AccountLinkResult> LinkEmailToUserAsync(string systemId, string email, CancellationToken cancellationToken = default);
 
     Task<AccountLinkResult> LinkAppleToUserAsync(string systemId, string appleId, CancellationToken cancellationToken = default);
+
+    Task<bool> UnlinkDiscordAsync(string systemId, CancellationToken cancellationToken = default);
+
+    Task<bool> UnlinkEmailAsync(string systemId, CancellationToken cancellationToken = default);
+
+    Task<bool> UnlinkAppleAsync(string systemId, CancellationToken cancellationToken = default);
 
     Task<AccountPublicProfileReadModel?> GetPublicProfileAsync(string systemId, CancellationToken cancellationToken = default);
 }

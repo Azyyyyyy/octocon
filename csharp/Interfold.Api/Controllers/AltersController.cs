@@ -124,6 +124,7 @@ public sealed class AltersController : InterfoldControllerBase
         return result is OkObjectResult ? NoContent() : result;
     }
 
+    //TODO: To ensure route works as expected - check if we delete alter journal entries, unattach from gobal journals when an alter is deleted and delete them from polls
     [HttpDelete("{id}")]
     public async Task<IActionResult> Delete(string id, [FromBody] DeleteAlterRequest? req, CancellationToken ct)
     {

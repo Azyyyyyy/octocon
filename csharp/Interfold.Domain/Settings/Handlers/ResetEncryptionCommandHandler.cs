@@ -1,37 +1,33 @@
 using Interfold.Contracts.Operations;
 using Interfold.Domain.Abstractions;
-using Interfold.Domain.Accounts;
 
-namespace Interfold.Domain.Settings;
+namespace Interfold.Domain.Settings.Handlers;
 
-public sealed class UpdateDescriptionCommandHandler : ICommandHandler<UpdateDescriptionCommand, SettingsCommandResult>
+public sealed class ResetEncryptionCommandHandler : ICommandHandler<ResetEncryptionCommand, SettingsCommandResult>
 {
     private const string AggregateType = "settings";
 
-    private readonly IAccountRepository _accountRepository;
+    private readonly IEncryptionStateRepository _repository;
     private readonly IIdempotencyStore _idempotencyStore;
     private readonly IAggregateVersionStore _versionStore;
     private readonly IClusterEventBus _eventBus;
 
-    public UpdateDescriptionCommandHandler(
-        IAccountRepository accountRepository,
+    public ResetEncryptionCommandHandler(
+        IEncryptionStateRepository repository,
         IIdempotencyStore idempotencyStore,
         IAggregateVersionStore versionStore,
         IClusterEventBus eventBus)
     {
-        _accountRepository = accountRepository;
+        _repository = repository;
         _idempotencyStore = idempotencyStore;
         _versionStore = versionStore;
         _eventBus = eventBus;
     }
 
     public async Task<CommandExecutionResult<SettingsCommandResult>> HandleAsync(
-        CommandEnvelope<UpdateDescriptionCommand> command,
+        CommandEnvelope<ResetEncryptionCommand> command,
         CancellationToken cancellationToken = default)
     {
-        if (command.Payload.Description.Length > 3000)
-            return RejectInvariant(command, "settings:description_invalid");
-
         var payloadJson = CommandSerialization.Serialize(command.Payload);
         var payloadHash = CommandSerialization.Hash(payloadJson);
 
@@ -44,7 +40,7 @@ public sealed class UpdateDescriptionCommandHandler : ICommandHandler<UpdateDesc
         if (previous is not null)
         {
             if (!string.Equals(previous.PayloadHash, payloadHash, StringComparison.Ordinal))
-                return RejectDuplicate(command, "settings:description:update");
+                return RejectDuplicate(command, "settings:encryption:reset");
 
             var replay = CommandSerialization.Deserialize<SettingsCommandResult>(previous.OutcomePayload);
             if (replay is not null)
@@ -60,15 +56,11 @@ public sealed class UpdateDescriptionCommandHandler : ICommandHandler<UpdateDesc
         if (!versionAdvanced)
             return await RejectStaleVersion(command, cancellationToken);
 
-        var persisted = await _accountRepository.UpdateDescriptionAsync(
-            command.PrincipalId,
-            command.Payload.Description,
-            cancellationToken);
-
+        var persisted = await _repository.UpsertAsync(command.PrincipalId, false, null, cancellationToken);
         if (!persisted)
-            return RejectInvariant(command, "settings:description_update_failed");
+            return RejectInvariant(command, "settings:encryption_reset_failed");
 
-        var result = new SettingsCommandResult(command.PrincipalId, "description_updated", Replay: false);
+        var result = new SettingsCommandResult(command.PrincipalId, "encryption_reset", Replay: false);
         var resultJson = CommandSerialization.Serialize(result);
 
         await _idempotencyStore.SaveAsync(
@@ -80,24 +72,24 @@ public sealed class UpdateDescriptionCommandHandler : ICommandHandler<UpdateDesc
             resultJson,
             cancellationToken);
 
-        await _eventBus.PublishAsync(new SettingsProfileUpdatedEvent(command.PrincipalId, false), cancellationToken);
+        await _eventBus.PublishAsync(new SettingsEncryptedDataWipedSignalEvent(command.PrincipalId), cancellationToken);
         return CommandExecutionResult<SettingsCommandResult>.Success(result);
     }
 
     private static CommandExecutionResult<SettingsCommandResult> RejectDuplicate(
-        CommandEnvelope<UpdateDescriptionCommand> command,
+        CommandEnvelope<ResetEncryptionCommand> command,
         string entityRef) =>
         CommandExecutionResult<SettingsCommandResult>.Rejected(
             new ConflictResult(ConflictCode.ConflictDuplicate, command.OperationId, entityRef, null, "no_retry", null));
 
     private static CommandExecutionResult<SettingsCommandResult> RejectInvariant(
-        CommandEnvelope<UpdateDescriptionCommand> command,
+        CommandEnvelope<ResetEncryptionCommand> command,
         string entityRef) =>
         CommandExecutionResult<SettingsCommandResult>.Rejected(
             new ConflictResult(ConflictCode.ConflictInvariant, command.OperationId, entityRef, null, "manual_merge_required", null));
 
     private async Task<CommandExecutionResult<SettingsCommandResult>> RejectStaleVersion(
-        CommandEnvelope<UpdateDescriptionCommand> command,
+        CommandEnvelope<ResetEncryptionCommand> command,
         CancellationToken cancellationToken)
     {
         var current = await _versionStore.GetVersionAsync(AggregateType, command.PrincipalId, cancellationToken);

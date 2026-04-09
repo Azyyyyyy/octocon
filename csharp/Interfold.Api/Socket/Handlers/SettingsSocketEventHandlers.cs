@@ -57,6 +57,7 @@ public static class SettingsSocketEventHandlers
             .ToArray();
 
         var primaryFront = frontsTask.Result.FirstOrDefault(x => x.Primary)?.Front.AlterId;
+        var linkedFlag = (string? value) => string.IsNullOrWhiteSpace(value) ? null : "SET";
 
         if (evt.EmitUsernameUpdated && profile?.Username is not null)
         {
@@ -70,10 +71,10 @@ public static class SettingsSocketEventHandlers
             ["username"] = profile?.Username,
             ["description"] = profile?.Description,
             ["avatar_url"] = AvatarUrlQualifier.Qualify(profile?.AvatarUrl, context.RequestOrigin),
-            ["discord_id"] = null,
+            ["discord_id"] = linkedFlag(profile?.DiscordId),
             ["google_id"] = null,
-            ["apple_id"] = null,
-            ["email"] = null,
+            ["apple_id"] = linkedFlag(profile?.AppleId),
+            ["email"] = linkedFlag(profile?.Email),
             ["autoproxy_mode"] = "off",
             ["show_system_tag"] = false,
             ["lifetime_alter_count"] = altersTask.Result.Count,

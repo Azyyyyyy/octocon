@@ -10,6 +10,7 @@ using Interfold.Domain.InMemory;
 using Interfold.Domain.Journals;
 using Interfold.Domain.Polls;
 using Interfold.Domain.Settings;
+using Interfold.Domain.Settings.Handlers;
 using Interfold.Domain.Tags;
 using Interfold.Infrastructure.Configuration;
 using Interfold.Infrastructure.Persistence;

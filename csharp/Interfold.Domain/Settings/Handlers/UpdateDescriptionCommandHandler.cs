@@ -1,32 +1,36 @@
 using Interfold.Contracts.Operations;
 using Interfold.Domain.Abstractions;
+using Interfold.Domain.Accounts;
 
-namespace Interfold.Domain.Settings;
+namespace Interfold.Domain.Settings.Handlers;
 
-public sealed class AddPushTokenCommandHandler : ICommandHandler<AddPushTokenCommand, SettingsCommandResult>
+public sealed class UpdateDescriptionCommandHandler : ICommandHandler<UpdateDescriptionCommand, SettingsCommandResult>
 {
     private const string AggregateType = "settings";
 
-    private readonly INotificationTokenRepository _repository;
+    private readonly IAccountRepository _accountRepository;
     private readonly IIdempotencyStore _idempotencyStore;
     private readonly IAggregateVersionStore _versionStore;
+    private readonly IClusterEventBus _eventBus;
 
-    public AddPushTokenCommandHandler(
-        INotificationTokenRepository repository,
+    public UpdateDescriptionCommandHandler(
+        IAccountRepository accountRepository,
         IIdempotencyStore idempotencyStore,
-        IAggregateVersionStore versionStore)
+        IAggregateVersionStore versionStore,
+        IClusterEventBus eventBus)
     {
-        _repository = repository;
+        _accountRepository = accountRepository;
         _idempotencyStore = idempotencyStore;
         _versionStore = versionStore;
+        _eventBus = eventBus;
     }
 
     public async Task<CommandExecutionResult<SettingsCommandResult>> HandleAsync(
-        CommandEnvelope<AddPushTokenCommand> command,
+        CommandEnvelope<UpdateDescriptionCommand> command,
         CancellationToken cancellationToken = default)
     {
-        if (string.IsNullOrWhiteSpace(command.Payload.Token))
-            return RejectInvariant(command, "settings:push_token_invalid");
+        if (command.Payload.Description.Length > 3000)
+            return RejectInvariant(command, "settings:description_invalid");
 
         var payloadJson = CommandSerialization.Serialize(command.Payload);
         var payloadHash = CommandSerialization.Hash(payloadJson);
@@ -40,7 +44,7 @@ public sealed class AddPushTokenCommandHandler : ICommandHandler<AddPushTokenCom
         if (previous is not null)
         {
             if (!string.Equals(previous.PayloadHash, payloadHash, StringComparison.Ordinal))
-                return RejectDuplicate(command, "settings:push_token:add");
+                return RejectDuplicate(command, "settings:description:update");
 
             var replay = CommandSerialization.Deserialize<SettingsCommandResult>(previous.OutcomePayload);
             if (replay is not null)
@@ -56,11 +60,15 @@ public sealed class AddPushTokenCommandHandler : ICommandHandler<AddPushTokenCom
         if (!versionAdvanced)
             return await RejectStaleVersion(command, cancellationToken);
 
-        var persisted = await _repository.AddAsync(command.PrincipalId, command.Payload.Token.Trim(), cancellationToken);
-        if (!persisted)
-            return RejectInvariant(command, "settings:push_token_add_failed");
+        var persisted = await _accountRepository.UpdateDescriptionAsync(
+            command.PrincipalId,
+            command.Payload.Description,
+            cancellationToken);
 
-        var result = new SettingsCommandResult(command.PrincipalId, "push_token_added", Replay: false);
+        if (!persisted)
+            return RejectInvariant(command, "settings:description_update_failed");
+
+        var result = new SettingsCommandResult(command.PrincipalId, "description_updated", Replay: false);
         var resultJson = CommandSerialization.Serialize(result);
 
         await _idempotencyStore.SaveAsync(
@@ -72,23 +80,24 @@ public sealed class AddPushTokenCommandHandler : ICommandHandler<AddPushTokenCom
             resultJson,
             cancellationToken);
 
+        await _eventBus.PublishAsync(new SettingsProfileUpdatedEvent(command.PrincipalId, false), cancellationToken);
         return CommandExecutionResult<SettingsCommandResult>.Success(result);
     }
 
     private static CommandExecutionResult<SettingsCommandResult> RejectDuplicate(
-        CommandEnvelope<AddPushTokenCommand> command,
+        CommandEnvelope<UpdateDescriptionCommand> command,
         string entityRef) =>
         CommandExecutionResult<SettingsCommandResult>.Rejected(
             new ConflictResult(ConflictCode.ConflictDuplicate, command.OperationId, entityRef, null, "no_retry", null));
 
     private static CommandExecutionResult<SettingsCommandResult> RejectInvariant(
-        CommandEnvelope<AddPushTokenCommand> command,
+        CommandEnvelope<UpdateDescriptionCommand> command,
         string entityRef) =>
         CommandExecutionResult<SettingsCommandResult>.Rejected(
             new ConflictResult(ConflictCode.ConflictInvariant, command.OperationId, entityRef, null, "manual_merge_required", null));
 
     private async Task<CommandExecutionResult<SettingsCommandResult>> RejectStaleVersion(
-        CommandEnvelope<AddPushTokenCommand> command,
+        CommandEnvelope<UpdateDescriptionCommand> command,
         CancellationToken cancellationToken)
     {
         var current = await _versionStore.GetVersionAsync(AggregateType, command.PrincipalId, cancellationToken);

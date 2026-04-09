@@ -86,6 +86,7 @@ public sealed class TagsController : InterfoldControllerBase
     return result is OkObjectResult ? NoContent() : result;
    }
 
+    //TODO: To ensure route works as expected - check if we unattach alters and remove parent tag relationships when a tag is deleted
    [HttpDelete("{id}")]
    public async Task<IActionResult> DeleteTag(string id, [FromBody] TagIdempotencyRequest? body, CancellationToken ct)
    {

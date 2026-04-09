@@ -3,7 +3,7 @@ using System.Text;
 using Interfold.Contracts.Operations;
 using Interfold.Domain.Abstractions;
 
-namespace Interfold.Domain.Settings;
+namespace Interfold.Domain.Settings.Handlers;
 
 public sealed class SetupEncryptionCommandHandler : ICommandHandler<SetupEncryptionCommand, EncryptionCommandResult>
 {

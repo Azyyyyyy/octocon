@@ -1,13 +1,16 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.Net.Http.Headers;
+using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using System.Text.Json.Serialization;
 using Interfold.Api.Services;
 using Interfold.Contracts.Operations;
 using Interfold.Domain.Abstractions;
 using Interfold.Domain.Accounts;
 using Interfold.Domain.Settings;
+using Interfold.Domain.Settings.Handlers;
 
 namespace Interfold.Api.Controllers;
 
@@ -88,7 +91,6 @@ public sealed class SettingsController : InterfoldControllerBase
         _relocateFieldHandler = relocateFieldHandler;
     }
 
-    //TODO: To ensure route works as expected
     [HttpGet("link_token")]
     public async Task<IActionResult> GetLinkToken(CancellationToken ct)
     {
@@ -152,14 +154,13 @@ public sealed class SettingsController : InterfoldControllerBase
         return result is OkObjectResult ? NoContent() : result;
     }
 
-    //TODO: To ensure route works as expected
     [HttpPost("push-token")]
     public async Task<IActionResult> AddPushToken([FromBody] SettingsPushTokenRequest req, CancellationToken ct)
     {
         var principal = GetPrincipalId();
         if (principal is null) return Unauthorized();
 
-        var pushToken = req.ResolvePushToken();
+        var pushToken = req.Token;
         if (string.IsNullOrWhiteSpace(pushToken))
             return BadRequest(new { error = "Invalid push token.", code = "invalid_push_token" });
 
@@ -177,14 +178,13 @@ public sealed class SettingsController : InterfoldControllerBase
         return result is OkObjectResult ? NoContent() : result;
     }
 
-    //TODO: To ensure route works as expected
     [HttpDelete("push-token")]
     public async Task<IActionResult> RemovePushToken([FromBody] SettingsPushTokenRequest req, CancellationToken ct)
     {
         var principal = GetPrincipalId();
         if (principal is null) return Unauthorized();
 
-        var pushToken = req.ResolvePushToken();
+        var pushToken = req.Token;
         if (string.IsNullOrWhiteSpace(pushToken))
             return BadRequest(new { error = "Invalid push token.", code = "invalid_push_token" });
 
@@ -208,6 +208,9 @@ public sealed class SettingsController : InterfoldControllerBase
         var principal = GetPrincipalId();
         if (principal is null) return Unauthorized();
 
+        if (!TryResolveRecoveryCode(req.RecoveryCode, out var recoveryCode, out var decryptionErrorCode))
+            return BadRequest(new { error = "Failed to decrypt recovery code.", code = decryptionErrorCode });
+
         var envelope = new CommandEnvelope<Interfold.Domain.Settings.SetupEncryptionCommand>(
             OperationIds.SettingsEncryptionSetup,
             Guid.NewGuid(),
@@ -215,7 +218,7 @@ public sealed class SettingsController : InterfoldControllerBase
             IdempotencyKey: GetIdempotencyKey(req.IdempotencyKey),
             ExpectedVersion: req.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
-            Payload: new Interfold.Domain.Settings.SetupEncryptionCommand(req.RecoveryCode)
+            Payload: new Interfold.Domain.Settings.SetupEncryptionCommand(recoveryCode)
         );
 
         var execution = await _setupEncryptionHandler.HandleAsync(envelope, ct);
@@ -225,12 +228,14 @@ public sealed class SettingsController : InterfoldControllerBase
         return ToHttpResult(execution);
     }
 
-    //TODO: To ensure route works as expected
     [HttpPost("recover-encryption")]
     public async Task<IActionResult> RecoverEncryption([FromBody] SettingsEncryptionRequest req, CancellationToken ct)
     {
         var principal = GetPrincipalId();
         if (principal is null) return Unauthorized();
+
+        if (!TryResolveRecoveryCode(req.RecoveryCode, out var recoveryCode, out var decryptionErrorCode))
+            return BadRequest(new { error = "Failed to decrypt recovery code.", code = decryptionErrorCode });
 
         var envelope = new CommandEnvelope<Interfold.Domain.Settings.RecoverEncryptionCommand>(
             OperationIds.SettingsEncryptionRecover,
@@ -239,13 +244,14 @@ public sealed class SettingsController : InterfoldControllerBase
             IdempotencyKey: GetIdempotencyKey(req.IdempotencyKey),
             ExpectedVersion: req.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
-            Payload: new Interfold.Domain.Settings.RecoverEncryptionCommand(req.RecoveryCode)
+            Payload: new Interfold.Domain.Settings.RecoverEncryptionCommand(recoveryCode)
         );
 
         var execution = await _recoverEncryptionHandler.HandleAsync(envelope, ct);
         if (execution.Accepted)
             return Ok(new { data = new { key = execution.Result!.Key } });
 
+        //TODO: To ensure route works as expected
         return ToHttpResult(execution);
     }
 
@@ -417,7 +423,6 @@ public sealed class SettingsController : InterfoldControllerBase
         return result is OkObjectResult ? NoContent() : result;
     }
 
-    //TODO: To ensure route works as expected
     [HttpPost("unlink_discord")]
     public async Task<IActionResult> UnlinkDiscord([FromBody] SettingsCommandRequest? req, CancellationToken ct)
     {
@@ -438,7 +443,6 @@ public sealed class SettingsController : InterfoldControllerBase
         return result is OkObjectResult ? NoContent() : result;
     }
 
-    //TODO: To ensure route works as expected
     [HttpPost("unlink_email")]
     public async Task<IActionResult> UnlinkEmail([FromBody] SettingsCommandRequest? req, CancellationToken ct)
     {
@@ -459,7 +463,7 @@ public sealed class SettingsController : InterfoldControllerBase
         return result is OkObjectResult ? NoContent() : result;
     }
 
-    //TODO: To ensure route works as expected
+    //TODO: To ensure route works as expected - other ones work but this one needs testing to ensure the command handler is correctly implemented
     [HttpPost("unlink_apple")]
     public async Task<IActionResult> UnlinkApple([FromBody] SettingsCommandRequest? req, CancellationToken ct)
     {
@@ -542,7 +546,6 @@ public sealed class SettingsController : InterfoldControllerBase
         return result is OkObjectResult ? NoContent() : result;
     }
 
-    //TODO: To ensure route works as expected
     [HttpPatch("fields/{id}")]
     public async Task<IActionResult> UpdateField([FromRoute] string id, [FromBody] SettingsUpdateFieldRequest req, CancellationToken ct)
     {
@@ -563,7 +566,6 @@ public sealed class SettingsController : InterfoldControllerBase
         return result is OkObjectResult ? NoContent() : result;
     }
 
-    //TODO: To ensure route works as expected
     [HttpDelete("fields/{id}")]
     public async Task<IActionResult> DeleteField([FromRoute] string id, [FromBody] SettingsCommandRequest? req, CancellationToken ct)
     {
@@ -584,7 +586,6 @@ public sealed class SettingsController : InterfoldControllerBase
         return result is OkObjectResult ? NoContent() : result;
     }
 
-    //TODO: To ensure route works as expected
     [HttpPost("fields/{id}/relocate")]
     public async Task<IActionResult> RelocateField([FromRoute] string id, [FromBody] SettingsRelocateFieldRequest req, CancellationToken ct)
     {
@@ -680,6 +681,105 @@ public sealed class SettingsController : InterfoldControllerBase
     }
 
     private sealed record AvatarUploadPayload(Stream? Stream, string? IdempotencyKey, long? ExpectedVersion, bool EmptyFilePart = false);
+
+    private static bool TryResolveRecoveryCode(string candidate, out string recoveryCode, out string errorCode)
+    {
+        recoveryCode = string.Empty;
+        errorCode = "decryption_error";
+
+        if (string.IsNullOrWhiteSpace(candidate))
+        {
+            errorCode = "recovery_code_invalid";
+            return false;
+        }
+
+        if (!LooksLikeCompactJwe(candidate))
+        {
+            recoveryCode = candidate;
+            return true;
+        }
+
+        if (!TryLoadEncryptionPrivateKey(out var privateKeyPem))
+            return false;
+
+        if (!TryDecryptRecoveryCodeJwe(candidate, privateKeyPem, out recoveryCode))
+            return false;
+
+        return !string.IsNullOrWhiteSpace(recoveryCode);
+    }
+
+    private static bool LooksLikeCompactJwe(string token) => token.Count(ch => ch == '.') == 4;
+
+    private static bool TryLoadEncryptionPrivateKey(out string privateKeyPem)
+    {
+        privateKeyPem = string.Empty;
+        var raw = Environment.GetEnvironmentVariable("ENCRYPTION_PRIVATE_KEY");
+
+        if (string.IsNullOrWhiteSpace(raw))
+            return false;
+
+        var normalized = raw.Trim();
+        if (normalized.Contains("BEGIN", StringComparison.Ordinal))
+        {
+            privateKeyPem = normalized.Replace("\\n", "\n", StringComparison.Ordinal);
+            return true;
+        }
+
+        try
+        {
+            var bytes = Convert.FromBase64String(normalized);
+            privateKeyPem = Encoding.UTF8.GetString(bytes);
+            return privateKeyPem.Contains("BEGIN", StringComparison.Ordinal);
+        }
+        catch (FormatException)
+        {
+            return false;
+        }
+    }
+
+    private static bool TryDecryptRecoveryCodeJwe(string compactJwe, string privateKeyPem, out string recoveryCode)
+    {
+        recoveryCode = string.Empty;
+
+        try
+        {
+            var parts = compactJwe.Split('.');
+            if (parts.Length != 5)
+                return false;
+
+            var headerJson = Encoding.UTF8.GetString(WebEncoders.Base64UrlDecode(parts[0]));
+            using var header = JsonDocument.Parse(headerJson);
+            var alg = header.RootElement.TryGetProperty("alg", out var algProp) ? algProp.GetString() : null;
+            var enc = header.RootElement.TryGetProperty("enc", out var encProp) ? encProp.GetString() : null;
+
+            if (!string.Equals(alg, "RSA-OAEP-256", StringComparison.Ordinal)
+                || !string.Equals(enc, "A256GCM", StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            var encryptedKey = WebEncoders.Base64UrlDecode(parts[1]);
+            var iv = WebEncoders.Base64UrlDecode(parts[2]);
+            var ciphertext = WebEncoders.Base64UrlDecode(parts[3]);
+            var tag = WebEncoders.Base64UrlDecode(parts[4]);
+            var aad = Encoding.ASCII.GetBytes(parts[0]);
+
+            using var rsa = RSA.Create();
+            rsa.ImportFromPem(privateKeyPem);
+            var cek = rsa.Decrypt(encryptedKey, RSAEncryptionPadding.OaepSHA256);
+
+            var plaintext = new byte[ciphertext.Length];
+            using var aes = new AesGcm(cek, tag.Length);
+            aes.Decrypt(iv, ciphertext, tag, plaintext, aad);
+
+            recoveryCode = Encoding.UTF8.GetString(plaintext);
+            return !string.IsNullOrWhiteSpace(recoveryCode);
+        }
+        catch (Exception)
+        {
+            return false;
+        }
+    }
 }
 
 public sealed record SettingsUsernameRequest(
@@ -695,14 +795,10 @@ public sealed record SettingsDescriptionRequest(
 );
 
 public sealed record SettingsPushTokenRequest(
-    string? PushToken,
-    [property: JsonPropertyName("token")] string? Token = null,
+    string? Token = null,
     string? IdempotencyKey = null,
     long? ExpectedVersion = null
-)
-{
-    public string? ResolvePushToken() => PushToken ?? Token;
-}
+);
 
 public sealed record SettingsEncryptionRequest(
     string RecoveryCode,

@@ -1,6 +1,5 @@
 using Cassandra;
-using System.Security.Cryptography;
-using System.Text;
+using System.Collections.Concurrent;
 using Interfold.Domain.Accounts;
 using Interfold.Infrastructure.Configuration;
 using Interfold.Infrastructure.Persistence.Transient;
@@ -9,6 +8,13 @@ namespace Interfold.Infrastructure.Persistence.Scylla;
 
 public sealed class ScyllaAccountRepository : IAccountRepository
 {
+    private readonly record struct LinkTokenEntry(string ScopedSystemId, DateTimeOffset ExpiresAt);
+
+    private static readonly TimeSpan LinkTokenTtl = TimeSpan.FromMinutes(5);
+    private readonly object _linkTokenLock = new();
+    private readonly ConcurrentDictionary<string, string> _linkTokenBySystem = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, LinkTokenEntry> _systemByLinkToken = new(StringComparer.Ordinal);
+
     private readonly IScyllaSessionProvider _sessionProvider;
     private readonly IScyllaKeyspaceResolver _keyspaceResolver;
     private readonly PersistenceConfiguration _options;
@@ -100,111 +106,117 @@ public sealed class ScyllaAccountRepository : IAccountRepository
         }, _options, cancellationToken);
     }
 
-    public async Task<string> GetOrCreateLinkTokenAsync(string systemId, CancellationToken cancellationToken = default)
+    public Task<string> GetOrCreateLinkTokenAsync(string systemId, CancellationToken cancellationToken = default)
     {
-        return await DatabaseTransientRetry.ExecuteScyllaAsync(async () =>
+        var normalizedSystemId = _keyspaceResolver.NormalizeSystemId(systemId);
+        var keyspace = _keyspaceResolver.ResolveRegionalKeyspace(systemId);
+        var scopedSystemId = $"{keyspace}:{normalizedSystemId}";
+        var systemKey = scopedSystemId;
+        var now = DateTimeOffset.UtcNow;
+
+        lock (_linkTokenLock)
         {
-            var session = await _sessionProvider.GetSessionAsync(cancellationToken);
-            var normalizedSystemId = _keyspaceResolver.NormalizeSystemId(systemId);
-            var keyspace = _keyspaceResolver.ResolveRegionalKeyspace(systemId);
-
-            var existingQuery = new SimpleStatement(
-                $"SELECT link_token FROM {keyspace}.users WHERE id = ? LIMIT 1",
-                normalizedSystemId
-            );
-
-            var existing = (await session.ExecuteAsync(existingQuery)).FirstOrDefault()?.GetValue<string?>("link_token");
-            if (!string.IsNullOrWhiteSpace(existing))
+            if (_linkTokenBySystem.TryGetValue(systemKey, out var existingToken)
+                && _systemByLinkToken.TryGetValue(existingToken, out var existingEntry)
+                && existingEntry.ExpiresAt > now)
             {
-                return existing;
+                return Task.FromResult(existingToken);
             }
 
-            var token = BuildDeterministicLinkToken(normalizedSystemId);
-
-            var upsert = new SimpleStatement(
-                $"UPDATE {keyspace}.users SET link_token = ?, updated_at = toTimestamp(now()) WHERE id = ?",
-                token,
-                normalizedSystemId
-            );
-
-            await session.ExecuteAsync(upsert);
-            return token;
-        }, _options, cancellationToken);
-    }
-
-    public async Task<string?> GetLinkTokenAsync(string systemId, CancellationToken cancellationToken = default)
-    {
-        return await DatabaseTransientRetry.ExecuteScyllaAsync(async () =>
-        {
-            var session = await _sessionProvider.GetSessionAsync(cancellationToken);
-            var normalizedSystemId = _keyspaceResolver.NormalizeSystemId(systemId);
-            var keyspace = _keyspaceResolver.ResolveRegionalKeyspace(systemId);
-
-            var tokenQuery = new SimpleStatement(
-                $"SELECT link_token FROM {keyspace}.users WHERE id = ? LIMIT 1",
-                normalizedSystemId
-            );
-
-            return (await session.ExecuteAsync(tokenQuery)).FirstOrDefault()?.GetValue<string?>("link_token");
-        }, _options, cancellationToken);
-    }
-
-    public async Task<string?> ResolveSystemIdByLinkTokenAsync(string linkToken, CancellationToken cancellationToken = default)
-    {
-        return await DatabaseTransientRetry.ExecuteScyllaAsync(async () =>
-        {
-            if (string.IsNullOrWhiteSpace(linkToken))
+            if (!string.IsNullOrWhiteSpace(existingToken))
             {
-                return null;
+                _linkTokenBySystem.TryRemove(systemKey, out _);
+                _systemByLinkToken.TryRemove(existingToken, out _);
             }
 
-            var session = await _sessionProvider.GetSessionAsync(cancellationToken);
+            var token = Guid.NewGuid().ToString();
+            _linkTokenBySystem[systemKey] = token;
+            _systemByLinkToken[token] = new LinkTokenEntry(scopedSystemId, now.Add(LinkTokenTtl));
 
-            foreach (var keyspace in EnumerateRegionalKeyspaces())
+            return Task.FromResult(token);
+        }
+    }
+
+    public Task<string?> GetLinkTokenAsync(string systemId, CancellationToken cancellationToken = default)
+    {
+        var normalizedSystemId = _keyspaceResolver.NormalizeSystemId(systemId);
+        var keyspace = _keyspaceResolver.ResolveRegionalKeyspace(systemId);
+        var systemKey = $"{keyspace}:{normalizedSystemId}";
+        var now = DateTimeOffset.UtcNow;
+
+        lock (_linkTokenLock)
+        {
+            if (_linkTokenBySystem.TryGetValue(systemKey, out var token)
+                && _systemByLinkToken.TryGetValue(token, out var entry)
+                && entry.ExpiresAt > now)
             {
-                var query = new SimpleStatement(
-                    $"SELECT id FROM {keyspace}.users WHERE link_token = ? ALLOW FILTERING LIMIT 1",
-                    linkToken
-                );
+                return Task.FromResult<string?>(token);
+            }
 
-                var row = (await session.ExecuteAsync(query)).FirstOrDefault();
-                if (row is not null)
+            if (!string.IsNullOrWhiteSpace(token))
+            {
+                _linkTokenBySystem.TryRemove(systemKey, out _);
+                _systemByLinkToken.TryRemove(token, out _);
+            }
+
+            return Task.FromResult<string?>(null);
+        }
+    }
+
+    public Task<string?> ResolveSystemIdByLinkTokenAsync(string linkToken, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(linkToken))
+        {
+            return Task.FromResult<string?>(null);
+        }
+
+        var now = DateTimeOffset.UtcNow;
+        lock (_linkTokenLock)
+        {
+            if (_systemByLinkToken.TryGetValue(linkToken, out var entry) && entry.ExpiresAt > now)
+            {
+                return Task.FromResult<string?>(entry.ScopedSystemId);
+            }
+
+            _systemByLinkToken.TryRemove(linkToken, out _);
+            foreach (var item in _linkTokenBySystem)
+            {
+                if (string.Equals(item.Value, linkToken, StringComparison.Ordinal))
                 {
-                    return $"{keyspace}:{row.GetValue<string>("id")}";
+                    _linkTokenBySystem.TryRemove(item.Key, out _);
+                    break;
                 }
             }
 
-            return null;
-        }, _options, cancellationToken);
+            return Task.FromResult<string?>(null);
+        }
     }
 
-    public async Task<bool> ClearLinkTokenAsync(string systemId, CancellationToken cancellationToken = default)
+    public Task<bool> ClearLinkTokenAsync(string systemId, CancellationToken cancellationToken = default)
     {
-        return await DatabaseTransientRetry.ExecuteScyllaAsync(async () =>
+        var normalizedSystemId = _keyspaceResolver.NormalizeSystemId(systemId);
+        var keyspace = _keyspaceResolver.ResolveRegionalKeyspace(systemId);
+        var systemKey = $"{keyspace}:{normalizedSystemId}";
+
+        lock (_linkTokenLock)
         {
-            var session = await _sessionProvider.GetSessionAsync(cancellationToken);
-            var normalizedSystemId = _keyspaceResolver.NormalizeSystemId(systemId);
-            var keyspace = _keyspaceResolver.ResolveRegionalKeyspace(systemId);
+            if (_linkTokenBySystem.TryRemove(systemKey, out var token))
+            {
+                _systemByLinkToken.TryRemove(token, out _);
+            }
 
-            var clear = new SimpleStatement(
-                $"UPDATE {keyspace}.users SET link_token = ?, updated_at = toTimestamp(now()) WHERE id = ?",
-                null,
-                normalizedSystemId
-            );
-
-            await session.ExecuteAsync(clear);
-            return true;
-        }, _options, cancellationToken);
+            return Task.FromResult(true);
+        }
     }
 
     public async Task<string?> FindSystemIdByDiscordIdAsync(string discordId, CancellationToken cancellationToken = default)
-        => await FindSystemIdByRegistryColumnAsync("discord_id", discordId, cancellationToken);
+        => await FindOrCreateSystemIdByRegistryColumnAsync("discord_id", discordId, cancellationToken);
 
     public async Task<string?> FindSystemIdByEmailAsync(string email, CancellationToken cancellationToken = default)
-        => await FindSystemIdByRegistryColumnAsync("email", email, cancellationToken);
+        => await FindOrCreateSystemIdByRegistryColumnAsync("email", email, cancellationToken);
 
     public async Task<string?> FindSystemIdByAppleIdAsync(string appleId, CancellationToken cancellationToken = default)
-        => await FindSystemIdByRegistryColumnAsync("apple_id", appleId, cancellationToken);
+        => await FindOrCreateSystemIdByRegistryColumnAsync("apple_id", appleId, cancellationToken);
 
     public Task<AccountLinkResult> LinkDiscordToUserAsync(string systemId, string discordId, CancellationToken cancellationToken = default)
         => LinkIdentityAsync(systemId, "discord_id", discordId, cancellationToken);
@@ -215,6 +227,15 @@ public sealed class ScyllaAccountRepository : IAccountRepository
     public Task<AccountLinkResult> LinkAppleToUserAsync(string systemId, string appleId, CancellationToken cancellationToken = default)
         => LinkIdentityAsync(systemId, "apple_id", appleId, cancellationToken);
 
+    public Task<bool> UnlinkDiscordAsync(string systemId, CancellationToken cancellationToken = default)
+        => UnlinkIdentityAsync(systemId, "discord_id", cancellationToken);
+
+    public Task<bool> UnlinkEmailAsync(string systemId, CancellationToken cancellationToken = default)
+        => UnlinkIdentityAsync(systemId, "email", cancellationToken);
+
+    public Task<bool> UnlinkAppleAsync(string systemId, CancellationToken cancellationToken = default)
+        => UnlinkIdentityAsync(systemId, "apple_id", cancellationToken);
+
     public async Task<AccountPublicProfileReadModel?> GetPublicProfileAsync(string systemId, CancellationToken cancellationToken = default)
     {
         return await DatabaseTransientRetry.ExecuteScyllaAsync(async () =>
@@ -224,7 +245,7 @@ public sealed class ScyllaAccountRepository : IAccountRepository
             var keyspace = _keyspaceResolver.ResolveRegionalKeyspace(systemId);
 
             var profileQuery = new SimpleStatement(
-                $"SELECT username, avatar_url, description FROM {keyspace}.users WHERE id = ? LIMIT 1",
+                $"SELECT username, avatar_url, description, discord_id, email, apple_id FROM {keyspace}.users WHERE id = ? LIMIT 1",
                 normalizedSystemId
             );
 
@@ -238,17 +259,14 @@ public sealed class ScyllaAccountRepository : IAccountRepository
                 normalizedSystemId,
                 profile.GetValue<string?>("username"),
                 profile.GetValue<string?>("description"),
-                profile.GetValue<string?>("avatar_url"));
+                profile.GetValue<string?>("avatar_url"),
+                profile.GetValue<string?>("discord_id"),
+                profile.GetValue<string?>("email"),
+                profile.GetValue<string?>("apple_id"));
         }, _options, cancellationToken);
     }
 
-    private static string BuildDeterministicLinkToken(string normalizedSystemId)
-    {
-        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(normalizedSystemId));
-        return Convert.ToHexString(hash)[..32].ToLowerInvariant();
-    }
-
-    private async Task<string?> FindSystemIdByRegistryColumnAsync(string columnName, string value, CancellationToken cancellationToken)
+    private async Task<string?> TryFindSystemIdByRegistryColumnAsync(string columnName, string value, CancellationToken cancellationToken)
     {
         return await DatabaseTransientRetry.ExecuteScyllaAsync(async () =>
         {
@@ -266,10 +284,31 @@ public sealed class ScyllaAccountRepository : IAccountRepository
             var row = (await session.ExecuteAsync(query)).FirstOrDefault();
             if (row is not null)
             {
-                var userId = row.GetValue<string>("user_id");
+                var userId = NormalizeRegistryUserId(row.GetValue<string>("user_id"));
                 var region = row.GetValue<string?>("region") ?? _options.DefaultRegion;
                 return $"{region}:{userId}";
             }
+
+            return null;
+        }, _options, cancellationToken);
+    }
+
+    private async Task<string?> FindOrCreateSystemIdByRegistryColumnAsync(string columnName, string value, CancellationToken cancellationToken)
+    {
+        var existing = await TryFindSystemIdByRegistryColumnAsync(columnName, value, cancellationToken);
+        if (!string.IsNullOrWhiteSpace(existing))
+        {
+            return existing;
+        }
+
+        return await DatabaseTransientRetry.ExecuteScyllaAsync(async () =>
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return null;
+            }
+
+            var session = await _sessionProvider.GetSessionAsync(cancellationToken);
 
             const string idChars = "abcdefghijklmnopqrstuvwxyz";
 
@@ -298,6 +337,23 @@ public sealed class ScyllaAccountRepository : IAccountRepository
         }, _options, cancellationToken);
     }
 
+    private string NormalizeRegistryUserId(string userId)
+    {
+        var normalized = userId;
+        for (var i = 0; i < 3; i++)
+        {
+            var next = _keyspaceResolver.NormalizeSystemId(normalized);
+            if (string.Equals(next, normalized, StringComparison.Ordinal))
+            {
+                break;
+            }
+
+            normalized = next;
+        }
+
+        return normalized;
+    }
+
     private async Task<AccountLinkResult> LinkIdentityAsync(string systemId, string columnName, string value, CancellationToken cancellationToken)
     {
         return await DatabaseTransientRetry.ExecuteScyllaAsync(async () =>
@@ -311,10 +367,10 @@ public sealed class ScyllaAccountRepository : IAccountRepository
             var normalizedSystemId = _keyspaceResolver.NormalizeSystemId(systemId);
             var keyspace = _keyspaceResolver.ResolveRegionalKeyspace(systemId);
 
-            var owner = await FindSystemIdByRegistryColumnAsync(columnName, value, cancellationToken);
+            var owner = await TryFindSystemIdByRegistryColumnAsync(columnName, value, cancellationToken);
             if (!string.IsNullOrWhiteSpace(owner))
             {
-                var normalizedOwner = _keyspaceResolver.NormalizeSystemId(owner);
+                var normalizedOwner = NormalizeRegistryUserId(_keyspaceResolver.NormalizeSystemId(owner));
                 if (!string.Equals(normalizedOwner, normalizedSystemId, StringComparison.Ordinal))
                 {
                     return AccountLinkResult.UserExists;
@@ -351,10 +407,27 @@ public sealed class ScyllaAccountRepository : IAccountRepository
         }, _options, cancellationToken);
     }
 
-    private IEnumerable<string> EnumerateRegionalKeyspaces()
+    private async Task<bool> UnlinkIdentityAsync(string systemId, string columnName, CancellationToken cancellationToken)
     {
-        var defaults = new[] { "nam", "eur", "eas", "sam", "sas", "ocn", "gdpr" };
-        var all = defaults.Concat(new[] { _options.DefaultRegion }).Where(x => !string.IsNullOrWhiteSpace(x));
-        return all.Select(x => x.ToLowerInvariant()).Distinct(StringComparer.OrdinalIgnoreCase);
+        return await DatabaseTransientRetry.ExecuteScyllaAsync(async () =>
+        {
+            var session = await _sessionProvider.GetSessionAsync(cancellationToken);
+            var normalizedSystemId = _keyspaceResolver.NormalizeSystemId(systemId);
+            var keyspace = _keyspaceResolver.ResolveRegionalKeyspace(systemId);
+
+            var unlinkBatch = new BatchStatement();
+            unlinkBatch.Add(new SimpleStatement(
+                $"UPDATE {keyspace}.users SET {columnName} = ?, updated_at = toTimestamp(now()) WHERE id = ?",
+                null,
+                normalizedSystemId));
+            unlinkBatch.Add(new SimpleStatement(
+                $"UPDATE global.user_registry SET {columnName} = ?, updated_at = toTimestamp(now()) WHERE user_id = ?",
+                null,
+                normalizedSystemId));
+
+            await session.ExecuteAsync(unlinkBatch);
+            return true;
+        }, _options, cancellationToken);
     }
+
 }

@@ -10,7 +10,6 @@ using Interfold.Infrastructure.Configuration;
 
 namespace Interfold.Api.Controllers;
 
-//TODO: To ensure route works as expected
 [AllowAnonymous]
 [Route("auth/link")]
 public sealed class AuthLinkController : ControllerBase
@@ -88,7 +87,7 @@ public sealed class AuthLinkController : ControllerBase
             {
                 var props = new AuthenticationProperties
                 {
-                    RedirectUri = $"/auth/link/{providerKey}/callback"
+                    RedirectUri = BuildCallbackBaseUri(providerKey)
                 };
 
                 Response.Headers["X-Interfold-OperationId"] = OperationIds.QueryAuthLinkRequest;
