@@ -79,12 +79,16 @@ public static partial class ServiceCollectionExtensions
                 .AddSingleton<INotificationTokenRepository, InMemoryNotificationTokenRepository>()
                 .AddSingleton<IEncryptionStateRepository, InMemoryEncryptionStateRepository>()
                 .AddSingleton<ISettingsFieldRepository, InMemorySettingsFieldRepository>()
-                .AddSingleton<IAlterRepository, InMemoryRegionalAlterRepository>()
+                .AddSingleton<IPollRepository, InMemoryPollRepository>()
+                .AddSingleton<IAlterRepository>(sp => new InMemoryRegionalAlterRepository(
+                    sp.GetRequiredService<IRegionContext>(),
+                    sp.GetRequiredService<IFriendshipRepository>(),
+                    sp.GetRequiredService<ISettingsFieldRepository>(),
+                    sp.GetRequiredService<IPollRepository>()))
                 .AddSingleton<IFrontingRepository, InMemoryRegionalFrontingRepository>()
                 .AddSingleton<IFriendshipRepository, InMemoryFriendshipRepository>()
                 .AddSingleton<ITagRepository, InMemoryTagRepository>()
                 .AddSingleton<IJournalRepository, InMemoryJournalRepository>()
-                .AddSingleton<IPollRepository, InMemoryPollRepository>()
                 .AddSingleton<IAggregateVersionStore, InMemoryRegionalAggregateVersionStore>()
                 .AddSingleton<IIdempotencyStore, InMemoryIdempotencyStore>()
                 .AddSingleton<IAuthTokenRevocationRepository, InMemoryAuthTokenRevocationRepository>()

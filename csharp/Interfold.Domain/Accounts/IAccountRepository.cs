@@ -59,5 +59,7 @@ public interface IAccountRepository
 
     Task<bool> UnlinkAppleAsync(string systemId, CancellationToken cancellationToken = default);
 
+    Task<bool> DeleteAsync(string systemId, CancellationToken cancellationToken = default);
+
     Task<AccountPublicProfileReadModel?> GetPublicProfileAsync(string systemId, CancellationToken cancellationToken = default);
 }

@@ -236,6 +236,34 @@ public sealed class ScyllaAccountRepository : IAccountRepository
     public Task<bool> UnlinkAppleAsync(string systemId, CancellationToken cancellationToken = default)
         => UnlinkIdentityAsync(systemId, "apple_id", cancellationToken);
 
+    public async Task<bool> DeleteAsync(string systemId, CancellationToken cancellationToken = default)
+    {
+        return await DatabaseTransientRetry.ExecuteScyllaAsync(async () =>
+        {
+            var session = await _sessionProvider.GetSessionAsync(cancellationToken);
+            var normalizedSystemId = _keyspaceResolver.NormalizeSystemId(systemId);
+            var keyspace = _keyspaceResolver.ResolveRegionalKeyspace(systemId);
+
+            // Checks that the user exists
+            var userRow = (await session.ExecuteAsync(new SimpleStatement(
+                $"SELECT id FROM {keyspace}.users WHERE id = ? LIMIT 1",
+                normalizedSystemId))).FirstOrDefault();
+
+            if (userRow is null)
+            {
+                return true;
+            }
+            
+            var deleteBatch = new BatchStatement();
+            deleteBatch.Add(new SimpleStatement($"DELETE FROM {keyspace}.users WHERE id = ?", normalizedSystemId));
+            deleteBatch.Add(new SimpleStatement("DELETE FROM global.user_registry WHERE user_id = ?", normalizedSystemId));
+
+            await session.ExecuteAsync(deleteBatch);
+
+            return true;
+        }, _options, cancellationToken);
+    }
+
     public async Task<AccountPublicProfileReadModel?> GetPublicProfileAsync(string systemId, CancellationToken cancellationToken = default)
     {
         return await DatabaseTransientRetry.ExecuteScyllaAsync(async () =>

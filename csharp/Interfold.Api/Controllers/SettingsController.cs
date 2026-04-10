@@ -505,7 +505,6 @@ public sealed class SettingsController : InterfoldControllerBase
         return result is OkObjectResult ? NoContent() : result;
     }
 
-    //TODO: To ensure route works as expected
     [HttpPost("wipe-alters")]
     public async Task<IActionResult> WipeAlters([FromBody] SettingsCommandRequest? req, CancellationToken ct)
     {

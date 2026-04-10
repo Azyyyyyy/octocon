@@ -199,6 +199,33 @@ public sealed class InMemoryRegionalAccountRepository : IAccountRepository
         return Task.FromResult(true);
     }
 
+    public Task<bool> DeleteAsync(string systemId, CancellationToken cancellationToken = default)
+    {
+        var systemKey = GetSystemKey(systemId);
+
+        _usernameBySystem.TryRemove(systemKey, out _);
+        _descriptionBySystem.TryRemove(systemKey, out _);
+        _avatarBySystem.TryRemove(systemKey, out _);
+        _linkTokenBySystem.TryRemove(systemKey, out _);
+
+        if (_discordBySystem.TryRemove(systemKey, out var discordId) && !string.IsNullOrWhiteSpace(discordId))
+        {
+            _systemByDiscord.TryRemove(discordId, out _);
+        }
+
+        if (_emailBySystem.TryRemove(systemKey, out var email) && !string.IsNullOrWhiteSpace(email))
+        {
+            _systemByEmail.TryRemove(email, out _);
+        }
+
+        if (_appleBySystem.TryRemove(systemKey, out var appleId) && !string.IsNullOrWhiteSpace(appleId))
+        {
+            _systemByApple.TryRemove(appleId, out _);
+        }
+
+        return Task.FromResult(true);
+    }
+
     public Task<AccountPublicProfileReadModel?> GetPublicProfileAsync(string systemId, CancellationToken cancellationToken = default)
     {
         var systemKey = GetSystemKey(systemId);

@@ -367,6 +367,65 @@ public sealed class ScyllaFriendshipRepository : IFriendshipRepository
         }, _options, cancellationToken);
     }
 
+    public async Task<IReadOnlyList<string>> DeleteAllForSystemAsync(string systemId, CancellationToken cancellationToken = default)
+    {
+        return await DatabaseTransientRetry.ExecuteScyllaAsync(async () =>
+        {
+            var session = await _sessionProvider.GetSessionAsync(cancellationToken);
+            var normalizedSystemId = _keyspaceResolver.NormalizeSystemId(systemId);
+
+            // Find all friendships for this user
+            var friendsTask = session.ExecuteAsync(new SimpleStatement(
+                "SELECT friend_id FROM global.friendships WHERE user_id = ?",
+                normalizedSystemId));
+
+            // Find all outgoing requests
+            var outgoingRequestsTask = session.ExecuteAsync(new SimpleStatement(
+                "SELECT to_id FROM global.friend_requests WHERE from_id = ?",
+                normalizedSystemId));
+
+            // Find all incoming requests
+            var incomingRequestsTask = session.ExecuteAsync(new SimpleStatement(
+                "SELECT from_id FROM global.friend_requests WHERE to_id = ?",
+                normalizedSystemId));
+
+            await Task.WhenAll(friendsTask, outgoingRequestsTask, incomingRequestsTask);
+
+            var friendRows = await friendsTask;
+            var outgoingRows = await outgoingRequestsTask;
+            var incomingRows = await incomingRequestsTask;
+
+            var batch = new BatchStatement();
+            var friendIds = new List<string>();
+            foreach (var row in friendRows)
+            {
+                var friendId = row.GetValue<string>("friend_id");
+                friendIds.Add(friendId);
+                batch.Add(new SimpleStatement("DELETE FROM global.friendships WHERE user_id = ? AND friend_id = ?", normalizedSystemId, friendId));
+                batch.Add(new SimpleStatement("DELETE FROM global.friendships WHERE user_id = ? AND friend_id = ?", friendId, normalizedSystemId));
+            }
+
+            foreach (var row in outgoingRows)
+            {
+                var targetId = row.GetValue<string>("to_id");
+                batch.Add(new SimpleStatement("DELETE FROM global.friend_requests WHERE from_id = ? AND to_id = ?", normalizedSystemId, targetId));
+            }
+
+            foreach (var row in incomingRows)
+            {
+                var sourceId = row.GetValue<string>("from_id");
+                batch.Add(new SimpleStatement("DELETE FROM global.friend_requests WHERE from_id = ? AND to_id = ?", sourceId, normalizedSystemId));
+            }
+
+            if (!batch.IsEmpty)
+            {
+                await session.ExecuteAsync(batch);
+            }
+
+            return (IReadOnlyList<string>)friendIds;
+        }, _options, cancellationToken);
+    }
+
     internal static string ToDomainLevel(short level) => level == TrustedFriendLevel ? "trusted_friend" : "friend";
 
     private static async Task<bool> ExistsFriendshipAsync(ISession session, string userId, string friendId)

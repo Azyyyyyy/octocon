@@ -13,4 +13,5 @@ public interface IPollRepository
     Task<bool> UpdateAsync(string systemId, UpdatePollCommand command, CancellationToken cancellationToken = default);
 
     Task<bool> DeleteAsync(string systemId, string pollId, CancellationToken cancellationToken = default);
+    Task RemoveAlterFromPollsAsync(string systemId, int alterId, CancellationToken cancellationToken = default);
 }

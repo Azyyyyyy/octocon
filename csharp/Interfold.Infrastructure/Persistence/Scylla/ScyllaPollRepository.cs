@@ -247,6 +247,44 @@ public sealed class ScyllaPollRepository : IPollRepository
         return DateTimeOffset.TryParse(iso, out var value) ? value : null;
     }
 
+    public async Task RemoveAlterFromPollsAsync(string systemId, int alterId, CancellationToken cancellationToken = default)
+    {
+        var polls = await ListAsync(systemId, cancellationToken);
+        var alterIdString = alterId.ToString();
+
+        foreach (var poll in polls)
+        {
+            var data = poll.Data;
+            if (data.ValueKind != JsonValueKind.Object) continue;
+
+            var changed = false;
+            var newEntries = new Dictionary<string, JsonElement>();
+
+            foreach (var property in data.EnumerateObject())
+            {
+                if (property.Name == alterIdString)
+                {
+                    changed = true;
+                    continue;
+                }
+                newEntries[property.Name] = property.Value;
+            }
+
+            if (changed)
+            {
+                var newData = JsonSerializer.SerializeToElement(newEntries);
+                await UpdateAsync(systemId, new UpdatePollCommand(
+                    poll.Id,
+                    null,
+                    null,
+                    null,
+                    false,
+                    newData
+                ), cancellationToken);
+            }
+        }
+    }
+
     private static PollReadModel ToReadModel(Row row)
         => new(
             row.GetValue<Guid>("id").ToString("N"),

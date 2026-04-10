@@ -69,6 +69,8 @@ public sealed class DeleteAlterCommandHandler : ICommandHandler<DeleteAlterComma
         if (!deleted)
             return RejectInvariant(command, "alter:delete_failed");
 
+        //TODO: Delete alter image if it exists
+
         var result = new AlterCommandResult(command.PrincipalId, command.Payload.AlterId, Replay: false);
         var resultJson = CommandSerialization.Serialize(result);
 

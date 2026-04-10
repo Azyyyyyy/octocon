@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using Interfold.Domain.Abstractions;
 using Interfold.Domain.Alters;
 using Interfold.Domain.Friendships;
+using Interfold.Domain.Polls;
 using Interfold.Domain.Settings;
 
 namespace Interfold.Domain.InMemory;
@@ -22,6 +23,7 @@ public sealed class InMemoryRegionalAlterRepository : IAlterRepository
     private readonly ConcurrentDictionary<string, int> _nextIdBySystem = new();
     private readonly IFriendshipRepository? _friendships;
     private readonly ISettingsFieldRepository? _settingsFields;
+    private readonly IPollRepository? _polls;
 
     public InMemoryRegionalAlterRepository(IRegionContext regionContext)
     {
@@ -39,6 +41,18 @@ public sealed class InMemoryRegionalAlterRepository : IAlterRepository
         _regionContext = regionContext;
         _friendships = friendships;
         _settingsFields = settingsFields;
+    }
+
+    public InMemoryRegionalAlterRepository(
+        IRegionContext regionContext,
+        IFriendshipRepository friendships,
+        ISettingsFieldRepository settingsFields,
+        IPollRepository polls)
+    {
+        _regionContext = regionContext;
+        _friendships = friendships;
+        _settingsFields = settingsFields;
+        _polls = polls;
     }
 
     public Task<int?> CreateAsync(
@@ -106,16 +120,22 @@ public sealed class InMemoryRegionalAlterRepository : IAlterRepository
         return Task.FromResult(true);
     }
 
-    public Task<bool> DeleteAsync(string systemId, int alterId, CancellationToken cancellationToken = default)
+    public async Task<bool> DeleteAsync(string systemId, int alterId, CancellationToken cancellationToken = default)
     {
         var systemKey = GetSystemKey(systemId);
 
         if (!_bySystem.TryGetValue(systemKey, out var store))
         {
-            return Task.FromResult(false);
+            return false;
         }
 
-        return Task.FromResult(store.TryRemove(alterId, out _));
+        var removed = store.TryRemove(alterId, out _);
+        if (removed && _polls != null)
+        {
+            await _polls.RemoveAlterFromPollsAsync(systemId, alterId, cancellationToken);
+        }
+
+        return removed;
     }
 
     public Task<IReadOnlyList<AlterReadModel>> ListAsync(string systemId, CancellationToken cancellationToken = default)

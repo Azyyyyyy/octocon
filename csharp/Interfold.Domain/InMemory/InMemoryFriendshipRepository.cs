@@ -216,6 +216,38 @@ public sealed class InMemoryFriendshipRepository : IFriendshipRepository
         return Task.FromResult(FriendRequestMutationOutcome.Ok);
     }
 
+    public Task<IReadOnlyList<string>> DeleteAllForSystemAsync(string systemId, CancellationToken cancellationToken = default)
+    {
+        var friendIds = new List<string>();
+
+        // Remove all friendships where this user is involved
+        if (_friendships.TryRemove(systemId, out var friends))
+        {
+            foreach (var friendId in friends.Keys)
+            {
+                friendIds.Add(friendId);
+                if (_friendships.TryGetValue(friendId, out var peerStore))
+                {
+                    peerStore.TryRemove(systemId, out _);
+                }
+            }
+        }
+
+        // Remove all outgoing requests from this user
+        _outgoingRequests.TryRemove(systemId, out _);
+
+        // Remove all incoming requests to this user (we need to scan for this in-memory)
+        foreach (var requesterId in _outgoingRequests.Keys)
+        {
+            if (_outgoingRequests.TryGetValue(requesterId, out var requests))
+            {
+                requests.TryRemove(systemId, out _);
+            }
+        }
+
+        return Task.FromResult((IReadOnlyList<string>)friendIds);
+    }
+
     private bool IsFriends(string systemId, string friendSystemId)
         => _friendships.TryGetValue(systemId, out var store) && store.ContainsKey(friendSystemId);
 

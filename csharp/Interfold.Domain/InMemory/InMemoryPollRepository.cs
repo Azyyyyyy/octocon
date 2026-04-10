@@ -90,6 +90,39 @@ public sealed class InMemoryPollRepository : IPollRepository
         return Task.FromResult(store.TryRemove(pollId, out _));
     }
 
+    public async Task RemoveAlterFromPollsAsync(string systemId, int alterId, CancellationToken cancellationToken = default)
+    {
+        if (!_bySystem.TryGetValue(systemId, out var store))
+            return;
+
+        var alterIdString = alterId.ToString();
+
+        foreach (var poll in store.Values)
+        {
+            var data = poll.Data;
+            if (data.ValueKind != JsonValueKind.Object) continue;
+
+            var changed = false;
+            var newEntries = new Dictionary<string, JsonElement>();
+
+            foreach (var property in data.EnumerateObject())
+            {
+                if (property.Name == alterIdString)
+                {
+                    changed = true;
+                    continue;
+                }
+                newEntries[property.Name] = property.Value;
+            }
+
+            if (changed)
+            {
+                poll.Data = JsonSerializer.SerializeToElement(newEntries);
+                poll.UpdatedAt = DateTime.Now;
+            }
+        }
+    }
+
     private static PollReadModel ToReadModel(PollState state)
         => new(
             state.PollId,

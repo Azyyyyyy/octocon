@@ -1,6 +1,7 @@
 using Cassandra;
 using Microsoft.Extensions.Logging;
 using Interfold.Domain.Alters;
+using Interfold.Domain.Polls;
 using Interfold.Domain.Settings;
 using Interfold.Infrastructure.Configuration;
 using Interfold.Infrastructure.Persistence.Transient;
@@ -13,6 +14,7 @@ public sealed class ScyllaAlterRepository : IAlterRepository
     private readonly IScyllaSessionProvider _sessionProvider;
     private readonly IScyllaKeyspaceResolver _keyspaceResolver;
     private readonly ISettingsFieldRepository _settingsFields;
+    private readonly IPollRepository _pollRepository;
     private readonly PersistenceConfiguration _options;
     private readonly ILogger<ScyllaAlterRepository> _logger;
     private static readonly ConcurrentDictionary<string, byte> UdtMappings = new(StringComparer.OrdinalIgnoreCase);
@@ -21,6 +23,7 @@ public sealed class ScyllaAlterRepository : IAlterRepository
         IScyllaSessionProvider sessionProvider,
         IScyllaKeyspaceResolver keyspaceResolver,
         ISettingsFieldRepository settingsFields,
+        IPollRepository pollRepository,
         PersistenceConfiguration options,
         ILogger<ScyllaAlterRepository> logger
     )
@@ -28,6 +31,7 @@ public sealed class ScyllaAlterRepository : IAlterRepository
         _sessionProvider = sessionProvider;
         _keyspaceResolver = keyspaceResolver;
         _settingsFields = settingsFields;
+        _pollRepository = pollRepository;
         _options = options;
         _logger = logger;
     }
@@ -203,6 +207,11 @@ public sealed class ScyllaAlterRepository : IAlterRepository
                 normalizedSystemId,
                 alterIdShort));
 
+            var journalEntriesTask = session.ExecuteAsync(new SimpleStatement(
+                $"SELECT id FROM {keyspace}.alter_journals_by_alter WHERE user_id = ? AND alter_id = ?",
+                normalizedSystemId,
+                alterIdShort));
+
             var primaryTask = session.ExecuteAsync(new SimpleStatement(
                 $"SELECT primary_front FROM {keyspace}.users WHERE id = ? LIMIT 1",
                 normalizedSystemId));
@@ -212,11 +221,27 @@ public sealed class ScyllaAlterRepository : IAlterRepository
                 normalizedSystemId,
                 alterIdShort));
 
-            await Task.WhenAll(frontsTask, primaryTask, tagsTask);
+            var globalJournalAltersTask = session.ExecuteAsync(new SimpleStatement(
+                $"SELECT global_journal_id FROM {keyspace}.global_journal_alters WHERE user_id = ? AND alter_id = ? ALLOW FILTERING",
+                normalizedSystemId,
+                alterIdShort));
+
+            var removePollsTask = _pollRepository.RemoveAlterFromPollsAsync(systemId, alterId, cancellationToken);
+
+            await Task.WhenAll(
+                frontsTask,
+                journalEntriesTask,
+                primaryTask,
+                tagsTask,
+                globalJournalAltersTask,
+                removePollsTask
+            );
 
             var frontRows = await frontsTask;
+            var journalEntryRows = await journalEntriesTask;
             var primaryFrontRow = (await primaryTask).FirstOrDefault();
             var membershipRows = await tagsTask;
+            var globalJournalAlterRows = await globalJournalAltersTask;
 
             // Batch all front deletes
             if (frontRows.Any())
@@ -231,6 +256,21 @@ public sealed class ScyllaAlterRepository : IAlterRepository
                         frontRow.GetValue<DateTimeOffset>("time_start")));
                 }
                 await session.ExecuteAsync(frontBatch);
+            }
+
+            // Batch all journal entry deletes
+            if (journalEntryRows.Any())
+            {
+                var journalBatch = new BatchStatement();
+                foreach (var row in journalEntryRows)
+                {
+                    journalBatch.Add(new SimpleStatement(
+                        $"DELETE FROM {keyspace}.alter_journals WHERE user_id = ? AND id = ? AND alter_id = ?",
+                        normalizedSystemId,
+                        row.GetValue<Guid>("id"),
+                        alterIdShort));
+                }
+                await session.ExecuteAsync(journalBatch);
             }
 
             // Handle primary_front update if needed
@@ -255,6 +295,21 @@ public sealed class ScyllaAlterRepository : IAlterRepository
                         alterIdShort));
                 }
                 await session.ExecuteAsync(tagBatch);
+            }
+
+            // Batch all global journal alter deletes
+            if (globalJournalAlterRows.Any())
+            {
+                var gjaBatch = new BatchStatement();
+                foreach (var row in globalJournalAlterRows)
+                {
+                    gjaBatch.Add(new SimpleStatement(
+                        $"DELETE FROM {keyspace}.global_journal_alters WHERE user_id = ? AND global_journal_id = ? AND alter_id = ?",
+                        normalizedSystemId,
+                        row.GetValue<Guid>("global_journal_id"),
+                        alterIdShort));
+                }
+                await session.ExecuteAsync(gjaBatch);
             }
 
             return true;
