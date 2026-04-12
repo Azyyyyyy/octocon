@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using Microsoft.AspNetCore.Mvc.Testing;
 
 namespace Interfold.IntegrationTests;
 
@@ -28,10 +29,14 @@ public sealed class ParityRegressionTests
     {
         if (!IntegrationTestEnvironment.ShouldRunApiIntegration) return;
 
-        var workspaceRoot = FindWorkspaceRoot();
-        var port = GetFreePort();
-        await using var api = await StartApiAsync(workspaceRoot, port);
-        using var client = new HttpClient { BaseAddress = new Uri($"http://127.0.0.1:{port}") };
+        await using var factory = new InterfoldWebApplicationFactory()
+            .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
+            .WithConfiguration("OCTOCON_AUTH_CHALLENGE_ENABLED", "false");
+
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        {
+            AllowAutoRedirect = false
+        });
 
         var principal = "parity-alter-journal-empty-list";
         var alterId = await CreateAlterAsync(client, principal, "NoJournalAlter");
@@ -57,10 +62,14 @@ public sealed class ParityRegressionTests
     {
         if (!IntegrationTestEnvironment.ShouldRunApiIntegration) return;
 
-        var workspaceRoot = FindWorkspaceRoot();
-        var port = GetFreePort();
-        await using var api = await StartApiAsync(workspaceRoot, port);
-        using var client = new HttpClient { BaseAddress = new Uri($"http://127.0.0.1:{port}") };
+        await using var factory = new InterfoldWebApplicationFactory()
+            .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
+            .WithConfiguration("OCTOCON_AUTH_CHALLENGE_ENABLED", "false");
+
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        {
+            AllowAutoRedirect = false
+        });
 
         var principal = "parity-alter-journal";
         var alterId = await CreateAlterAsync(client, principal, "JournalHolder");
@@ -133,10 +142,14 @@ public sealed class ParityRegressionTests
     {
         if (!IntegrationTestEnvironment.ShouldRunApiIntegration) return;
 
-        var workspaceRoot = FindWorkspaceRoot();
-        var port = GetFreePort();
-        await using var api = await StartApiAsync(workspaceRoot, port);
-        using var client = new HttpClient { BaseAddress = new Uri($"http://127.0.0.1:{port}") };
+        await using var factory = new InterfoldWebApplicationFactory()
+            .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
+            .WithConfiguration("OCTOCON_AUTH_CHALLENGE_ENABLED", "false");
+
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        {
+            AllowAutoRedirect = false
+        });
 
         var principal = "parity-alter-journal-404";
         var alterId = await CreateAlterAsync(client, principal, "JournalHolder404");
@@ -170,10 +183,14 @@ public sealed class ParityRegressionTests
     {
         if (!IntegrationTestEnvironment.ShouldRunApiIntegration) return;
 
-        var workspaceRoot = FindWorkspaceRoot();
-        var port = GetFreePort();
-        await using var api = await StartApiAsync(workspaceRoot, port);
-        using var client = new HttpClient { BaseAddress = new Uri($"http://127.0.0.1:{port}") };
+        await using var factory = new InterfoldWebApplicationFactory()
+            .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
+            .WithConfiguration("OCTOCON_AUTH_CHALLENGE_ENABLED", "false");
+
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        {
+            AllowAutoRedirect = false
+        });
 
         var principal = "parity-field-fallback";
 
@@ -194,10 +211,14 @@ public sealed class ParityRegressionTests
     {
         if (!IntegrationTestEnvironment.ShouldRunApiIntegration) return;
 
-        var workspaceRoot = FindWorkspaceRoot();
-        var port = GetFreePort();
-        await using var api = await StartApiAsync(workspaceRoot, port);
-        using var client = new HttpClient { BaseAddress = new Uri($"http://127.0.0.1:{port}") };
+        await using var factory = new InterfoldWebApplicationFactory()
+            .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
+            .WithConfiguration("OCTOCON_AUTH_CHALLENGE_ENABLED", "false");
+
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        {
+            AllowAutoRedirect = false
+        });
 
         var principal = "parity-field-missing-type";
 
@@ -222,10 +243,14 @@ public sealed class ParityRegressionTests
     {
         if (!IntegrationTestEnvironment.ShouldRunApiIntegration) return;
 
-        var workspaceRoot = FindWorkspaceRoot();
-        var port = GetFreePort();
-        await using var api = await StartApiAsync(workspaceRoot, port);
-        using var client = new HttpClient { BaseAddress = new Uri($"http://127.0.0.1:{port}") };
+        await using var factory = new InterfoldWebApplicationFactory()
+            .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
+            .WithConfiguration("OCTOCON_AUTH_CHALLENGE_ENABLED", "false");
+
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        {
+            AllowAutoRedirect = false
+        });
 
         var principal = "parity-legacy-routes";
 
@@ -253,10 +278,14 @@ public sealed class ParityRegressionTests
     {
         if (!IntegrationTestEnvironment.ShouldRunApiIntegration) return;
 
-        var workspaceRoot = FindWorkspaceRoot();
-        var port = GetFreePort();
-        await using var api = await StartApiAsync(workspaceRoot, port);
-        using var client = new HttpClient { BaseAddress = new Uri($"http://127.0.0.1:{port}") };
+        await using var factory = new InterfoldWebApplicationFactory()
+            .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
+            .WithConfiguration("OCTOCON_AUTH_CHALLENGE_ENABLED", "false");
+
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        {
+            AllowAutoRedirect = false
+        });
 
         var principal = "parity-legacy-journals";
 
@@ -288,10 +317,14 @@ public sealed class ParityRegressionTests
     {
         if (!IntegrationTestEnvironment.ShouldRunApiIntegration) return;
 
-        var workspaceRoot = FindWorkspaceRoot();
-        var port = GetFreePort();
-        await using var api = await StartApiAsync(workspaceRoot, port);
-        using var client = new HttpClient { BaseAddress = new Uri($"http://127.0.0.1:{port}") };
+        await using var factory = new InterfoldWebApplicationFactory()
+            .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
+            .WithConfiguration("OCTOCON_AUTH_CHALLENGE_ENABLED", "false");
+
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        {
+            AllowAutoRedirect = false
+        });
 
         var principal = "parity-tag-parent";
         var parentTagId = await CreateTagAsync(client, principal, "ParentTag");
@@ -325,10 +358,14 @@ public sealed class ParityRegressionTests
     {
         if (!IntegrationTestEnvironment.ShouldRunApiIntegration) return;
 
-        var workspaceRoot = FindWorkspaceRoot();
-        var port = GetFreePort();
-        await using var api = await StartApiAsync(workspaceRoot, port);
-        using var client = new HttpClient { BaseAddress = new Uri($"http://127.0.0.1:{port}") };
+        await using var factory = new InterfoldWebApplicationFactory()
+            .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
+            .WithConfiguration("OCTOCON_AUTH_CHALLENGE_ENABLED", "false");
+
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        {
+            AllowAutoRedirect = false
+        });
 
         var principal = "parity-public-batch-self";
         _ = await CreateAlterAsync(client, principal, "BatchSelfSeed");
@@ -352,10 +389,14 @@ public sealed class ParityRegressionTests
     {
         if (!IntegrationTestEnvironment.ShouldRunApiIntegration) return;
 
-        var workspaceRoot = FindWorkspaceRoot();
-        var port = GetFreePort();
-        await using var api = await StartApiAsync(workspaceRoot, port);
-        using var client = new HttpClient { BaseAddress = new Uri($"http://127.0.0.1:{port}") };
+        await using var factory = new InterfoldWebApplicationFactory()
+            .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
+            .WithConfiguration("OCTOCON_AUTH_CHALLENGE_ENABLED", "false");
+
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        {
+            AllowAutoRedirect = false
+        });
 
         var principal = "parity-front-legacy-id";
         var alterId = await CreateAlterAsync(client, principal, "LegacyFrontAlter");
@@ -380,10 +421,14 @@ public sealed class ParityRegressionTests
     {
         if (!IntegrationTestEnvironment.ShouldRunApiIntegration) return;
 
-        var workspaceRoot = FindWorkspaceRoot();
-        var port = GetFreePort();
-        await using var api = await StartApiAsync(workspaceRoot, port);
-        using var client = new HttpClient { BaseAddress = new Uri($"http://127.0.0.1:{port}") };
+        await using var factory = new InterfoldWebApplicationFactory()
+            .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
+            .WithConfiguration("OCTOCON_AUTH_CHALLENGE_ENABLED", "false");
+
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        {
+            AllowAutoRedirect = false
+        });
 
         var principal = "parity-guarded-alter";
         var alterId = await CreateAlterAsync(client, principal, "GuardedAlter");
@@ -407,10 +452,14 @@ public sealed class ParityRegressionTests
     {
         if (!IntegrationTestEnvironment.ShouldRunApiIntegration) return;
 
-        var workspaceRoot = FindWorkspaceRoot();
-        var port = GetFreePort();
-        await using var api = await StartApiAsync(workspaceRoot, port);
-        using var client = new HttpClient { BaseAddress = new Uri($"http://127.0.0.1:{port}") };
+        await using var factory = new InterfoldWebApplicationFactory()
+            .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
+            .WithConfiguration("OCTOCON_AUTH_CHALLENGE_ENABLED", "false");
+
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        {
+            AllowAutoRedirect = false
+        });
 
         var principal = "parity-guarded-tag";
         var tagId = await CreateTagAsync(client, principal, "GuardedTag");
@@ -434,10 +483,14 @@ public sealed class ParityRegressionTests
     {
         if (!IntegrationTestEnvironment.ShouldRunApiIntegration) return;
 
-        var workspaceRoot = FindWorkspaceRoot();
-        var port = GetFreePort();
-        await using var api = await StartApiAsync(workspaceRoot, port);
-        using var client = new HttpClient { BaseAddress = new Uri($"http://127.0.0.1:{port}") };
+        await using var factory = new InterfoldWebApplicationFactory()
+            .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
+            .WithConfiguration("OCTOCON_AUTH_CHALLENGE_ENABLED", "false");
+
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        {
+            AllowAutoRedirect = false
+        });
 
         var principal = "parity-guarded-fronting";
         var alterId = await CreateAlterAsync(client, principal, "GuardedFrontAlter");
@@ -471,10 +524,14 @@ public sealed class ParityRegressionTests
     {
         if (!IntegrationTestEnvironment.ShouldRunApiIntegration) return;
 
-        var workspaceRoot = FindWorkspaceRoot();
-        var port = GetFreePort();
-        await using var api = await StartApiAsync(workspaceRoot, port);
-        using var client = new HttpClient { BaseAddress = new Uri($"http://127.0.0.1:{port}") };
+        await using var factory = new InterfoldWebApplicationFactory()
+            .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
+            .WithConfiguration("OCTOCON_AUTH_CHALLENGE_ENABLED", "false");
+
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        {
+            AllowAutoRedirect = false
+        });
 
         var owner = "parity-guarded-owner";
         var nonFriend = "parity-guarded-nonfriend";
@@ -561,10 +618,14 @@ public sealed class ParityRegressionTests
     {
         if (!IntegrationTestEnvironment.ShouldRunApiIntegration) return;
 
-        var workspaceRoot = FindWorkspaceRoot();
-        var port = GetFreePort();
-        await using var api = await StartApiAsync(workspaceRoot, port);
-        using var client = new HttpClient { BaseAddress = new Uri($"http://127.0.0.1:{port}") };
+        await using var factory = new InterfoldWebApplicationFactory()
+            .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
+            .WithConfiguration("OCTOCON_AUTH_CHALLENGE_ENABLED", "false");
+
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        {
+            AllowAutoRedirect = false
+        });
 
         var owner = "parity-guarded-fields-owner";
         var nonFriend = "parity-guarded-fields-nonfriend";
@@ -650,10 +711,14 @@ public sealed class ParityRegressionTests
     {
         if (!IntegrationTestEnvironment.ShouldRunApiIntegration) return;
 
-        var workspaceRoot = FindWorkspaceRoot();
-        var port = GetFreePort();
-        await using var api = await StartApiAsync(workspaceRoot, port);
-        using var client = new HttpClient { BaseAddress = new Uri($"http://127.0.0.1:{port}") };
+        await using var factory = new InterfoldWebApplicationFactory()
+            .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
+            .WithConfiguration("OCTOCON_AUTH_CHALLENGE_ENABLED", "false");
+
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        {
+            AllowAutoRedirect = false
+        });
 
         var principal = "parity-poll-types";
 
@@ -707,10 +772,14 @@ public sealed class ParityRegressionTests
     {
         if (!IntegrationTestEnvironment.ShouldRunApiIntegration) return;
 
-        var workspaceRoot = FindWorkspaceRoot();
-        var port = GetFreePort();
-        await using var api = await StartApiAsync(workspaceRoot, port);
-        using var client = new HttpClient { BaseAddress = new Uri($"http://127.0.0.1:{port}") };
+        await using var factory = new InterfoldWebApplicationFactory()
+            .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
+            .WithConfiguration("OCTOCON_AUTH_CHALLENGE_ENABLED", "false");
+
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        {
+            AllowAutoRedirect = false
+        });
 
         var initialTimeEnd = DateTime.UtcNow.AddHours(1);
 
@@ -763,10 +832,14 @@ public sealed class ParityRegressionTests
     {
         if (!IntegrationTestEnvironment.ShouldRunApiIntegration) return;
 
-        var workspaceRoot = FindWorkspaceRoot();
-        var port = GetFreePort();
-        await using var api = await StartApiAsync(workspaceRoot, port);
-        using var client = new HttpClient { BaseAddress = new Uri($"http://127.0.0.1:{port}") };
+        await using var factory = new InterfoldWebApplicationFactory()
+            .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
+            .WithConfiguration("OCTOCON_AUTH_CHALLENGE_ENABLED", "false");
+
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        {
+            AllowAutoRedirect = false
+        });
 
         var principal = "parity-poll-validation";
         var tooLongTitle = new string('a', 101); // Max is 100
@@ -789,10 +862,14 @@ public sealed class ParityRegressionTests
     {
         if (!IntegrationTestEnvironment.ShouldRunApiIntegration) return;
 
-        var workspaceRoot = FindWorkspaceRoot();
-        var port = GetFreePort();
-        await using var api = await StartApiAsync(workspaceRoot, port);
-        using var client = new HttpClient { BaseAddress = new Uri($"http://127.0.0.1:{port}") };
+        await using var factory = new InterfoldWebApplicationFactory()
+            .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
+            .WithConfiguration("OCTOCON_AUTH_CHALLENGE_ENABLED", "false");
+
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        {
+            AllowAutoRedirect = false
+        });
 
         var principal = "parity-poll-desc-validation";
         var validTitle = "ValidTitle";
@@ -816,10 +893,14 @@ public sealed class ParityRegressionTests
     {
         if (!IntegrationTestEnvironment.ShouldRunApiIntegration) return;
 
-        var workspaceRoot = FindWorkspaceRoot();
-        var port = GetFreePort();
-        await using var api = await StartApiAsync(workspaceRoot, port);
-        using var client = new HttpClient { BaseAddress = new Uri($"http://127.0.0.1:{port}") };
+        await using var factory = new InterfoldWebApplicationFactory()
+            .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
+            .WithConfiguration("OCTOCON_AUTH_CHALLENGE_ENABLED", "false");
+
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        {
+            AllowAutoRedirect = false
+        });
 
         var principal = "parity-error-format";
         var tooLongTitle = new string('a', 101);
@@ -848,10 +929,14 @@ public sealed class ParityRegressionTests
     {
         if (!IntegrationTestEnvironment.ShouldRunApiIntegration) return;
 
-        var workspaceRoot = FindWorkspaceRoot();
-        var port = GetFreePort();
-        await using var api = await StartApiAsync(workspaceRoot, port);
-        using var client = new HttpClient { BaseAddress = new Uri($"http://127.0.0.1:{port}") };
+        await using var factory = new InterfoldWebApplicationFactory()
+            .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
+            .WithConfiguration("OCTOCON_AUTH_CHALLENGE_ENABLED", "false");
+
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        {
+            AllowAutoRedirect = false
+        });
 
         var principal = "parity-field-defaults";
 
@@ -1083,72 +1168,6 @@ public sealed class ParityRegressionTests
         throw new InvalidOperationException($"Field '{key}' not found in: {json}");
     }
 
-    private static async Task<RunningApi> StartApiAsync(string workspaceRoot, int port)
-    {
-        var gateLease = await ApiProcessGate.AcquireAsync();
-        var apiProjectPath = Path.Combine(workspaceRoot, "csharp", "Octocon.Api", "Octocon.Api.csproj");
-
-        var psi = new ProcessStartInfo
-        {
-            FileName = "dotnet",
-            Arguments = $"run --no-build --project \"{apiProjectPath}\"",
-            WorkingDirectory = workspaceRoot,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false
-        };
-
-        psi.Environment["ASPNETCORE_URLS"] = $"http://127.0.0.1:{port}";
-        psi.Environment["OCTOCON_PERSISTENCE"] = "inmemory";
-        psi.Environment["OCTOCON_JWT_AUTHORITY"] = string.Empty;
-
-        var process = new Process { StartInfo = psi };
-        process.Start();
-
-        using var http = new HttpClient { BaseAddress = new Uri($"http://127.0.0.1:{port}") };
-        var deadline = DateTime.UtcNow.AddMilliseconds(30_000);
-
-        while (DateTime.UtcNow < deadline)
-        {
-            if (process.HasExited)
-            {
-                var stderr = await process.StandardError.ReadToEndAsync();
-                await gateLease.DisposeAsync();
-                throw new InvalidOperationException($"API exited. stderr: {stderr}");
-            }
-
-            try
-            {
-                if ((await http.GetAsync("/api/heartbeat")).StatusCode == HttpStatusCode.OK)
-                    break;
-            }
-            catch { }
-
-            await Task.Delay(200);
-        }
-
-        return new RunningApi(process, gateLease);
-    }
-
-    private static int GetFreePort()
-    {
-        var l = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
-        l.Start();
-        try { return ((System.Net.IPEndPoint)l.LocalEndpoint).Port; }
-        finally { l.Stop(); }
-    }
-
-    private static string FindWorkspaceRoot()
-    {
-        var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir is not null)
-        {
-            if (Directory.Exists(Path.Combine(dir.FullName, "csharp")))
-                return dir.FullName;
-            dir = dir.Parent;
-        }
-        throw new InvalidOperationException("Cannot find workspace root.");
-    }
 
     // -----------------------------------------------------------------------
     // Operational readiness: Health checks for guarded visibility paths
@@ -1161,10 +1180,14 @@ public sealed class ParityRegressionTests
         // This test runs with in-memory persistence only (no Scylla required)
         if (!IntegrationTestEnvironment.ShouldRunApiIntegration) return;
 
-        var workspaceRoot = FindWorkspaceRoot();
-        var port = GetFreePort();
-        await using var api = await StartApiAsync(workspaceRoot, port);
-        using var client = new HttpClient { BaseAddress = new Uri($"http://127.0.0.1:{port}") };
+        await using var factory = new InterfoldWebApplicationFactory()
+            .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
+            .WithConfiguration("OCTOCON_AUTH_CHALLENGE_ENABLED", "false");
+
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        {
+            AllowAutoRedirect = false
+        });
 
         // If API started successfully, guarded paths are at least partially functional.
         // A full integration test would create test data and verify filtering.
@@ -1178,16 +1201,18 @@ public sealed class ParityRegressionTests
         // Validates that GetGuardedAsync path handles missing entities gracefully
         if (!IntegrationTestEnvironment.ShouldRunApiIntegration) return;
 
-        var workspaceRoot = FindWorkspaceRoot();
-        var port = GetFreePort();
-        await using var api = await StartApiAsync(workspaceRoot, port);
-        using var client = new HttpClient { BaseAddress = new Uri($"http://127.0.0.1:{port}") };
+        await using var factory = new InterfoldWebApplicationFactory()
+            .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
+            .WithConfiguration("OCTOCON_AUTH_CHALLENGE_ENABLED", "false");
+
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        {
+            AllowAutoRedirect = false
+        });
 
         // Query a non-existent alter should return 404, not 500
         var principal = "operational-health-test";
-        using var req = new HttpRequestMessage(HttpMethod.Get, "/api/systems/me/alters/9999")
-        {
-        };
+        using var req = new HttpRequestMessage(HttpMethod.Get, "/api/systems/me/alters/9999");
         var res = await client.SendAsync(req);
 
         // Expect 404 (not found) rather than 500 (error), validating guarded read path worked
@@ -1195,20 +1220,8 @@ public sealed class ParityRegressionTests
             $"Expected 404 for missing alter, got {res.StatusCode}; guarded get path may be broken");
     }
 
-
-
     private static void Ensure(bool condition, string message)
     {
         if (!condition) throw new InvalidOperationException(message);
-    }
-
-    private sealed class RunningApi(Process process, IAsyncDisposable gateLease) : IAsyncDisposable
-    {
-        public async ValueTask DisposeAsync()
-        {
-            try { if (!process.HasExited) process.Kill(entireProcessTree: true); } catch { }
-            process.Dispose();
-            await gateLease.DisposeAsync();
-        }
     }
 }

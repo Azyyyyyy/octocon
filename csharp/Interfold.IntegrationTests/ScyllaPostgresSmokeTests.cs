@@ -1,10 +1,12 @@
-using System.Diagnostics;
+using System.Net;
+using System.Net.Http.Json;
+using System.Text.Json;
+using Microsoft.AspNetCore.Mvc.Testing;
 
 namespace Interfold.IntegrationTests;
 
 public sealed class ScyllaPostgresSmokeTests
 {
-
     [Test]
     public async Task AlterCreate_IdempotentReplay_WorksAgainstLiveAdapters()
     {
@@ -13,83 +15,65 @@ public sealed class ScyllaPostgresSmokeTests
             return;
         }
 
-        var workspaceRoot = FindWorkspaceRoot();
-        var projectPath = Path.Combine(workspaceRoot, "csharp", "Interfold.Cli", "Interfold.Cli.csproj");
+        await using var factory = new InterfoldWebApplicationFactory()
+            .WithConfiguration("OCTOCON_PERSISTENCE", "scylla-postgres")
+            .WithConfiguration("OCTOCON_POSTGRES_CONNECTION", IntegrationTestEnvironment.PostgresConnection)
+            .WithConfiguration("OCTOCON_SCYLLA_CONTACT_POINTS", IntegrationTestEnvironment.GetVariable("OCTOCON_TEST_SCYLLA_CONTACT_POINTS", "127.0.0.1"))
+            .WithConfiguration("OCTOCON_SCYLLA_USERNAME", IntegrationTestEnvironment.GetVariable("OCTOCON_TEST_SCYLLA_USERNAME", "cassandra"))
+            .WithConfiguration("OCTOCON_SCYLLA_PASSWORD", IntegrationTestEnvironment.GetVariable("OCTOCON_TEST_SCYLLA_PASSWORD", "cassandra"))
+            .WithConfiguration("OCTOCON_REGION", IntegrationTestEnvironment.GetVariable("OCTOCON_TEST_REGION", "nam"))
+            .WithConfiguration("OCTOCON_TEST_AUTH_ALLOW_PRINCIPAL_HEADER", "true");
+
+        using var client = factory.CreateClient();
 
         var systemId = $"itest-{Guid.NewGuid():N}"[..14];
         var idempotencyKey = Guid.NewGuid().ToString("N");
 
-        var baseArgs =
-            $"run --project \"{projectPath}\" -- " +
-            "--persistence=scylla-postgres " +
-            $"--scylla-contact-points={IntegrationTestEnvironment.GetVariable("OCTOCON_TEST_SCYLLA_CONTACT_POINTS", "127.0.0.1")} " +
-            $"--scylla-username={IntegrationTestEnvironment.GetVariable("OCTOCON_TEST_SCYLLA_USERNAME", "cassandra")} " +
-            $"--scylla-password={IntegrationTestEnvironment.GetVariable("OCTOCON_TEST_SCYLLA_PASSWORD", "cassandra")} " +
-            $"--region={IntegrationTestEnvironment.GetVariable("OCTOCON_TEST_REGION", "nam")} " +
-            "alter-create " +
-            $"--system {systemId} " +
-            "--name IntegrationSmoke " +
-            $"--idempotency-key {idempotencyKey}";
+        var requestContent = new { name = "IntegrationSmoke" };
 
-        var first = await RunDotnetAsync(baseArgs, workspaceRoot);
-        Ensure(first.ExitCode == 0, $"First CLI invocation failed. stderr: {first.StdErr}");
-        Ensure(first.StdOut.Contains("accepted", StringComparison.OrdinalIgnoreCase),
-            $"First CLI invocation did not contain accepted. stdout: {first.StdOut}");
-        Ensure(first.StdOut.Contains("\"Replay\":false", StringComparison.Ordinal),
-            $"First CLI invocation did not contain replay=false. stdout: {first.StdOut}");
-
-        var second = await RunDotnetAsync(baseArgs, workspaceRoot);
-        Ensure(second.ExitCode == 0, $"Second CLI invocation failed. stderr: {second.StdErr}");
-        Ensure(second.StdOut.Contains("accepted", StringComparison.OrdinalIgnoreCase),
-            $"Second CLI invocation did not contain accepted. stdout: {second.StdOut}");
-        Ensure(second.StdOut.Contains("\"Replay\":true", StringComparison.Ordinal),
-            $"Second CLI invocation did not contain replay=true. stdout: {second.StdOut}");
-    }
-
-
-
-    private static string FindWorkspaceRoot()
-    {
-        var current = new DirectoryInfo(AppContext.BaseDirectory);
-
-        while (current is not null)
+        // First call
+        using var firstReq = new HttpRequestMessage(HttpMethod.Post, "/api/systems/me/alters")
         {
-            var marker = Path.Combine(current.FullName, "octocon.sln");
-            if (File.Exists(marker))
-            {
-                return current.FullName;
-            }
+            Content = JsonContent.Create(requestContent)
+        };
+        firstReq.Headers.Add("X-Interfold-Principal", systemId);
+        firstReq.Headers.Add("X-Interfold-Idempotency-Key", idempotencyKey);
 
-            current = current.Parent;
+        var firstRes = await client.SendAsync(firstReq);
+        var firstBody = await firstRes.Content.ReadAsStringAsync();
+        
+        Ensure(firstRes.StatusCode == HttpStatusCode.Created, 
+            $"First API invocation failed. Status: {firstRes.StatusCode}, Body: {firstBody}");
+        
+        using (var doc = JsonDocument.Parse(firstBody))
+        {
+            var root = doc.RootElement;
+            Ensure(root.TryGetProperty("data", out _), "First API response missing 'data' property.");
+            Ensure(root.GetProperty("replay").GetBoolean() == false, 
+                $"First API invocation should have replay=false. Body: {firstBody}");
         }
 
-        throw new InvalidOperationException("Could not find workspace root containing octocon.sln.");
-    }
-
-    private static async Task<(int ExitCode, string StdOut, string StdErr)> RunDotnetAsync(string arguments, string workingDirectory)
-    {
-        var psi = new ProcessStartInfo
+        // Second call (replay)
+        using var secondReq = new HttpRequestMessage(HttpMethod.Post, "/api/systems/me/alters")
         {
-            FileName = "dotnet",
-            Arguments = arguments,
-            WorkingDirectory = workingDirectory,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false
+            Content = JsonContent.Create(requestContent)
         };
+        secondReq.Headers.Add("X-Interfold-Principal", systemId);
+        secondReq.Headers.Add("X-Interfold-Idempotency-Key", idempotencyKey);
 
-        psi.Environment["OCTOCON_POSTGRES_CONNECTION"] = IntegrationTestEnvironment.PostgresConnection ?? string.Empty;
-        psi.Environment["OCTOCON_PERSISTENCE"] = "scylla-postgres";
+        var secondRes = await client.SendAsync(secondReq);
+        var secondBody = await secondRes.Content.ReadAsStringAsync();
 
-        using var process = new Process { StartInfo = psi };
+        Ensure(secondRes.StatusCode == HttpStatusCode.Created, 
+            $"Second API invocation failed. Status: {secondRes.StatusCode}, Body: {secondBody}");
 
-        process.Start();
-        var stdOutTask = process.StandardOutput.ReadToEndAsync();
-        var stdErrTask = process.StandardError.ReadToEndAsync();
-
-        await process.WaitForExitAsync();
-
-        return (process.ExitCode, await stdOutTask, await stdErrTask);
+        using (var doc = JsonDocument.Parse(secondBody))
+        {
+            var root = doc.RootElement;
+            Ensure(root.TryGetProperty("data", out _), "Second API response missing 'data' property.");
+            Ensure(root.GetProperty("replay").GetBoolean() == true, 
+                $"Second API invocation should have replay=true. Body: {secondBody}");
+        }
     }
 
     private static void Ensure(bool condition, string message)

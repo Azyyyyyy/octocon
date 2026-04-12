@@ -4,6 +4,7 @@ using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
 using Interfold.IntegrationTests.Replay;
+using Microsoft.AspNetCore.Mvc.Testing;
 
 namespace Interfold.IntegrationTests;
 
@@ -80,11 +81,14 @@ public sealed class ReplayParityTests
         var trace = ReplayTrace.Load(fixturePath);
         Ensure(trace.Steps.Count > 0, $"Trace '{fixtureFileName}' contains no steps.");
 
-        var workspaceRoot = FindWorkspaceRoot();
-        var port = GetFreePort();
-
-        await using var api = await StartApiAsync(workspaceRoot, port);
-        using var client = new HttpClient { BaseAddress = new Uri($"http://127.0.0.1:{port}") };
+        await using var factory = new InterfoldWebApplicationFactory()
+            .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
+            .WithConfiguration("OCTOCON_AUTH_CHALLENGE_ENABLED", "false");
+        
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        {
+            AllowAutoRedirect = false
+        });
 
         // Mutable variable store for {varName} substitutions across steps.
         var vars = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -258,93 +262,8 @@ public sealed class ReplayParityTests
         return false;
     }
 
-    // -----------------------------------------------------------------------
-    // Process / infrastructure helpers (shared with other test suites)
-    // -----------------------------------------------------------------------
-
-    private static async Task<RunningApi> StartApiAsync(string workspaceRoot, int port)
-    {
-        var gateLease = await ApiProcessGate.AcquireAsync();
-        var apiProjectPath = Path.Combine(workspaceRoot, "csharp", "Octocon.Api", "Octocon.Api.csproj");
-
-        var psi = new ProcessStartInfo
-        {
-            FileName = "dotnet",
-            Arguments = $"run --no-build --project \"{apiProjectPath}\"",
-            WorkingDirectory = workspaceRoot,
-            RedirectStandardOutput = true,
-            RedirectStandardError  = true,
-            UseShellExecute        = false
-        };
-
-        psi.Environment["ASPNETCORE_URLS"]                 = $"http://127.0.0.1:{port}";
-        psi.Environment["OCTOCON_PERSISTENCE"]             = "inmemory";
-
-        var process = new Process { StartInfo = psi };
-        process.Start();
-
-        using var http = new HttpClient { BaseAddress = new Uri($"http://127.0.0.1:{port}") };
-        var deadline = DateTime.UtcNow.AddMilliseconds(30_000);
-
-        while (DateTime.UtcNow < deadline)
-        {
-            if (process.HasExited)
-            {
-                var stderr = await process.StandardError.ReadToEndAsync();
-                var stdout = await process.StandardOutput.ReadToEndAsync();
-                await gateLease.DisposeAsync();
-                throw new InvalidOperationException(
-                    $"API exited unexpectedly. stdout: {stdout} stderr: {stderr}");
-            }
-
-            try
-            {
-                var r = await http.GetAsync("/api/heartbeat");
-                if (r.StatusCode == HttpStatusCode.OK) break;
-            }
-            catch { /* keep polling */ }
-
-            await Task.Delay(200);
-        }
-
-        return new RunningApi(process, gateLease);
-    }
-
-    private static int GetFreePort()
-    {
-        var listener = new TcpListener(System.Net.IPAddress.Loopback, 0);
-        listener.Start();
-        try { return ((System.Net.IPEndPoint)listener.LocalEndpoint).Port; }
-        finally { listener.Stop(); }
-    }
-
-    private static string FindWorkspaceRoot()
-    {
-        var current = new DirectoryInfo(AppContext.BaseDirectory);
-        while (current is not null)
-        {
-            if (Directory.Exists(Path.Combine(current.FullName, "csharp")))
-                return current.FullName;
-            current = current.Parent;
-        }
-        throw new InvalidOperationException("Cannot find workspace root.");
-    }
-
-
-
     private static void Ensure(bool condition, string message)
     {
         if (!condition) throw new InvalidOperationException(message);
-    }
-
-    private sealed class RunningApi(Process process, IAsyncDisposable gateLease) : IAsyncDisposable
-    {
-        public async ValueTask DisposeAsync()
-        {
-            try { if (!process.HasExited) process.Kill(entireProcessTree: true); }
-            catch { }
-            process.Dispose();
-            await gateLease.DisposeAsync();
-        }
     }
 }

@@ -1,6 +1,4 @@
-using System.Diagnostics;
 using System.Net;
-using System.Net.Sockets;
 using System.Text.Json;
 
 namespace Interfold.IntegrationTests;
@@ -17,12 +15,10 @@ public sealed class NodeRoleIntegrationTests
         if (!IntegrationTestEnvironment.ShouldRunApiIntegration)
             return;
 
-        var workspaceRoot = FindWorkspaceRoot();
-        var port = GetFreePort();
+        await using var factory = new InterfoldWebApplicationFactory()
+            .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory");
+        using var client = factory.CreateClient();
 
-        await using var api = await StartApiAsync(workspaceRoot, port, nodeGroup: null, flyProcessGroup: null);
-
-        using var client = new HttpClient { BaseAddress = new Uri($"http://127.0.0.1:{port}") };
         var response = await client.GetAsync("/health/node-role");
 
         Ensure(response.StatusCode == HttpStatusCode.OK,
@@ -44,12 +40,11 @@ public sealed class NodeRoleIntegrationTests
         if (!IntegrationTestEnvironment.ShouldRunApiIntegration)
             return;
 
-        var workspaceRoot = FindWorkspaceRoot();
-        var port = GetFreePort();
+        await using var factory = new InterfoldWebApplicationFactory()
+            .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
+            .WithConfiguration("OCTOCON_NODE_GROUP", "primary");
+        using var client = factory.CreateClient();
 
-        await using var api = await StartApiAsync(workspaceRoot, port, nodeGroup: "primary", flyProcessGroup: null);
-
-        using var client = new HttpClient { BaseAddress = new Uri($"http://127.0.0.1:{port}") };
         var response = await client.GetAsync("/health/node-role");
 
         Ensure(response.StatusCode == HttpStatusCode.OK,
@@ -71,13 +66,12 @@ public sealed class NodeRoleIntegrationTests
         if (!IntegrationTestEnvironment.ShouldRunApiIntegration)
             return;
 
-        var workspaceRoot = FindWorkspaceRoot();
-        var port = GetFreePort();
-
         // FLY_PROCESS_GROUP takes precedence; OCTOCON_NODE_GROUP is not set.
-        await using var api = await StartApiAsync(workspaceRoot, port, nodeGroup: null, flyProcessGroup: "primary");
+        await using var factory = new InterfoldWebApplicationFactory()
+            .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
+            .WithConfiguration("FLY_PROCESS_GROUP", "primary");
+        using var client = factory.CreateClient();
 
-        using var client = new HttpClient { BaseAddress = new Uri($"http://127.0.0.1:{port}") };
         var response = await client.GetAsync("/health/node-role");
 
         Ensure(response.StatusCode == HttpStatusCode.OK,
@@ -96,13 +90,13 @@ public sealed class NodeRoleIntegrationTests
         if (!IntegrationTestEnvironment.ShouldRunApiIntegration)
             return;
 
-        var workspaceRoot = FindWorkspaceRoot();
-        var port = GetFreePort();
-
         // FLY_PROCESS_GROUP=sidecar should win over OCTOCON_NODE_GROUP=primary.
-        await using var api = await StartApiAsync(workspaceRoot, port, nodeGroup: "primary", flyProcessGroup: "sidecar");
+        await using var factory = new InterfoldWebApplicationFactory()
+            .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
+            .WithConfiguration("OCTOCON_NODE_GROUP", "primary")
+            .WithConfiguration("FLY_PROCESS_GROUP", "sidecar");
+        using var client = factory.CreateClient();
 
-        using var client = new HttpClient { BaseAddress = new Uri($"http://127.0.0.1:{port}") };
         var response = await client.GetAsync("/health/node-role");
 
         Ensure(response.StatusCode == HttpStatusCode.OK,
@@ -124,13 +118,11 @@ public sealed class NodeRoleIntegrationTests
         if (!IntegrationTestEnvironment.ShouldRunApiIntegration)
             return;
 
-        var workspaceRoot = FindWorkspaceRoot();
-        var port = GetFreePort();
-
-        await using var api = await StartApiAsync(workspaceRoot, port, nodeGroup: null, flyProcessGroup: null);
+        await using var factory = new InterfoldWebApplicationFactory()
+            .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory");
+        using var client = factory.CreateClient();
 
         // Un-authenticated request — must not return 401.
-        using var client = new HttpClient { BaseAddress = new Uri($"http://127.0.0.1:{port}") };
         var response = await client.GetAsync("/health/node-role");
 
         Ensure(response.StatusCode == HttpStatusCode.OK,
@@ -140,91 +132,6 @@ public sealed class NodeRoleIntegrationTests
     // -----------------------------------------------------------------------
     // Helpers
     // -----------------------------------------------------------------------
-
-    private static async Task<RunningApi> StartApiAsync(
-        string workspaceRoot,
-        int port,
-        string? nodeGroup,
-        string? flyProcessGroup)
-    {
-        var gateLease = await ApiProcessGate.AcquireAsync();
-        var process = StartApiProcess(workspaceRoot, port, nodeGroup, flyProcessGroup);
-
-        using var http = new HttpClient { BaseAddress = new Uri($"http://127.0.0.1:{port}") };
-        var ready = await WaitForApiReadyAsync(process, http, timeoutMs: 30000);
-
-        if (!ready)
-        {
-            var stderr = await process.StandardError.ReadToEndAsync();
-            var stdout = await process.StandardOutput.ReadToEndAsync();
-            process.Kill(entireProcessTree: true);
-            await gateLease.DisposeAsync();
-
-            throw new InvalidOperationException(
-                $"API did not become ready in time. stdout: {stdout} stderr: {stderr}");
-        }
-
-        return new RunningApi(process, gateLease);
-    }
-
-    private static Process StartApiProcess(
-        string workspaceRoot,
-        int port,
-        string? nodeGroup,
-        string? flyProcessGroup)
-    {
-        var apiProjectPath = Path.Combine(workspaceRoot, "csharp", "Octocon.Api", "Octocon.Api.csproj");
-
-        var psi = new ProcessStartInfo
-        {
-            FileName = "dotnet",
-            Arguments = $"run --no-build --project \"{apiProjectPath}\"",
-            WorkingDirectory = workspaceRoot,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false
-        };
-
-        psi.Environment["ASPNETCORE_URLS"] = $"http://127.0.0.1:{port}";
-        psi.Environment["OCTOCON_PERSISTENCE"] = "inmemory";
-
-        // Leave FLY_PROCESS_GROUP and OCTOCON_NODE_GROUP unset unless specified.
-        if (!string.IsNullOrWhiteSpace(flyProcessGroup))
-            psi.Environment["FLY_PROCESS_GROUP"] = flyProcessGroup;
-
-        if (!string.IsNullOrWhiteSpace(nodeGroup))
-            psi.Environment["OCTOCON_NODE_GROUP"] = nodeGroup;
-
-        var process = new Process { StartInfo = psi };
-        process.Start();
-        return process;
-    }
-
-    private static async Task<bool> WaitForApiReadyAsync(Process process, HttpClient client, int timeoutMs)
-    {
-        var deadline = DateTime.UtcNow.AddMilliseconds(timeoutMs);
-
-        while (DateTime.UtcNow < deadline)
-        {
-            if (process.HasExited)
-                return false;
-
-            try
-            {
-                var response = await client.GetAsync("/api/heartbeat");
-                if (response.StatusCode == HttpStatusCode.OK)
-                    return true;
-            }
-            catch
-            {
-                // Keep polling while Kestrel starts.
-            }
-
-            await Task.Delay(200);
-        }
-
-        return false;
-    }
 
     private static string ReadStringField(string json, string fieldName)
     {
@@ -259,59 +166,9 @@ public sealed class NodeRoleIntegrationTests
         throw new InvalidOperationException($"Field '{fieldName}' not found in: {json}");
     }
 
-    private static string FindWorkspaceRoot()
-    {
-        var current = new DirectoryInfo(AppContext.BaseDirectory);
-
-        while (current is not null)
-        {
-            // The workspace root contains the csharp/ directory.
-            if (Directory.Exists(Path.Combine(current.FullName, "csharp")))
-                return current.FullName;
-
-            current = current.Parent;
-        }
-
-        throw new InvalidOperationException("Could not find workspace root containing csharp/ directory.");
-    }
-
-    private static int GetFreePort()
-    {
-        var listener = new TcpListener(System.Net.IPAddress.Loopback, 0);
-        listener.Start();
-
-        try
-        {
-            return ((System.Net.IPEndPoint)listener.LocalEndpoint).Port;
-        }
-        finally
-        {
-            listener.Stop();
-        }
-    }
-
     private static void Ensure(bool condition, string message)
     {
         if (!condition)
             throw new InvalidOperationException(message);
-    }
-
-    private sealed class RunningApi(Process process, IAsyncDisposable gateLease) : IAsyncDisposable
-    {
-        public async ValueTask DisposeAsync()
-        {
-            try
-            {
-                if (!process.HasExited)
-                    process.Kill(entireProcessTree: true);
-            }
-            catch
-            {
-                // Best-effort cleanup.
-            }
-
-            process.Dispose();
-            await gateLease.DisposeAsync();
-        }
     }
 }

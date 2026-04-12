@@ -401,3 +401,5 @@ static string NormalizePem(string pem)
 
     return normalized;
 }
+
+public partial class Program;
