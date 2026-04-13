@@ -1,21 +1,17 @@
-using System.Diagnostics;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
-using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
+using Interfold.IntegrationTests.Attributes;
 
 namespace Interfold.IntegrationTests;
 
 public sealed class AvatarMultipartIntegrationTests
 {
-    [Test]
+    [Test, ApiIntegration]
     public async Task Api_SettingsAvatarMultipart_PersistsAndServesAvatar()
     {
-        if (!IntegrationTestEnvironment.ShouldRunApiIntegration)
-            return;
-
         var runId = Guid.NewGuid().ToString("N");
         var storageRoot = Path.Combine(Path.GetTempPath(), "octocon-itest", "avatars", runId);
         var publicBase = $"/avatars-itest/{runId}";
@@ -55,12 +51,9 @@ public sealed class AvatarMultipartIntegrationTests
         }
     }
 
-    [Test]
+    [Test, ApiIntegration]
     public async Task Api_AlterAvatarMultipart_PersistsAndReflectsOnPublicAlter()
     {
-        if (!IntegrationTestEnvironment.ShouldRunApiIntegration)
-            return;
-
         var runId = Guid.NewGuid().ToString("N");
         var storageRoot = Path.Combine(Path.GetTempPath(), "octocon-itest", "avatars", runId);
         var publicBase = $"/avatars-itest/{runId}";

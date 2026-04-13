@@ -1,10 +1,7 @@
-using System.Diagnostics;
-using System.Net;
-using System.Net.Sockets;
+using Interfold.IntegrationTests.Attributes;
+using Microsoft.AspNetCore.Mvc.Testing;
 using System.Text;
 using System.Text.Json;
-using Interfold.IntegrationTests.Replay;
-using Microsoft.AspNetCore.Mvc.Testing;
 
 namespace Interfold.IntegrationTests;
 
@@ -19,57 +16,49 @@ namespace Interfold.IntegrationTests;
 /// </summary>
 public sealed class ReplayParityTests
 {
-    [Test]
+    [Test, ApiIntegration]
     public async Task Replay_AlterLifecycle_PassesAllSteps()
     {
-        if (!IntegrationTestEnvironment.ShouldRunApiIntegration) return;
         await RunTraceAsync("alter-lifecycle.trace.json");
     }
 
-    [Test]
+    [Test, ApiIntegration]
     public async Task Replay_TagLifecycle_PassesAllSteps()
     {
-        if (!IntegrationTestEnvironment.ShouldRunApiIntegration) return;
         await RunTraceAsync("tag-lifecycle.trace.json");
     }
 
-    [Test]
+    [Test, ApiIntegration]
     public async Task Replay_FrontingLifecycle_PassesAllSteps()
     {
-        if (!IntegrationTestEnvironment.ShouldRunApiIntegration) return;
         await RunTraceAsync("fronting-lifecycle.trace.json");
     }
 
-    [Test]
+    [Test, ApiIntegration]
     public async Task Replay_PollLifecycle_PassesAllSteps()
     {
-        if (!IntegrationTestEnvironment.ShouldRunApiIntegration) return;
         await RunTraceAsync("poll-lifecycle.trace.json");
     }
 
-    [Test]
+    [Test, ApiIntegration]
     public async Task Replay_SettingsLifecycle_PassesAllSteps()
     {
-        if (!IntegrationTestEnvironment.ShouldRunApiIntegration) return;
         await RunTraceAsync("settings-lifecycle.trace.json");
     }
 
-    // -----------------------------------------------------------------------
-        [Test]
+        [Test, ApiIntegration]
         public async Task Replay_JournalLifecycle_PassesAllSteps()
         {
-            if (!IntegrationTestEnvironment.ShouldRunApiIntegration) return;
             await RunTraceAsync("journal-lifecycle.trace.json");
         }
 
-        [Test]
+        [Test, ApiIntegration]
         public async Task Replay_FriendshipLifecycle_PassesAllSteps()
         {
-            if (!IntegrationTestEnvironment.ShouldRunApiIntegration) return;
             await RunTraceAsync("friendship-lifecycle.trace.json");
         }
 
-        // -----------------------------------------------------------------------
+    // -----------------------------------------------------------------------
     // Core runner
     // -----------------------------------------------------------------------
 

@@ -1,6 +1,6 @@
-using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using Interfold.IntegrationTests.Attributes;
 
 namespace Interfold.IntegrationTests;
 
@@ -15,11 +15,9 @@ public sealed class IdempotencySoakTests
 {
     private const int SoakRepeatCount = 5;
 
-    [Test]
+    [Test, ApiIntegration]
     public async Task Idempotency_AlterCreate_ReplayStable()
     {
-        if (!IntegrationTestEnvironment.ShouldRunApiIntegration) return;
-
         await RunSoakAsync(async (client, key) =>
         {
             using var req = new HttpRequestMessage(HttpMethod.Post, "/api/systems/me/alters")
@@ -31,11 +29,9 @@ public sealed class IdempotencySoakTests
         });
     }
 
-    [Test]
+    [Test, ApiIntegration]
     public async Task Idempotency_TagCreate_ReplayStable()
     {
-        if (!IntegrationTestEnvironment.ShouldRunApiIntegration) return;
-
         await RunSoakAsync(async (client, key) =>
         {
             using var req = new HttpRequestMessage(HttpMethod.Post, "/api/systems/me/tags")
@@ -47,11 +43,9 @@ public sealed class IdempotencySoakTests
         });
     }
 
-    [Test]
+    [Test, ApiIntegration]
     public async Task Idempotency_PollCreate_ReplayStable()
     {
-        if (!IntegrationTestEnvironment.ShouldRunApiIntegration) return;
-
         await RunSoakAsync(async (client, key) =>
         {
             using var req = new HttpRequestMessage(HttpMethod.Post, "/api/polls")
@@ -63,11 +57,9 @@ public sealed class IdempotencySoakTests
         });
     }
 
-    [Test]
+    [Test, ApiIntegration]
     public async Task Idempotency_GlobalJournalCreate_ReplayStable()
     {
-        if (!IntegrationTestEnvironment.ShouldRunApiIntegration) return;
-
         await RunSoakAsync(async (client, key) =>
         {
             using var req = new HttpRequestMessage(HttpMethod.Post, "/api/journals")
@@ -79,11 +71,9 @@ public sealed class IdempotencySoakTests
         });
     }
 
-    [Test]
+    [Test, ApiIntegration]
     public async Task Idempotency_SettingsUsernameUpdate_ReplayStable()
     {
-        if (!IntegrationTestEnvironment.ShouldRunApiIntegration) return;
-
         await RunSoakAsync(async (client, key) =>
         {
             using var req = new HttpRequestMessage(HttpMethod.Post, "/api/settings/username")
@@ -95,11 +85,9 @@ public sealed class IdempotencySoakTests
         });
     }
 
-    [Test]
+    [Test, ApiIntegration]
     public async Task Idempotency_RequestId_PresentOnEveryResponse()
     {
-        if (!IntegrationTestEnvironment.ShouldRunApiIntegration) return;
-
         await using var factory = new InterfoldWebApplicationFactory()
             .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory");
         using var client = factory.CreateClient();
@@ -115,11 +103,9 @@ public sealed class IdempotencySoakTests
         }
     }
 
-    [Test]
+    [Test, ApiIntegration]
     public async Task Idempotency_CorrelationId_EchoedFromRequestHeader()
     {
-        if (!IntegrationTestEnvironment.ShouldRunApiIntegration) return;
-
         await using var factory = new InterfoldWebApplicationFactory()
             .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory");
         using var client = factory.CreateClient();

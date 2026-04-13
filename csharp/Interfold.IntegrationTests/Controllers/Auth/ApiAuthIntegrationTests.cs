@@ -3,9 +3,10 @@ using System.Net.Http.Json;
 using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
+using Interfold.IntegrationTests.Attributes;
 using Microsoft.AspNetCore.Mvc.Testing;
 
-namespace Interfold.IntegrationTests;
+namespace Interfold.IntegrationTests.Controllers.Auth;
 
 /// <summary>
 /// Integration tests for authentication, OAuth flows, and WebSocket upgrades.
@@ -13,12 +14,9 @@ namespace Interfold.IntegrationTests;
 /// </summary>
 public sealed class ApiAuthIntegrationTests
 {
-    [Test]
+    [Test, ApiIntegration]
     public async Task Api_AuthRequest_FallsBackTo403_WhenChallengeDisabled()
     {
-        if (!IntegrationTestEnvironment.ShouldRunApiIntegration)
-            return;
-
         await using var factory = new InterfoldWebApplicationFactory()
             .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
             .WithConfiguration("OCTOCON_AUTH_CHALLENGE_ENABLED", "false");
@@ -35,12 +33,9 @@ public sealed class ApiAuthIntegrationTests
             $"Expected /auth/google fallback 403 when challenge is disabled, got {(int)response.StatusCode}. Body: {body}");
     }
 
-    [Test]
+    [Test, ApiIntegration]
     public async Task Api_AuthRequest_IssuesChallengeRedirect_WhenChallengeEnabledAndSchemeConfigured()
     {
-        if (!IntegrationTestEnvironment.ShouldRunApiIntegration)
-            return;
-
         await using var factory = new InterfoldWebApplicationFactory()
             .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
             .WithConfiguration("OCTOCON_AUTH_CHALLENGE_ENABLED", "true")
@@ -70,12 +65,9 @@ public sealed class ApiAuthIntegrationTests
             $"Expected challenge redirect to include encoded callback redirect_uri. Location: {location}");
     }
 
-    [Test]
+    [Test, ApiIntegration]
     public async Task Api_Heartbeat_ReturnsContractHeader()
     {
-        if (!IntegrationTestEnvironment.ShouldRunApiIntegration)
-            return;
-
         await using var factory = new InterfoldWebApplicationFactory()
             .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory");
         using var client = factory.CreateClient();
@@ -90,12 +82,9 @@ public sealed class ApiAuthIntegrationTests
             "Expected X-Interfold-Contract response header on heartbeat response.");
     }
 
-    [Test]
+    [Test, ApiIntegration]
     public async Task Api_UserSocketEndpoint_AllowsWebSocketUpgrade()
     {
-        if (!IntegrationTestEnvironment.ShouldRunApiIntegration)
-            return;
-
         await using var factory = new InterfoldWebApplicationFactory()
             .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory");
         
@@ -145,12 +134,9 @@ public sealed class ApiAuthIntegrationTests
             $"Expected array reply event phx_reply. Payload: {arrayJoinReply}");
     }
 
-    [Test]
+    [Test, ApiIntegration]
     public async Task Api_AuthAndIdempotencyFlow_VerifiesEndToEndBehavior()
     {
-        if (!IntegrationTestEnvironment.ShouldRunApiIntegration)
-            return;
-
         await using var factory = new InterfoldWebApplicationFactory()
             .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
             .WithConfiguration("OCTOCON_TEST_AUTH_ALLOW_PRINCIPAL_HEADER", "true");

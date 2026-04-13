@@ -1,7 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
-using Microsoft.AspNetCore.Mvc.Testing;
 
 namespace Interfold.IntegrationTests;
 
@@ -12,7 +11,7 @@ public sealed class ScyllaPostgresSmokeTests
     {
         if (!(IntegrationTestEnvironment.ShouldRunLiveIntegration && IntegrationTestEnvironment.HasPostgresConnection))
         {
-            return;
+            Skip.Test("Live Integration or postgres connection has not been set");
         }
 
         await using var factory = new InterfoldWebApplicationFactory()

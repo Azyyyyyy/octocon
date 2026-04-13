@@ -58,7 +58,7 @@ public sealed class InProcessEventBusReconnectTests
             .SubscribeAsync<TestEvent>(finalCts.Token)
             .GetAsyncEnumerator(finalCts.Token);
 
-        await bus.PublishAsync(new TestEvent("final"));
+        await bus.PublishAsync(new TestEvent("final"), finalCts.Token);
         var finalReceived = await MoveNextWithTimeoutAsync(finalEnumerator, TimeSpan.FromSeconds(2));
         Ensure(finalReceived, "Expected final subscriber to receive event after reconnect churn.");
         Ensure(string.Equals(finalEnumerator.Current.Value, "final", StringComparison.Ordinal),

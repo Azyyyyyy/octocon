@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text.Json;
+using Interfold.IntegrationTests.Attributes;
 
 namespace Interfold.IntegrationTests;
 
@@ -9,12 +10,9 @@ namespace Interfold.IntegrationTests;
 /// </summary>
 public sealed class NodeRoleIntegrationTests
 {
-    [Test]
+    [Test, ApiIntegration]
     public async Task NodeRole_DefaultsToAuxiliary_WhenNoEnvVarSet()
     {
-        if (!IntegrationTestEnvironment.ShouldRunApiIntegration)
-            return;
-
         await using var factory = new InterfoldWebApplicationFactory()
             .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory");
         using var client = factory.CreateClient();
@@ -34,12 +32,9 @@ public sealed class NodeRoleIntegrationTests
             $"Expected owns_singletons=false for auxiliary. Got: {body}");
     }
 
-    [Test]
+    [Test, ApiIntegration]
     public async Task NodeRole_ReturnsPrimary_WhenOctoconNodeGroupIsPrimary()
     {
-        if (!IntegrationTestEnvironment.ShouldRunApiIntegration)
-            return;
-
         await using var factory = new InterfoldWebApplicationFactory()
             .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
             .WithConfiguration("OCTOCON_NODE_GROUP", "primary");
@@ -60,12 +55,9 @@ public sealed class NodeRoleIntegrationTests
             $"Expected owns_singletons=true for primary. Got: {body}");
     }
 
-    [Test]
+    [Test, ApiIntegration]
     public async Task NodeRole_ReturnsPrimary_WhenFlyProcessGroupIsPrimary()
     {
-        if (!IntegrationTestEnvironment.ShouldRunApiIntegration)
-            return;
-
         // FLY_PROCESS_GROUP takes precedence; OCTOCON_NODE_GROUP is not set.
         await using var factory = new InterfoldWebApplicationFactory()
             .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
@@ -84,12 +76,9 @@ public sealed class NodeRoleIntegrationTests
             $"Expected role=primary when FLY_PROCESS_GROUP=primary. Got: {body}");
     }
 
-    [Test]
+    [Test, ApiIntegration]
     public async Task NodeRole_FlyProcessGroup_TakesPrecedenceOver_OctoconNodeGroup()
     {
-        if (!IntegrationTestEnvironment.ShouldRunApiIntegration)
-            return;
-
         // FLY_PROCESS_GROUP=sidecar should win over OCTOCON_NODE_GROUP=primary.
         await using var factory = new InterfoldWebApplicationFactory()
             .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
@@ -112,12 +101,9 @@ public sealed class NodeRoleIntegrationTests
             $"Expected owns_singletons=false for sidecar. Got: {body}");
     }
 
-    [Test]
+    [Test, ApiIntegration]
     public async Task NodeRole_Endpoint_IsAnonymous()
     {
-        if (!IntegrationTestEnvironment.ShouldRunApiIntegration)
-            return;
-
         await using var factory = new InterfoldWebApplicationFactory()
             .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory");
         using var client = factory.CreateClient();

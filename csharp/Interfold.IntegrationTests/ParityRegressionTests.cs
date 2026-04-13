@@ -1,7 +1,7 @@
-using System.Diagnostics;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using Interfold.IntegrationTests.Attributes;
 using Microsoft.AspNetCore.Mvc.Testing;
 
 namespace Interfold.IntegrationTests;
@@ -24,11 +24,9 @@ public sealed class ParityRegressionTests
     // 1. Alter journal nested-route parity
     // -----------------------------------------------------------------------
 
-    [Test]
+    [Test, ApiIntegration]
     public async Task AlterJournal_ListWhenEmpty_ReturnsDataAsEmptyArray()
     {
-        if (!IntegrationTestEnvironment.ShouldRunApiIntegration) return;
-
         await using var factory = new InterfoldWebApplicationFactory()
             .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
             .WithConfiguration("OCTOCON_AUTH_CHALLENGE_ENABLED", "false");
@@ -57,11 +55,9 @@ public sealed class ParityRegressionTests
             $"Expected empty alter-journal list for new alter. Body: {listBody}");
     }
 
-    [Test]
+    [Test, ApiIntegration]
     public async Task AlterJournal_NestedCreate_Returns201WithDataAndReplay()
     {
-        if (!IntegrationTestEnvironment.ShouldRunApiIntegration) return;
-
         await using var factory = new InterfoldWebApplicationFactory()
             .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
             .WithConfiguration("OCTOCON_AUTH_CHALLENGE_ENABLED", "false");
@@ -137,11 +133,9 @@ public sealed class ParityRegressionTests
             $"Expected alter-journal delete 204, got {(int)deleteRes.StatusCode}. Body: {await deleteRes.Content.ReadAsStringAsync()}");
     }
 
-    [Test]
+    [Test, ApiIntegration]
     public async Task AlterJournal_ShowAfterDelete_Returns404()
     {
-        if (!IntegrationTestEnvironment.ShouldRunApiIntegration) return;
-
         await using var factory = new InterfoldWebApplicationFactory()
             .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
             .WithConfiguration("OCTOCON_AUTH_CHALLENGE_ENABLED", "false");
@@ -178,11 +172,9 @@ public sealed class ParityRegressionTests
     // 2. Settings field type-fallback parity
     // -----------------------------------------------------------------------
 
-    [Test]
+    [Test, ApiIntegration]
     public async Task SettingsField_InvalidType_FallsBackToText_Returns204()
     {
-        if (!IntegrationTestEnvironment.ShouldRunApiIntegration) return;
-
         await using var factory = new InterfoldWebApplicationFactory()
             .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
             .WithConfiguration("OCTOCON_AUTH_CHALLENGE_ENABLED", "false");
@@ -206,11 +198,9 @@ public sealed class ParityRegressionTests
             $"got {(int)res1.StatusCode}. Body: {await res1.Content.ReadAsStringAsync()}");
     }
 
-    [Test]
+    [Test, ApiIntegration]
     public async Task SettingsField_MissingType_FallsBackToText_Returns204()
     {
-        if (!IntegrationTestEnvironment.ShouldRunApiIntegration) return;
-
         await using var factory = new InterfoldWebApplicationFactory()
             .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
             .WithConfiguration("OCTOCON_AUTH_CHALLENGE_ENABLED", "false");
@@ -238,11 +228,9 @@ public sealed class ParityRegressionTests
     // 3. Legacy route regression — removed paths must 404
     // -----------------------------------------------------------------------
 
-    [Test]
+    [Test, ApiIntegration]
     public async Task LegacyRoute_SystemsMePolls_Returns404()
     {
-        if (!IntegrationTestEnvironment.ShouldRunApiIntegration) return;
-
         await using var factory = new InterfoldWebApplicationFactory()
             .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
             .WithConfiguration("OCTOCON_AUTH_CHALLENGE_ENABLED", "false");
@@ -273,11 +261,9 @@ public sealed class ParityRegressionTests
         }
     }
 
-    [Test]
+    [Test, ApiIntegration]
     public async Task LegacyRoute_SystemsMeJournals_Returns404()
     {
-        if (!IntegrationTestEnvironment.ShouldRunApiIntegration) return;
-
         await using var factory = new InterfoldWebApplicationFactory()
             .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
             .WithConfiguration("OCTOCON_AUTH_CHALLENGE_ENABLED", "false");
@@ -312,11 +298,9 @@ public sealed class ParityRegressionTests
     // 4. Tag parent mutation parity
     // -----------------------------------------------------------------------
 
-    [Test]
+    [Test, ApiIntegration]
     public async Task TagParent_SetAndRemove_Returns204()
     {
-        if (!IntegrationTestEnvironment.ShouldRunApiIntegration) return;
-
         await using var factory = new InterfoldWebApplicationFactory()
             .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
             .WithConfiguration("OCTOCON_AUTH_CHALLENGE_ENABLED", "false");
@@ -353,11 +337,9 @@ public sealed class ParityRegressionTests
     // 5. Public batch parity
     // -----------------------------------------------------------------------
 
-    [Test]
+    [Test, ApiIntegration]
     public async Task PublicBatch_SelfLookup_Returns403InvalidEndpoint()
     {
-        if (!IntegrationTestEnvironment.ShouldRunApiIntegration) return;
-
         await using var factory = new InterfoldWebApplicationFactory()
             .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
             .WithConfiguration("OCTOCON_AUTH_CHALLENGE_ENABLED", "false");
@@ -384,11 +366,9 @@ public sealed class ParityRegressionTests
     // 6. Legacy key compatibility parity
     // -----------------------------------------------------------------------
 
-    [Test]
+    [Test, ApiIntegration]
     public async Task FrontStart_LegacyIdField_Returns201()
     {
-        if (!IntegrationTestEnvironment.ShouldRunApiIntegration) return;
-
         await using var factory = new InterfoldWebApplicationFactory()
             .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
             .WithConfiguration("OCTOCON_AUTH_CHALLENGE_ENABLED", "false");
@@ -416,11 +396,9 @@ public sealed class ParityRegressionTests
     // 7. Guarded visibility parity
     // -----------------------------------------------------------------------
 
-    [Test]
+    [Test, ApiIntegration]
     public async Task PublicAlter_PrivateSecurity_Returns404ForAnonymous()
     {
-        if (!IntegrationTestEnvironment.ShouldRunApiIntegration) return;
-
         await using var factory = new InterfoldWebApplicationFactory()
             .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
             .WithConfiguration("OCTOCON_AUTH_CHALLENGE_ENABLED", "false");
@@ -447,11 +425,9 @@ public sealed class ParityRegressionTests
             $"Expected private alter to be hidden from anonymous caller (404), got {(int)publicRes.StatusCode}. Body: {publicBody}");
     }
 
-    [Test]
+    [Test, ApiIntegration]
     public async Task PublicTag_PrivateSecurity_Returns404ForAnonymous()
     {
-        if (!IntegrationTestEnvironment.ShouldRunApiIntegration) return;
-
         await using var factory = new InterfoldWebApplicationFactory()
             .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
             .WithConfiguration("OCTOCON_AUTH_CHALLENGE_ENABLED", "false");
@@ -478,11 +454,9 @@ public sealed class ParityRegressionTests
             $"Expected private tag to be hidden from anonymous caller (404), got {(int)publicRes.StatusCode}. Body: {publicBody}");
     }
 
-    [Test]
+    [Test, ApiIntegration]
     public async Task PublicFronting_PrivateAlter_IsFilteredFromAnonymous()
     {
-        if (!IntegrationTestEnvironment.ShouldRunApiIntegration) return;
-
         await using var factory = new InterfoldWebApplicationFactory()
             .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
             .WithConfiguration("OCTOCON_AUTH_CHALLENGE_ENABLED", "false");
@@ -519,11 +493,9 @@ public sealed class ParityRegressionTests
             $"Expected private alter to be filtered from public fronting payload. Body: {publicBody}");
     }
 
-    [Test]
+    [Test, ApiIntegration]
     public async Task GuardedVisibility_Matrix_NonFriendFriendTrusted_AppliesAcrossPublicReads()
     {
-        if (!IntegrationTestEnvironment.ShouldRunApiIntegration) return;
-
         await using var factory = new InterfoldWebApplicationFactory()
             .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
             .WithConfiguration("OCTOCON_AUTH_CHALLENGE_ENABLED", "false");
@@ -613,11 +585,9 @@ public sealed class ParityRegressionTests
         await AssertContainsAsync(client, $"/api/systems/{owner}/fronting", trusted, alterPrivate.ToString(), expectedPresent: false);
     }
 
-    [Test]
+    [Test, ApiIntegration]
     public async Task GuardedCustomFields_Matrix_FieldSecurityLevelByRelationship_AppliesCorrectly()
     {
-        if (!IntegrationTestEnvironment.ShouldRunApiIntegration) return;
-
         await using var factory = new InterfoldWebApplicationFactory()
             .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
             .WithConfiguration("OCTOCON_AUTH_CHALLENGE_ENABLED", "false");
@@ -706,11 +676,9 @@ public sealed class ParityRegressionTests
             $"Expected trusted to NOT see private field value. Body: {trustedBody}");
     }
 
-    [Test]
+    [Test, ApiIntegration]
     public async Task PollType_AllSupportedTypes_RoundTripCorrectly()
     {
-        if (!IntegrationTestEnvironment.ShouldRunApiIntegration) return;
-
         await using var factory = new InterfoldWebApplicationFactory()
             .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
             .WithConfiguration("OCTOCON_AUTH_CHALLENGE_ENABLED", "false");
@@ -767,11 +735,9 @@ public sealed class ParityRegressionTests
         }
     }
 
-    [Test]
+    [Test, ApiIntegration]
     public async Task PollUpdate_TimeEndNullOnly_ClearsExistingTimeEnd()
     {
-        if (!IntegrationTestEnvironment.ShouldRunApiIntegration) return;
-
         await using var factory = new InterfoldWebApplicationFactory()
             .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
             .WithConfiguration("OCTOCON_AUTH_CHALLENGE_ENABLED", "false");
@@ -827,11 +793,9 @@ public sealed class ParityRegressionTests
             $"Expected time_end to be null after clear update. Body: {getBody}");
     }
 
-    [Test]
+    [Test, ApiIntegration]
     public async Task PollValidation_TitleTooLong_Returns422()
     {
-        if (!IntegrationTestEnvironment.ShouldRunApiIntegration) return;
-
         await using var factory = new InterfoldWebApplicationFactory()
             .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
             .WithConfiguration("OCTOCON_AUTH_CHALLENGE_ENABLED", "false");
@@ -857,11 +821,9 @@ public sealed class ParityRegressionTests
             $"Expected error code 'poll:title_too_long', got: {body}");
     }
 
-    [Test]
+    [Test, ApiIntegration]
     public async Task PollValidation_DescriptionTooLong_Returns422()
     {
-        if (!IntegrationTestEnvironment.ShouldRunApiIntegration) return;
-
         await using var factory = new InterfoldWebApplicationFactory()
             .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
             .WithConfiguration("OCTOCON_AUTH_CHALLENGE_ENABLED", "false");
@@ -888,11 +850,9 @@ public sealed class ParityRegressionTests
             $"Expected error code 'poll:description_too_long', got: {body}");
     }
 
-    [Test]
+    [Test, ApiIntegration]
     public async Task ErrorResponse_ConflictFormats_IncludeEntityRefAndCode()
     {
-        if (!IntegrationTestEnvironment.ShouldRunApiIntegration) return;
-
         await using var factory = new InterfoldWebApplicationFactory()
             .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
             .WithConfiguration("OCTOCON_AUTH_CHALLENGE_ENABLED", "false");
@@ -924,11 +884,9 @@ public sealed class ParityRegressionTests
             $"Expected entityRef with 'poll:title_too_long'. Body: {body}");
     }
 
-    [Test]
+    [Test, ApiIntegration]
     public async Task SettingsField_DefaultSecurityLevel_IsPrivate()
     {
-        if (!IntegrationTestEnvironment.ShouldRunApiIntegration) return;
-
         await using var factory = new InterfoldWebApplicationFactory()
             .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
             .WithConfiguration("OCTOCON_AUTH_CHALLENGE_ENABLED", "false");
@@ -1173,13 +1131,9 @@ public sealed class ParityRegressionTests
     // Operational readiness: Health checks for guarded visibility paths
     // -----------------------------------------------------------------------
 
-    [Test]
+    [Test, ApiIntegration]
     public async Task OperationalHealth_GuardedPaths_ListGuardedAsync_Succeeds()
     {
-        // Validates that ListGuardedAsync path works without exception
-        // This test runs with in-memory persistence only (no Scylla required)
-        if (!IntegrationTestEnvironment.ShouldRunApiIntegration) return;
-
         await using var factory = new InterfoldWebApplicationFactory()
             .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
             .WithConfiguration("OCTOCON_AUTH_CHALLENGE_ENABLED", "false");
@@ -1195,12 +1149,9 @@ public sealed class ParityRegressionTests
         Ensure(res.StatusCode == HttpStatusCode.OK, "Heartbeat check failed; guarded paths may be broken");
     }
 
-    [Test]
+    [Test, ApiIntegration]
     public async Task OperationalHealth_GuardedPaths_GetGuardedAsync_Succeeds()
     {
-        // Validates that GetGuardedAsync path handles missing entities gracefully
-        if (!IntegrationTestEnvironment.ShouldRunApiIntegration) return;
-
         await using var factory = new InterfoldWebApplicationFactory()
             .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
             .WithConfiguration("OCTOCON_AUTH_CHALLENGE_ENABLED", "false");
