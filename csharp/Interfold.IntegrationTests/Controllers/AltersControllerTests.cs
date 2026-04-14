@@ -1,0 +1,468 @@
+﻿using System.Net;
+using System.Net.Http.Json;
+using System.Text.Json;
+using Interfold.IntegrationTests.Attributes;
+using Interfold.IntegrationTests.Models;
+using Interfold.IntegrationTests.TestServices;
+using Microsoft.AspNetCore.Mvc.Testing;
+
+namespace Interfold.IntegrationTests.Controllers;
+
+public class AltersControllerTests : BaseEndpointTest
+{
+    [Test, ApiIntegration]
+    public async Task Api_AlterAvatarMultipart_PersistsAndReflectsOnPublicAlter()
+    {
+        var runId = Guid.NewGuid().ToString("N");
+        var storageRoot = Path.Combine(Path.GetTempPath(), "octocon-itest", "avatars", runId);
+        var publicBase = $"/avatars-itest/{runId}";
+
+        try
+        {
+            Directory.CreateDirectory(storageRoot);
+
+            await using var factory = new InterfoldWebApplicationFactory()
+                .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
+                .WithConfiguration("OCTOCON_AVATAR_STORAGE_ROOT", storageRoot)
+                .WithConfiguration("OCTOCON_AVATAR_PUBLIC_BASE", publicBase);
+            
+            using var client = factory.CreateClient();
+
+            var principalId = $"sys-alter-avatar-{Guid.NewGuid():N}"[..24];
+
+            using var usernameRequest = new HttpRequestMessage(HttpMethod.Post, "/api/settings/username")
+            {
+                Content = JsonContent.Create(new { username = "avatar-parity" })
+            };
+            usernameRequest.Headers.Add("X-Interfold-Principal", principalId);
+            var usernameResponse = await client.SendAsync(usernameRequest);
+            await Assert.That(usernameResponse.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
+
+            using var createRequest = new HttpRequestMessage(HttpMethod.Post, "/api/systems/me/alters")
+            {
+                Content = JsonContent.Create(new { name = "AvatarTarget" })
+            };
+            createRequest.Headers.Add("X-Interfold-Principal", principalId);
+
+            var createResponse = await client.SendAsync(createRequest);
+            var createBody = await createResponse.Content.ReadAsStringAsync();
+            await Assert.That(createResponse.StatusCode).IsEqualTo(HttpStatusCode.Created);
+
+            var alterId = ReadTrailingIntFromLocation(createResponse);
+
+            using var uploadRequest = BuildMultipartUploadRequest($"/api/systems/me/alters/{alterId}/avatar", principalId, "avatar-alter.png", "image/png");
+            var uploadResponse = await client.SendAsync(uploadRequest);
+            await Assert.That(uploadResponse.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
+
+            var publicAlterResponse = await client.GetAsync($"/api/systems/{principalId}/alters/{alterId}");
+            var publicAlterBody = await publicAlterResponse.Content.ReadAsStringAsync();
+            await Assert.That(publicAlterResponse.StatusCode).IsEqualTo(HttpStatusCode.OK);
+
+            var expectedPrefix = $"{publicBase}/{principalId}/{alterId}/";
+            var alterAvatarUrl = FindStringContaining(publicAlterBody, expectedPrefix);
+            await Assert.That(alterAvatarUrl).IsNotNullOrWhiteSpace();
+
+            using var deleteReq = new HttpRequestMessage(HttpMethod.Delete, $"/api/systems/me/alters/{alterId}/avatar")
+            {
+                Content = JsonContent.Create(new { })
+            };
+            deleteReq.Headers.Add("X-Interfold-Principal", principalId);
+            var deleteRes = await client.SendAsync(deleteReq);
+            await Assert.That(deleteRes.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
+
+            var afterDeleteResponse = await client.GetAsync($"/api/systems/{principalId}/alters/{alterId}");
+            var afterDeleteBody = await afterDeleteResponse.Content.ReadAsStringAsync();
+            await Assert.That(afterDeleteResponse.StatusCode).IsEqualTo(HttpStatusCode.OK);
+
+            var staleAvatarUrl = FindStringContaining(afterDeleteBody, expectedPrefix);
+            await Assert.That(staleAvatarUrl).IsNullOrWhiteSpace();
+        }
+        finally
+        {
+            if (Directory.Exists(storageRoot))
+                Directory.Delete(storageRoot, true);
+        }
+    }
+    
+    
+    [Test, ApiIntegration]
+    public async Task FieldSecurityLevelByRelationship_AppliesCorrectly()
+    {
+        await using var factory = new InterfoldWebApplicationFactory()
+            .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
+            .WithConfiguration("OCTOCON_AUTH_CHALLENGE_ENABLED", "false");
+
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        {
+            AllowAutoRedirect = false
+        });
+
+        var owner = "parity-guarded-fields-owner";
+        var nonFriend = "parity-guarded-fields-nonfriend";
+        var friend = "parity-guarded-fields-friend";
+        var trusted = "parity-guarded-fields-trusted";
+
+        // Ensure all principals exist.
+        _ = await CreateAlterAsync(client, nonFriend, "SeedNonFriend");
+        _ = await CreateAlterAsync(client, friend, "SeedFriend");
+        _ = await CreateAlterAsync(client, trusted, "SeedTrusted");
+
+        // Create field definitions with different security levels on owner's profile.
+        var fieldPublic = await CreateSettingsFieldAsync(client, owner, "FieldPublic", "text", "public");
+        var fieldFriends = await CreateSettingsFieldAsync(client, owner, "FieldFriends", "text", "friends_only");
+        var fieldTrusted = await CreateSettingsFieldAsync(client, owner, "FieldTrusted", "text", "trusted_only");
+        var fieldPrivate = await CreateSettingsFieldAsync(client, owner, "FieldPrivate", "text", "private");
+
+        // Create an alter and set field values.
+        var alterId = await CreateAlterAsync(client, owner, "GuardedFieldsAlter");
+        await SetAlterSecurityLevelAsync(client, owner, alterId, "public");
+        await UpdateAlterFieldsAsync(client, owner, alterId, new[]
+        {
+            new { id = fieldPublic, value = "PublicValue" },
+            new { id = fieldFriends, value = "FriendsValue" },
+            new { id = fieldTrusted, value = "TrustedValue" },
+            new { id = fieldPrivate, value = "PrivateValue" }
+        });
+
+        // Non-friend: only public field visible.
+        var nonFriendRes = await client.GetAsync($"/api/systems/{owner}/alters/{alterId}");
+        var nonFriendBody = await nonFriendRes.Content.ReadAsStringAsync();
+        await Assert.That(nonFriendRes.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(nonFriendBody).Contains("PublicValue");
+        await Assert.That(nonFriendBody).DoesNotContain("FriendsValue");
+        await Assert.That(nonFriendBody).DoesNotContain("TrustedValue");
+        await Assert.That(nonFriendBody).DoesNotContain("PrivateValue");
+
+        // Establish friend relationship.
+        await SendFriendRequestAndAcceptAsync(client, friend, owner);
+
+        // Friend: public + friends_only fields visible.
+        var friendReq = new HttpRequestMessage(HttpMethod.Get, $"/api/systems/{owner}/alters/{alterId}");
+        var friendRes = await client.SendAsync(friendReq);
+        var friendBody = await friendRes.Content.ReadAsStringAsync();
+        await Assert.That(friendRes.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(friendBody).Contains("PublicValue");
+        await Assert.That(friendBody).Contains("FriendsValue");
+        await Assert.That(friendBody).DoesNotContain("TrustedValue");
+        await Assert.That(friendBody).DoesNotContain("PrivateValue");
+
+        // Establish trusted relationship.
+        await SendFriendRequestAndAcceptAsync(client, trusted, owner);
+        await SetFriendTrustAsync(client, owner, trusted);
+
+        // Trusted: public + friends_only + trusted_only fields visible.
+        var trustedReq = new HttpRequestMessage(HttpMethod.Get, $"/api/systems/{owner}/alters/{alterId}");
+        var trustedRes = await client.SendAsync(trustedReq);
+        var trustedBody = await trustedRes.Content.ReadAsStringAsync();
+        await Assert.That(trustedRes.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(trustedBody).Contains("PublicValue");
+        await Assert.That(trustedBody).Contains("FriendsValue");
+        await Assert.That(trustedBody).Contains("TrustedValue");
+        await Assert.That(trustedBody).DoesNotContain("PrivateValue");
+    }
+    
+        [Test, ApiIntegration]
+    public async Task CustomFields_FieldSecurityLevelByRelationship_AppliesCorrectly()
+    {
+        await using var factory = new InterfoldWebApplicationFactory()
+            .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
+            .WithConfiguration("OCTOCON_AUTH_CHALLENGE_ENABLED", "false");
+
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        {
+            AllowAutoRedirect = false
+        });
+
+        var owner = "settings-guarded-fields-owner";
+        var nonFriend = "settings-guarded-fields-nonfriend";
+        var friend = "settings-guarded-fields-friend";
+        var trusted = "settings-guarded-fields-trusted";
+
+        // Ensure all principals exist.
+        _ = await CreateAlterAsync(client, nonFriend, "SeedNonFriend");
+        _ = await CreateAlterAsync(client, friend, "SeedFriend");
+        _ = await CreateAlterAsync(client, trusted, "SeedTrusted");
+
+        // Create field definitions with different security levels on owner's profile.
+        var fieldPublic = await CreateSettingsFieldAsync(client, owner, "FieldPublic", "text", "public");
+        var fieldFriends = await CreateSettingsFieldAsync(client, owner, "FieldFriends", "text", "friends_only");
+        var fieldTrusted = await CreateSettingsFieldAsync(client, owner, "FieldTrusted", "text", "trusted_only");
+        var fieldPrivate = await CreateSettingsFieldAsync(client, owner, "FieldPrivate", "text", "private");
+
+        // Create an alter and set field values.
+        var alterId = await CreateAlterAsync(client, owner, "GuardedFieldsAlter");
+        await SetAlterSecurityLevelAsync(client, owner, alterId, "public");
+        await UpdateAlterFieldsAsync(client, owner, alterId, new[]
+        {
+            new { id = fieldPublic, value = "PublicValue" },
+            new { id = fieldFriends, value = "FriendsValue" },
+            new { id = fieldTrusted, value = "TrustedValue" },
+            new { id = fieldPrivate, value = "PrivateValue" }
+        });
+
+        // Non-friend: only public field visible.
+        var nonFriendRes = await client.GetAsync($"/api/systems/{owner}/alters/{alterId}");
+        var nonFriendBody = await nonFriendRes.Content.ReadAsStringAsync();
+        await Assert.That(nonFriendRes.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(nonFriendBody).Contains("PublicValue");
+        await Assert.That(nonFriendBody).DoesNotContain("FriendsValue");
+        await Assert.That(nonFriendBody).DoesNotContain("TrustedValue");
+        await Assert.That(nonFriendBody).DoesNotContain("PrivateValue");
+
+        // Establish friend relationship.
+        await SendFriendRequestAndAcceptAsync(client, friend, owner);
+
+        // Friend: public + friends_only fields visible.
+        var friendReq = new HttpRequestMessage(HttpMethod.Get, $"/api/systems/{owner}/alters/{alterId}");
+        var friendRes = await client.SendAsync(friendReq);
+        var friendBody = await friendRes.Content.ReadAsStringAsync();
+        await Assert.That(friendRes.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(friendBody).Contains("PublicValue");
+        await Assert.That(friendBody).Contains("FriendsValue");
+        await Assert.That(friendBody).DoesNotContain("TrustedValue");
+        await Assert.That(friendBody).DoesNotContain("PrivateValue");
+
+        // Establish trusted relationship.
+        await SendFriendRequestAndAcceptAsync(client, trusted, owner);
+        await SetFriendTrustAsync(client, owner, trusted);
+
+        // Trusted: public + friends_only + trusted_only fields visible.
+        var trustedReq = new HttpRequestMessage(HttpMethod.Get, $"/api/systems/{owner}/alters/{alterId}");
+        var trustedRes = await client.SendAsync(trustedReq);
+        var trustedBody = await trustedRes.Content.ReadAsStringAsync();
+        await Assert.That(trustedRes.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(trustedBody).Contains("PublicValue");
+        await Assert.That(trustedBody).Contains("FriendsValue");
+        await Assert.That(trustedBody).Contains("TrustedValue");
+        await Assert.That(trustedBody).DoesNotContain("PrivateValue");
+    }
+        [Test, ApiIntegration]
+    public async Task AlterJournal_ListWhenEmpty_ReturnsDataAsEmptyArray()
+    {
+        await using var factory = new InterfoldWebApplicationFactory()
+            .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
+            .WithConfiguration("OCTOCON_AUTH_CHALLENGE_ENABLED", "false");
+
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        {
+            AllowAutoRedirect = false
+        });
+
+        var principal = "parity-alter-journal-empty-list";
+        var alterId = await CreateAlterAsync(client, principal, "NoJournalAlter");
+
+        using var listReq = new HttpRequestMessage(HttpMethod.Get, $"/api/systems/me/alters/{alterId}/journals");
+        var listRes = await client.SendAsync(listReq);
+        var listBody = await listRes.Content.ReadAsStringAsync();
+
+        await Assert.That(listRes.StatusCode).IsEqualTo(HttpStatusCode.OK);
+
+        using var doc = JsonDocument.Parse(listBody);
+        await Assert.That(doc.RootElement.TryGetProperty("data", out var dataProp)).IsTrue();
+        await Assert.That(dataProp.ValueKind).IsEqualTo(JsonValueKind.Array);
+        await Assert.That(dataProp.GetArrayLength()).IsEqualTo(0);
+    }
+
+    [Test, ApiIntegration]
+    public async Task AlterJournal_NestedCreate_Returns201WithDataAndReplay()
+    {
+        await using var factory = new InterfoldWebApplicationFactory()
+            .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
+            .WithConfiguration("OCTOCON_AUTH_CHALLENGE_ENABLED", "false");
+
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        {
+            AllowAutoRedirect = false
+        });
+
+        var principal = "parity-alter-journal";
+        var alterId = await CreateAlterAsync(client, principal, "JournalHolder");
+
+        // POST /api/systems/me/alters/:id/journals  →  201 + {data, replay}
+        using var createReq = new HttpRequestMessage(HttpMethod.Post, $"/api/systems/me/alters/{alterId}/journals")
+        {
+            Content = JsonContent.Create(new { title = "NestedParityJournal" })
+        };
+        var createRes = await client.SendAsync(createReq);
+        var createBody = await createRes.Content.ReadAsStringAsync();
+
+        await Assert.That(createRes.StatusCode).IsEqualTo(HttpStatusCode.Created);
+
+        var entryId = ReadNestedString(createBody, "data", "id");
+        if (string.IsNullOrWhiteSpace(entryId))
+            entryId = ReadNestedString(createBody, "data", "entry_id");
+        await Assert.That(entryId).IsNotNullOrWhiteSpace();
+
+        var replay = ReadBool(createBody, "replay");
+        await Assert.That(replay).IsFalse();
+
+        // GET /api/systems/me/alters/:id/journals  →  200 + {data:[...]}
+        using var listReq = new HttpRequestMessage(HttpMethod.Get, $"/api/systems/me/alters/{alterId}/journals");
+        var listRes = await client.SendAsync(listReq);
+        var listBody = await listRes.Content.ReadAsStringAsync();
+
+        await Assert.That(listRes.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(listBody.Contains("data", StringComparison.OrdinalIgnoreCase)).IsTrue();
+
+        // GET /api/systems/me/alters/journals/:journalId  →  200 + {data:{...}}
+        using var showReq = new HttpRequestMessage(HttpMethod.Get, $"/api/systems/me/alters/journals/{entryId}");
+        var showRes = await client.SendAsync(showReq);
+        var showBody = await showRes.Content.ReadAsStringAsync();
+
+        await Assert.That(showRes.StatusCode).IsEqualTo(HttpStatusCode.OK);
+
+        var shownId = ReadNestedString(showBody, "data", "id");
+        if (string.IsNullOrWhiteSpace(shownId))
+            shownId = ReadNestedString(showBody, "data", "entry_id");
+        await Assert.That(string.Equals(shownId, entryId, StringComparison.OrdinalIgnoreCase)).IsTrue();
+
+        // PATCH /api/systems/me/alters/journals/:journalId  →  204
+        using var patchReq = new HttpRequestMessage(HttpMethod.Patch, $"/api/systems/me/alters/journals/{entryId}")
+        {
+            Content = JsonContent.Create(new { title = "UpdatedParityJournal" })
+        };
+        var patchRes = await client.SendAsync(patchReq);
+
+        await Assert.That(patchRes.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
+
+        // DELETE /api/systems/me/alters/journals/:journalId  →  204
+        using var deleteReq = new HttpRequestMessage(HttpMethod.Delete, $"/api/systems/me/alters/journals/{entryId}");
+        var deleteRes = await client.SendAsync(deleteReq);
+
+        await Assert.That(deleteRes.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
+    }
+
+    [Test, ApiIntegration]
+    public async Task AlterJournal_ShowAfterDelete_Returns404()
+    {
+        await using var factory = new InterfoldWebApplicationFactory()
+            .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
+            .WithConfiguration("OCTOCON_AUTH_CHALLENGE_ENABLED", "false");
+
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        {
+            AllowAutoRedirect = false
+        });
+
+        var principal = "parity-alter-journal-404";
+        var alterId = await CreateAlterAsync(client, principal, "JournalHolder404");
+
+        using var createReq = new HttpRequestMessage(HttpMethod.Post, $"/api/systems/me/alters/{alterId}/journals")
+        {
+            Content = JsonContent.Create(new { title = "ToDelete" })
+        };
+        var createRes = await client.SendAsync(createReq);
+        var createBody = await createRes.Content.ReadAsStringAsync();
+        var entryId = ReadNestedString(createBody, "data", "id");
+        if (string.IsNullOrWhiteSpace(entryId))
+            entryId = ReadNestedString(createBody, "data", "entry_id");
+
+        using var deleteReq = new HttpRequestMessage(HttpMethod.Delete, $"/api/systems/me/alters/journals/{entryId}");
+        await client.SendAsync(deleteReq);
+
+        using var showReq = new HttpRequestMessage(HttpMethod.Get, $"/api/systems/me/alters/journals/{entryId}");
+        var showRes = await client.SendAsync(showReq);
+
+        await Assert.That(showRes.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+    }
+    
+    [Test]
+    public async Task AlterCreate_IdempotentReplay_WorksAgainstLiveAdapters()
+    {
+        if (!(IntegrationTestEnvironment.ShouldRunLiveIntegration && IntegrationTestEnvironment.HasPostgresConnection))
+        {
+            Skip.Test("Live Integration or postgres connection has not been set");
+        }
+
+        await using var factory = new InterfoldWebApplicationFactory()
+            .WithConfiguration("OCTOCON_PERSISTENCE", "scylla-postgres")
+            .WithConfiguration("OCTOCON_POSTGRES_CONNECTION", IntegrationTestEnvironment.PostgresConnection)
+            .WithConfiguration("OCTOCON_SCYLLA_CONTACT_POINTS", IntegrationTestEnvironment.GetVariable("OCTOCON_TEST_SCYLLA_CONTACT_POINTS", "127.0.0.1"))
+            .WithConfiguration("OCTOCON_SCYLLA_USERNAME", IntegrationTestEnvironment.GetVariable("OCTOCON_TEST_SCYLLA_USERNAME", "cassandra"))
+            .WithConfiguration("OCTOCON_SCYLLA_PASSWORD", IntegrationTestEnvironment.GetVariable("OCTOCON_TEST_SCYLLA_PASSWORD", "cassandra"))
+            .WithConfiguration("OCTOCON_REGION", IntegrationTestEnvironment.GetVariable("OCTOCON_TEST_REGION", "nam"))
+            .WithConfiguration("OCTOCON_TEST_AUTH_ALLOW_PRINCIPAL_HEADER", "true");
+
+        using var client = factory.CreateClient();
+
+        var systemId = $"itest-{Guid.NewGuid():N}"[..14];
+        var idempotencyKey = Guid.NewGuid().ToString("N");
+
+        var requestContent = new { name = "IntegrationSmoke" };
+
+        // First call
+        using var firstReq = new HttpRequestMessage(HttpMethod.Post, "/api/systems/me/alters")
+        {
+            Content = JsonContent.Create(requestContent)
+        };
+        firstReq.Headers.Add("X-Interfold-Principal", systemId);
+        firstReq.Headers.Add("X-Interfold-Idempotency-Key", idempotencyKey);
+
+        var firstRes = await client.SendAsync(firstReq);
+        var firstBody = await firstRes.Content.ReadAsStringAsync();
+        
+        await Assert.That(firstRes.StatusCode).IsEqualTo(HttpStatusCode.Created);
+        
+        using (var doc = JsonDocument.Parse(firstBody))
+        {
+            var root = doc.RootElement;
+            await Assert.That(root.TryGetProperty("data", out _)).IsTrue();
+            await Assert.That(root.GetProperty("replay").GetBoolean()).IsFalse();
+        }
+
+        // Second call (replay)
+        using var secondReq = new HttpRequestMessage(HttpMethod.Post, "/api/systems/me/alters")
+        {
+            Content = JsonContent.Create(requestContent)
+        };
+        secondReq.Headers.Add("X-Interfold-Principal", systemId);
+        secondReq.Headers.Add("X-Interfold-Idempotency-Key", idempotencyKey);
+
+        var secondRes = await client.SendAsync(secondReq);
+        var secondBody = await secondRes.Content.ReadAsStringAsync();
+
+        await Assert.That(secondRes.StatusCode).IsEqualTo(HttpStatusCode.Created);
+
+        using (var doc = JsonDocument.Parse(secondBody))
+        {
+            var root = doc.RootElement;
+            await Assert.That(root.TryGetProperty("data", out _)).IsTrue();
+            await Assert.That(root.GetProperty("replay").GetBoolean()).IsTrue();
+        }
+    }
+    
+    [Test, ApiIntegration]
+    public async Task OperationalHealth_GuardedPaths_GetGuardedAsync_Succeeds()
+    {
+        await using var factory = new InterfoldWebApplicationFactory()
+            .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
+            .WithConfiguration("OCTOCON_AUTH_CHALLENGE_ENABLED", "false");
+
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        {
+            AllowAutoRedirect = false
+        });
+
+        // Query a non-existent alter should return 404, not 500
+        var principal = "operational-health-test";
+        using var req = new HttpRequestMessage(HttpMethod.Get, "/api/systems/me/alters/9999");
+        var res = await client.SendAsync(req);
+
+        // Expect 404 (not found) rather than 500 (error), validating guarded read path worked
+        await Assert.That(res.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+    }
+    
+    [Test, ApiIntegration]
+    public async Task Idempotency_AlterCreate_ReplayStable()
+    {
+        await RunSoakAsync(async (client, key) =>
+        {
+            using var req = new HttpRequestMessage(HttpMethod.Post, "/api/systems/me/alters")
+            {
+                Content = JsonContent.Create(new { name = "SoakAlter" })
+            };
+            req.Headers.Add("X-Interfold-Idempotency-Key", key);
+            return await client.SendAsync(req);
+        });
+    }
+}

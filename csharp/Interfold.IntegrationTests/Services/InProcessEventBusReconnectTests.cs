@@ -1,8 +1,8 @@
 using Interfold.Infrastructure.Coordination;
 
-namespace Interfold.IntegrationTests;
+namespace Interfold.IntegrationTests.Services;
 
-public sealed class InProcessEventBusReconnectTests
+public sealed class InProcessEventBusReconnectTests : BaseEndpointTest
 {
     [Test]
     public async Task Publish_DoesNotThrow_AfterSubscriberDisconnectAndReconnect()
@@ -16,7 +16,7 @@ public sealed class InProcessEventBusReconnectTests
 
         await bus.PublishAsync(new TestEvent("first"));
         var firstReceived = await MoveNextWithTimeoutAsync(firstEnumerator, TimeSpan.FromSeconds(2));
-        Ensure(firstReceived, "Expected first subscriber to receive the first event.");
+        await Assert.That(firstReceived).IsTrue();
 
         firstSubscriptionCts.Cancel();
         await firstEnumerator.DisposeAsync();
@@ -28,9 +28,8 @@ public sealed class InProcessEventBusReconnectTests
 
         await bus.PublishAsync(new TestEvent("second"));
         var secondReceived = await MoveNextWithTimeoutAsync(secondEnumerator, TimeSpan.FromSeconds(2));
-        Ensure(secondReceived, "Expected reconnected subscriber to receive event after reconnect.");
-        Ensure(string.Equals(secondEnumerator.Current.Value, "second", StringComparison.Ordinal),
-            "Expected reconnected subscriber to receive the latest event payload.");
+        await Assert.That(secondReceived).IsTrue();
+        await Assert.That(secondEnumerator.Current.Value).IsEqualTo("second");
     }
 
     [Test]
@@ -47,7 +46,7 @@ public sealed class InProcessEventBusReconnectTests
 
             await bus.PublishAsync(new TestEvent($"cycle-{i}"));
             var received = await MoveNextWithTimeoutAsync(enumerator, TimeSpan.FromSeconds(2));
-            Ensure(received, $"Expected subscriber to receive event in cycle {i}.");
+            await Assert.That(received).IsTrue();
 
             subscriptionCts.Cancel();
             await enumerator.DisposeAsync();
@@ -60,9 +59,8 @@ public sealed class InProcessEventBusReconnectTests
 
         await bus.PublishAsync(new TestEvent("final"), finalCts.Token);
         var finalReceived = await MoveNextWithTimeoutAsync(finalEnumerator, TimeSpan.FromSeconds(2));
-        Ensure(finalReceived, "Expected final subscriber to receive event after reconnect churn.");
-        Ensure(string.Equals(finalEnumerator.Current.Value, "final", StringComparison.Ordinal),
-            "Expected final subscriber to receive final payload.");
+        await Assert.That(finalReceived).IsTrue();
+        await Assert.That(finalEnumerator.Current.Value).IsEqualTo("final");
     }
 
     private static async Task<bool> MoveNextWithTimeoutAsync(IAsyncEnumerator<TestEvent> enumerator, TimeSpan timeout)
@@ -77,14 +75,6 @@ public sealed class InProcessEventBusReconnectTests
         }
 
         return await moveNextTask;
-    }
-
-    private static void Ensure(bool condition, string message)
-    {
-        if (!condition)
-        {
-            throw new InvalidOperationException(message);
-        }
     }
 
     private sealed record TestEvent(string Value);

@@ -1,4 +1,6 @@
-﻿namespace Interfold.IntegrationTests.Attributes
+﻿using Interfold.IntegrationTests.Models;
+
+namespace Interfold.IntegrationTests.Attributes
 {
     public class ApiIntegrationAttribute() : SkipAttribute("API integration tests are gated on OCTOCON_RUN_API_INTEGRATION=true")
     {

@@ -11,10 +11,6 @@ namespace Interfold.Api.Controllers;
 [Authorize]
 public abstract class InterfoldControllerBase : ControllerBase
 {
-    protected InterfoldControllerBase()
-    {
-    }
-
     protected string? GetPrincipalId()
     {
         var sub = User.FindFirst("sub")?.Value

@@ -2,6 +2,8 @@ using Interfold.IntegrationTests.Attributes;
 using Microsoft.AspNetCore.Mvc.Testing;
 using System.Text;
 using System.Text.Json;
+using Interfold.IntegrationTests.Models;
+using Interfold.IntegrationTests.TestServices;
 
 namespace Interfold.IntegrationTests;
 
@@ -14,49 +16,25 @@ namespace Interfold.IntegrationTests;
 /// </para>
 /// Gated on <c>OCTOCON_RUN_API_INTEGRATION=true</c>.
 /// </summary>
-public sealed class ReplayParityTests
+public sealed class ReplayParityTests : BaseEndpointTest
 {
-    [Test, ApiIntegration]
-    public async Task Replay_AlterLifecycle_PassesAllSteps()
+    public static IEnumerable<TestDataRow<string>> GetReplayFiles()
     {
-        await RunTraceAsync("alter-lifecycle.trace.json");
+        yield return new("alter-lifecycle.trace.json", DisplayName: "Alter Lifecycle");
+        yield return new("tag-lifecycle.trace.json", DisplayName: "Tag Lifecycle");
+        yield return new("fronting-lifecycle.trace.json", DisplayName: "fronting Lifecycle");
+        yield return new("poll-lifecycle.trace.json", DisplayName: "poll Lifecycle");
+        yield return new("settings-lifecycle.trace.json", DisplayName: "settings Lifecycle");
+        yield return new("journal-lifecycle.trace.json", DisplayName: "journal Lifecycle");
+        yield return new("friendship-lifecycle.trace.json", DisplayName: "friendship Lifecycle");
     }
-
+    
     [Test, ApiIntegration]
-    public async Task Replay_TagLifecycle_PassesAllSteps()
+    [MethodDataSource(typeof(ReplayParityTests), nameof(GetReplayFiles))]
+    public async Task Replay_PassesAllSteps(string fixtureFileName)
     {
-        await RunTraceAsync("tag-lifecycle.trace.json");
+        await RunTraceAsync(fixtureFileName);
     }
-
-    [Test, ApiIntegration]
-    public async Task Replay_FrontingLifecycle_PassesAllSteps()
-    {
-        await RunTraceAsync("fronting-lifecycle.trace.json");
-    }
-
-    [Test, ApiIntegration]
-    public async Task Replay_PollLifecycle_PassesAllSteps()
-    {
-        await RunTraceAsync("poll-lifecycle.trace.json");
-    }
-
-    [Test, ApiIntegration]
-    public async Task Replay_SettingsLifecycle_PassesAllSteps()
-    {
-        await RunTraceAsync("settings-lifecycle.trace.json");
-    }
-
-        [Test, ApiIntegration]
-        public async Task Replay_JournalLifecycle_PassesAllSteps()
-        {
-            await RunTraceAsync("journal-lifecycle.trace.json");
-        }
-
-        [Test, ApiIntegration]
-        public async Task Replay_FriendshipLifecycle_PassesAllSteps()
-        {
-            await RunTraceAsync("friendship-lifecycle.trace.json");
-        }
 
     // -----------------------------------------------------------------------
     // Core runner
@@ -65,10 +43,10 @@ public sealed class ReplayParityTests
     private static async Task RunTraceAsync(string fixtureFileName)
     {
         var fixturePath = Path.Combine(AppContext.BaseDirectory, "Fixtures", fixtureFileName);
-        Ensure(File.Exists(fixturePath), $"Fixture not found: {fixturePath}");
+        await Assert.That(File.Exists(fixturePath)).IsTrue();
 
         var trace = ReplayTrace.Load(fixturePath);
-        Ensure(trace.Steps.Count > 0, $"Trace '{fixtureFileName}' contains no steps.");
+        await Assert.That(trace.Steps.Count > 0).IsTrue();
 
         await using var factory = new InterfoldWebApplicationFactory()
             .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
@@ -112,19 +90,13 @@ public sealed class ReplayParityTests
         var response = await client.SendAsync(request);
         var body = await response.Content.ReadAsStringAsync();
 
-        Ensure(
-            (int)response.StatusCode == step.ExpectedStatus,
-            $"[{fixtureFileName}] Step '{step.Name}': expected HTTP {step.ExpectedStatus}, " +
-            $"got {(int)response.StatusCode}. Body: {body}");
+        await Assert.That((int)response.StatusCode).IsEqualTo(step.ExpectedStatus);
 
         // Assert replay flag when declared (only when the response has a body).
         if (step.ExpectedReplay.HasValue && !string.IsNullOrEmpty(body))
         {
             var actualReplay = ReadBoolField(body, "replay");
-            Ensure(
-                actualReplay == step.ExpectedReplay.Value,
-                $"[{fixtureFileName}] Step '{step.Name}': expected replay={step.ExpectedReplay.Value}, " +
-                $"got replay={actualReplay}. Body: {body}");
+            await Assert.That(actualReplay == step.ExpectedReplay.Value).IsTrue();
         }
 
         // Capture fields for subsequent steps.
@@ -143,8 +115,7 @@ public sealed class ReplayParityTests
                 }
                 else
                 {
-                    Ensure(false,
-                        $"[{fixtureFileName}] Step '{step.Name}': could not capture '{jsonPath}' from body: {body}");
+                    Assert.Fail($"[{fixtureFileName}] Step '{step.Name}': could not capture '{jsonPath}' from body: {body}");
                 }
             }
         }
@@ -160,27 +131,6 @@ public sealed class ReplayParityTests
             template = template.Replace($"{{{key}}}", value, StringComparison.OrdinalIgnoreCase);
 
         return template;
-    }
-
-    private static bool ReadBoolField(string json, string fieldName)
-    {
-        using var doc = JsonDocument.Parse(json);
-
-        foreach (var prop in doc.RootElement.EnumerateObject())
-        {
-            if (!prop.Name.Equals(fieldName, StringComparison.OrdinalIgnoreCase))
-                continue;
-
-            return prop.Value.ValueKind switch
-            {
-                JsonValueKind.True  => true,
-                JsonValueKind.False => false,
-                _ => throw new InvalidOperationException(
-                    $"Expected boolean for '{fieldName}', got {prop.Value.ValueKind}. Body: {json}")
-            };
-        }
-
-        throw new InvalidOperationException($"Field '{fieldName}' not found in: {json}");
     }
 
     private static bool TryReadStringField(JsonElement root, string name, out string value)
@@ -249,10 +199,5 @@ public sealed class ReplayParityTests
 
         value = 0;
         return false;
-    }
-
-    private static void Ensure(bool condition, string message)
-    {
-        if (!condition) throw new InvalidOperationException(message);
     }
 }

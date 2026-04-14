@@ -1,4 +1,4 @@
-namespace Interfold.IntegrationTests;
+namespace Interfold.IntegrationTests.Models;
 
 /// <summary>
 /// Centralized helper for accessing environment variables in integration tests.
@@ -27,7 +27,7 @@ public static class IntegrationTestEnvironment
     /// <summary>
     /// Checks if the API integration tests should run (OCTOCON_RUN_API_INTEGRATION=true).
     /// </summary>
-    public static bool ShouldRunApiIntegration => IsEnabled("OCTOCON_RUN_API_INTEGRATION");
+    public static bool ShouldRunApiIntegration => true;//IsEnabled("OCTOCON_RUN_API_INTEGRATION");
 
     /// <summary>
     /// Checks if live integration tests should run (OCTOCON_RUN_LIVE_INTEGRATION=true).
