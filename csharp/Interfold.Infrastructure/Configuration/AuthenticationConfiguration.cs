@@ -10,6 +10,12 @@ public sealed class AuthenticationConfiguration
 
     /// <summary>
     /// Base URL for OAuth callback handlers.
+    /// Env: OCTOCON_AUTH_CHALLENGE_ENABLED
+    /// </summary>
+    public bool? AuthEnabled { get; set; }
+
+    /// <summary>
+    /// Base URL for OAuth callback handlers.
     /// Env: OCTOCON_AUTH_CALLBACK_BASE_URL
     /// </summary>
     public string? CallbackBaseUrl { get; set; }

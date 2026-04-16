@@ -300,9 +300,7 @@ public static async Task HandleUserSocketAsync(HttpContext context)
             }
             else
             {
-                var unauthorizedReason = tokenAuthFailureReason is null
-                    ? "unauthorized"
-                    : tokenAuthFailureReason;
+                var unauthorizedReason = tokenAuthFailureReason ?? "unauthorized";
                 await SendPhoenixReplyAsync(
                     socket,
                     topic,
@@ -433,21 +431,22 @@ static async Task<object> HandleEndpointProxyAsync(
 
     if (!string.IsNullOrWhiteSpace(joinedSystemId))
     {
+        request.Headers.TryAddWithoutValidation("X-Interfold-Principal", joinedSystemId);
     }
 
-    string? requestBodyJson = null;
     if (payloadObj.TryGetProperty("body", out var bodyProp)
         && bodyProp.ValueKind != JsonValueKind.Null
         && method is not "GET" and not "HEAD")
     {
         //This NEEDS to be GetString() because the raw JSON is what we want to forward, not a re-serialized version of the body element.
-        requestBodyJson = bodyProp.GetString();
+        var requestBodyJson = bodyProp.GetString();
         if (requestBodyJson != null) {
             request.Content = new StringContent(requestBodyJson, Encoding.UTF8, "application/json");
         }
     }
 
-    using var httpClient = new HttpClient();
+    var httpClientFactory = websocketContext.RequestServices.GetRequiredService<IHttpClientFactory>();
+    using var httpClient = httpClientFactory.CreateClient();
     using var response = await httpClient.SendAsync(request, websocketContext.RequestAborted);
     var responseBody = await response.Content.ReadAsStringAsync(websocketContext.RequestAborted);
 
@@ -464,6 +463,14 @@ static async Task<(bool IsAuthorized, string? FailureReason)> IsSocketJoinTokenA
     string requestedSystemId,
     CancellationToken cancellationToken)
 {
+    var authConfig = context.RequestServices
+        .GetRequiredService<IOptionsMonitor<AuthenticationConfiguration>>().CurrentValue;
+
+    if (!authConfig.AuthEnabled ?? false)
+    {
+        return (true, null);
+    }
+    
     var logger = context.RequestServices.GetRequiredService<ILoggerFactory>()
         .CreateLogger("WebSocketTokenAuth");
 
@@ -474,10 +481,7 @@ static async Task<(bool IsAuthorized, string? FailureReason)> IsSocketJoinTokenA
     }
 
     logger.LogInformation("Validating token. RequestedSystemId: {SystemId}", requestedSystemId);
-
-    var authConfig = context.RequestServices
-        .GetRequiredService<IOptionsMonitor<AuthenticationConfiguration>>();
-
+    
     var handler = new JwtSecurityTokenHandler { MapInboundClaims = false };
     if (!handler.CanReadToken(token))
     {
@@ -486,20 +490,20 @@ static async Task<(bool IsAuthorized, string? FailureReason)> IsSocketJoinTokenA
     }
 
     logger.LogInformation("Token is readable. Verification key count: {KeyCount}", 
-        authConfig.CurrentValue.JwtEs256VerificationKeyPems?.Length ?? 0);
+        authConfig.JwtEs256VerificationKeyPems?.Length ?? 0);
 
     var parameters = new TokenValidationParameters
     {
         ValidateIssuer = false,
         ValidateAudience = false,
-        ValidAudience = authConfig.CurrentValue.JwtAudience,
+        ValidAudience = authConfig.JwtAudience,
         ValidateLifetime = true,
         RequireExpirationTime = true,
         ClockSkew = TimeSpan.FromMinutes(1),
         ValidateIssuerSigningKey = false,
         RequireSignedTokens = true,
         SignatureValidator = (socketToken, validationParameters) =>
-            ValidateJwtTokenSignatureForSocket(socketToken, validationParameters, authConfig.CurrentValue),
+            ValidateJwtTokenSignatureForSocket(socketToken, validationParameters, authConfig),
         NameClaimType = "sub"
     };
 

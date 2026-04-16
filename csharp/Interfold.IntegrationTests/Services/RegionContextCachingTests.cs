@@ -3,7 +3,7 @@ using Interfold.Infrastructure.Configuration;
 using Interfold.Infrastructure.Persistence.Scylla;
 using Microsoft.Extensions.Logging.Abstractions;
 
-namespace Interfold.IntegrationTests;
+namespace Interfold.IntegrationTests.Services;
 
 public sealed class RegionContextCachingTests : BaseEndpointTest
 {

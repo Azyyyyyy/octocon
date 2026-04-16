@@ -1,3 +1,5 @@
+namespace Interfold.Api.Socket;
+
 static class SocketJoinRateLimiter
 {
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, Queue<DateTimeOffset>> _windows =
@@ -24,4 +26,3 @@ static class SocketJoinRateLimiter
         }
     }
 }
-

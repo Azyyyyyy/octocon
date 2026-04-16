@@ -9,6 +9,7 @@ using Interfold.Api.Services;
 using Interfold.Infrastructure.Configuration;
 using System.Security.Cryptography;
 using System.Text;
+using Interfold.Infrastructure;
 
 namespace Interfold.Api.Controllers;
 
@@ -347,64 +348,23 @@ public sealed class AuthController : ControllerBase
     private async Task<string> IssueDeepLinkTokenAsync(string systemId)
     {
         var authConfig = _authOptions.CurrentValue;
-        var now = DateTimeOffset.UtcNow;
+        var jti = Guid.NewGuid().ToString("N");
+
         // Set expiry to 100 years in the future. This is practically permanent
         // but avoids DateTimeOffset.MaxValue which can cause int64 overflow on validation.
         // If a token is compromised, it can be revoked explicitly via POST /auth/revoke.
+        var now = DateTimeOffset.UtcNow;
         var expiresAt = now.AddYears(100);
-        var jti = Guid.NewGuid().ToString("N");
 
-        var headerJson = System.Text.Json.JsonSerializer.Serialize(new Dictionary<string, string>
-        {
-            ["alg"] = "ES256",
-            ["typ"] = "JWT"
-        });
-
-        var payloadJson = System.Text.Json.JsonSerializer.Serialize(new Dictionary<string, object>
-        {
-            ["iss"] = authConfig.JwtAuthority,
-            ["sub"] = systemId,
-            ["iat"] = now.ToUnixTimeSeconds(),
-            ["nbf"] = now.ToUnixTimeSeconds(),
-            ["exp"] = expiresAt.ToUnixTimeSeconds(),
-            ["jti"] = jti,
-            ["scope"] = "octocon:deeplink"
-        });
-
-        var encodedHeader = Base64UrlEncode(Encoding.UTF8.GetBytes(headerJson));
-        var encodedPayload = Base64UrlEncode(Encoding.UTF8.GetBytes(payloadJson));
-        var signingInput = $"{encodedHeader}.{encodedPayload}";
-
-        // ES256 signing with ECDSA P-256
-        using var ecdsa = ECDsa.Create();
-        ecdsa.ImportFromPem(NormalizePem(authConfig.JwtEs256PrivateKeyPem!).AsSpan());
-        var signature = ecdsa.SignData(
-            Encoding.UTF8.GetBytes(signingInput),
-            HashAlgorithmName.SHA256,
-            DSASignatureFormat.IeeeP1363FixedFieldConcatenation);
-
-        var encodedSignature = Base64UrlEncode(signature);
-
-        var token = $"{signingInput}.{encodedSignature}";
-
+        var token = AuthHelper.CreateToken(authConfig, expiresAt, now, jti, systemId);
+        
         // Record the issued token for revocation tracking
         await _tokenRevocation.RecordTokenAsync(jti, systemId, expiresAt, HttpContext.RequestAborted);
 
         // JWS Compact Serialization: base64url(header).base64url(payload).base64url(signature)
         return token;
     }
-
-    private static string Base64UrlEncode(byte[] data)
-    {
-        return Convert.ToBase64String(data)
-            .TrimEnd('=')
-            .Replace('+', '-')
-            .Replace('/', '_');
-    }
-
-    private static string NormalizePem(string pem)
-        => pem.Replace("\\n", "\n", StringComparison.Ordinal);
-
+    
     private string? GetChallengeScheme(string providerKey)
     {
         var authConfig = _authOptions.CurrentValue;

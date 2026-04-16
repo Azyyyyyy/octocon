@@ -1,23 +1,23 @@
-using Microsoft.AspNetCore.Authentication.JwtBearer;
-using Microsoft.AspNetCore.Authentication;
-using Microsoft.IdentityModel.Tokens;
-using Microsoft.IdentityModel.JsonWebTokens;
-using Microsoft.OpenApi.Models;
-using OpenTelemetry.Metrics;
-using OpenTelemetry.Trace;
-using System.Text;
 using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
 using Interfold.Api;
 using Interfold.Api.Auth;
+using Microsoft.AspNetCore.Authentication;
 using Interfold.Api.Services;
+using Interfold.Api.Socket;
 using Interfold.Api.Swagger;
 using Interfold.Domain.Auth;
 using Interfold.Infrastructure.Configuration;
 using Interfold.Infrastructure.DependencyInjection;
-using System.Text.Json;
-using Interfold.Api.Socket;
-using Microsoft.Extensions.Options;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.Extensions.Options;
+using Microsoft.IdentityModel.JsonWebTokens;
+using Microsoft.IdentityModel.Tokens;
+using Microsoft.OpenApi.Models;
+using OpenTelemetry.Metrics;
+using OpenTelemetry.Trace;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -75,7 +75,7 @@ builder.Services.AddHttpClient<AppleOAuthService>();
 // validate against — the provider is only used to identify the user;
 // the resulting JWT is issued by Interfold itself. We therefore skip issuer validation and
 // rely on audience and lifetime checks only for now.
-// TODO: Look into how we can make this better WITHOUT breaking exisitng clients
+// TODO: Look into how we can make this better WITHOUT breaking existing clients
 builder.Services
     .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
@@ -322,6 +322,11 @@ static SecurityToken ValidateJwtTokenSignatureForBearer(
     TokenValidationParameters validationParameters,
     AuthenticationConfiguration config)
 {
+    if (!config.AuthEnabled ?? false)
+    {
+        return new JsonWebToken(token);
+    }
+    
     if (string.IsNullOrWhiteSpace(token))
     {
         throw new SecurityTokenInvalidSignatureException("Token is empty.");
@@ -393,7 +398,7 @@ static string NormalizePem(string pem)
 
     // Normalize various line ending formats to actual newlines
     var normalized = pem
-        .Replace("\\r\\n", "\n", StringComparison.Ordinal)  // Escaped Windows (\r\n became \\r\\n)
+        .Replace(@"\r\n", "\n", StringComparison.Ordinal)  // Escaped Windows (\r\n became \\r\\n)
         .Replace("\\r", "\n", StringComparison.Ordinal)     // Escaped carriage return
         .Replace("\\n", "\n", StringComparison.Ordinal)     // Escaped newline
         .Replace("\r\n", "\n", StringComparison.Ordinal)    // Windows line endings
@@ -401,5 +406,3 @@ static string NormalizePem(string pem)
 
     return normalized;
 }
-
-public partial class Program;

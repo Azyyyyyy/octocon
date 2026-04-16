@@ -155,6 +155,14 @@ public static class ConfigurationServiceCollectionExtensions
 
     private static void ApplyAuthentication(AuthenticationConfiguration opts, IConfiguration config)
     {
+        var authEnabled = 
+#if DEBUG
+            bool.TryParse(config["OCTOCON_AUTH_CHALLENGE_ENABLED"], out var resultApi) && resultApi;
+#else
+        true;
+#endif
+
+        opts.AuthEnabled             = authEnabled;
         opts.CallbackBaseUrl         = config["OCTOCON_AUTH_CALLBACK_BASE_URL"];
         opts.DeepLinkSecret          = config["OCTOCON_AUTH_DEEP_LINK_SECRET"];
         opts.JwtAuthority            = config["OCTOCON_JWT_AUTHORITY"] ?? "octocon-local";
@@ -169,7 +177,7 @@ public static class ConfigurationServiceCollectionExtensions
         opts.AppleOAuthClientSecret  = config["OCTOCON_APPLE_OAUTH_CLIENT_SECRET"];
 
         var es256VerificationKeys = new List<string>();
-        EnsureEs256KeyMaterial(opts);
+        AuthHelper.EnsureEs256KeyMaterial(opts);
         AddIfPresent(config["OCTOCON_AUTH_EC_PUBLIC_KEY_PEM"], es256VerificationKeys);
         AddIfPresent(config["OCTOCON_AUTH_EC_PRIVATE_KEY_PEM"], es256VerificationKeys);
         AddIfPresent(opts.JwtEs256PrivateKeyPem, es256VerificationKeys);
@@ -253,57 +261,7 @@ public static class ConfigurationServiceCollectionExtensions
             target.Add(value);
         }
     }
-
-    private static void EnsureEs256KeyMaterial(AuthenticationConfiguration opts)
-    {
-        if (!string.IsNullOrWhiteSpace(opts.JwtEs256PrivateKeyPem))
-        {
-            return;
-        }
-
-        var privateKeyPath = opts.JwtEs256PrivateKeyFile;
-        if (string.IsNullOrWhiteSpace(privateKeyPath))
-        {
-            privateKeyPath = Path.Combine(AppContext.BaseDirectory, "keys", "octocon-es256-private.pem");
-            opts.JwtEs256PrivateKeyFile = privateKeyPath;
-        }
-
-        var publicKeyPath = opts.JwtEs256PublicKeyFile;
-        if (string.IsNullOrWhiteSpace(publicKeyPath))
-        {
-            var keyDir = Path.GetDirectoryName(privateKeyPath) ?? AppContext.BaseDirectory;
-            publicKeyPath = Path.Combine(keyDir, "octocon-es256-public.pem");
-            opts.JwtEs256PublicKeyFile = publicKeyPath;
-        }
-
-        if (File.Exists(privateKeyPath))
-        {
-            opts.JwtEs256PrivateKeyPem = File.ReadAllText(privateKeyPath);
-            return;
-        }
-
-        var privateKeyDirectory = Path.GetDirectoryName(privateKeyPath);
-        if (!string.IsNullOrWhiteSpace(privateKeyDirectory))
-        {
-            Directory.CreateDirectory(privateKeyDirectory);
-        }
-
-        var publicKeyDirectory = Path.GetDirectoryName(publicKeyPath);
-        if (!string.IsNullOrWhiteSpace(publicKeyDirectory))
-        {
-            Directory.CreateDirectory(publicKeyDirectory);
-        }
-
-        using var ecdsa = ECDsa.Create(ECCurve.NamedCurves.nistP256);
-        var privatePem = ecdsa.ExportECPrivateKeyPem();
-        var publicPem = ecdsa.ExportSubjectPublicKeyInfoPem();
-
-        File.WriteAllText(privateKeyPath, privatePem);
-        File.WriteAllText(publicKeyPath, publicPem);
-
-        opts.JwtEs256PrivateKeyPem = privatePem;
-    }
-
+    
     internal static Dictionary<string, string>? ParseAuthParameters(string? paramsString)
     {
         if (string.IsNullOrWhiteSpace(paramsString))

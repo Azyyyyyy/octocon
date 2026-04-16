@@ -1,5 +1,4 @@
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Configuration;
+using Interfold.Cli;
 using Interfold.Contracts.Operations;
 using Interfold.Domain.Abstractions;
 using Interfold.Domain.Accounts;
@@ -10,6 +9,8 @@ using Interfold.Infrastructure.Coordination;
 using Interfold.Infrastructure.DependencyInjection;
 using Interfold.Infrastructure.Persistence;
 using Interfold.Infrastructure.Persistence.Bootstrap;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 
 // Build configuration from environment variables and command line
 var configuration = new ConfigurationBuilder()
@@ -401,32 +402,35 @@ static void PrintHelp()
     Console.WriteLine("  front-primary --system <id> [--alter-id <id>] [--idempotency-key <key>] [--expected-version <n>]");
 }
 
-internal sealed class CliRuntime
+namespace Interfold.Cli
 {
-    public UpdateUsernameCommandHandler UpdateUsernameHandler { get; }
-    public CreateAlterCommandHandler CreateAlterHandler { get; }
-    public UpdateAlterCommandHandler UpdateAlterHandler { get; }
-    public StartFrontCommandHandler StartFrontHandler { get; }
-    public EndFrontCommandHandler EndFrontHandler { get; }
-    public SetPrimaryFrontCommandHandler SetPrimaryFrontHandler { get; }
-    public IDatabaseBootstrapHealthChecker BootstrapHealthChecker { get; }
-
-    public CliRuntime(
-        UpdateUsernameCommandHandler updateUsernameHandler,
-        CreateAlterCommandHandler createAlterHandler,
-        UpdateAlterCommandHandler updateAlterHandler,
-        StartFrontCommandHandler startFrontHandler,
-        EndFrontCommandHandler endFrontHandler,
-        SetPrimaryFrontCommandHandler setPrimaryFrontHandler,
-        IDatabaseBootstrapHealthChecker bootstrapHealthChecker
-    )
+    internal sealed class CliRuntime
     {
-        UpdateUsernameHandler = updateUsernameHandler;
-        CreateAlterHandler = createAlterHandler;
-        UpdateAlterHandler = updateAlterHandler;
-        StartFrontHandler = startFrontHandler;
-        EndFrontHandler = endFrontHandler;
-        SetPrimaryFrontHandler = setPrimaryFrontHandler;
-        BootstrapHealthChecker = bootstrapHealthChecker;
+        public UpdateUsernameCommandHandler UpdateUsernameHandler { get; }
+        public CreateAlterCommandHandler CreateAlterHandler { get; }
+        public UpdateAlterCommandHandler UpdateAlterHandler { get; }
+        public StartFrontCommandHandler StartFrontHandler { get; }
+        public EndFrontCommandHandler EndFrontHandler { get; }
+        public SetPrimaryFrontCommandHandler SetPrimaryFrontHandler { get; }
+        public IDatabaseBootstrapHealthChecker BootstrapHealthChecker { get; }
+
+        public CliRuntime(
+            UpdateUsernameCommandHandler updateUsernameHandler,
+            CreateAlterCommandHandler createAlterHandler,
+            UpdateAlterCommandHandler updateAlterHandler,
+            StartFrontCommandHandler startFrontHandler,
+            EndFrontCommandHandler endFrontHandler,
+            SetPrimaryFrontCommandHandler setPrimaryFrontHandler,
+            IDatabaseBootstrapHealthChecker bootstrapHealthChecker
+        )
+        {
+            UpdateUsernameHandler = updateUsernameHandler;
+            CreateAlterHandler = createAlterHandler;
+            UpdateAlterHandler = updateAlterHandler;
+            StartFrontHandler = startFrontHandler;
+            EndFrontHandler = endFrontHandler;
+            SetPrimaryFrontHandler = setPrimaryFrontHandler;
+            BootstrapHealthChecker = bootstrapHealthChecker;
+        }
     }
 }
