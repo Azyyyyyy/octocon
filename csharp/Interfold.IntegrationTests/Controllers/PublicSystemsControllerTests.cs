@@ -23,13 +23,18 @@ public class PublicSystemsControllerTests : BaseEndpointTest
 
         var principal = "parity-public-batch-self";
         _ = await CreateAlterAsync(client, principal, "BatchSelfSeed");
+        await EnsurePublicProfileAsync(client, principal, "batch-self");
 
         using var req = new HttpRequestMessage(HttpMethod.Get, $"/api/systems/{principal}/batch");
+        AttachPrincipalAuth(req, client, principal);
         var res = await client.SendAsync(req);
         var body = await res.Content.ReadAsStringAsync();
 
-        await Assert.That(res.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
-        await Assert.That(body.Contains("invalid_endpoint", StringComparison.OrdinalIgnoreCase)).IsTrue();
+        using (Assert.Multiple())
+        {
+            await Assert.That(res.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
+            await Assert.That(body.Contains("invalid_endpoint", StringComparison.OrdinalIgnoreCase)).IsTrue();
+        }
     }
 
     [Test, ApiIntegration]
@@ -53,6 +58,10 @@ public class PublicSystemsControllerTests : BaseEndpointTest
         _ = await CreateAlterAsync(client, nonFriend, "SeedNonFriend");
         _ = await CreateAlterAsync(client, friend, "SeedFriend");
         _ = await CreateAlterAsync(client, trusted, "SeedTrusted");
+        await EnsurePublicProfileAsync(client, owner, "fronting-owner");
+        await EnsurePublicProfileAsync(client, nonFriend, "fronting-nonfriend");
+        await EnsurePublicProfileAsync(client, friend, "fronting-friend");
+        await EnsurePublicProfileAsync(client, trusted, "fronting-trusted");
 
         // Owner alters with different visibility levels.
         var alterPublic = await CreateAlterAsync(client, owner, "VisPublic");
@@ -72,10 +81,10 @@ public class PublicSystemsControllerTests : BaseEndpointTest
         await StartFrontAsync(client, owner, alterPrivate);
 
         // Baseline (non-friend): only public should be visible.
-        await AssertContainsAsync(client, $"/api/systems/{owner}/fronting", null, alterPublic.ToString(), expectedPresent: true);
-        await AssertContainsAsync(client, $"/api/systems/{owner}/fronting", null, alterFriends.ToString(), expectedPresent: false);
-        await AssertContainsAsync(client, $"/api/systems/{owner}/fronting", null, alterTrusted.ToString(), expectedPresent: false);
-        await AssertContainsAsync(client, $"/api/systems/{owner}/fronting", null, alterPrivate.ToString(), expectedPresent: false);
+        await AssertContainsAsync(client, $"/api/systems/{owner}/fronting", nonFriend, alterPublic.ToString(), expectedPresent: true);
+        await AssertContainsAsync(client, $"/api/systems/{owner}/fronting", nonFriend, alterFriends.ToString(), expectedPresent: false);
+        await AssertContainsAsync(client, $"/api/systems/{owner}/fronting", nonFriend, alterTrusted.ToString(), expectedPresent: false);
+        await AssertContainsAsync(client, $"/api/systems/{owner}/fronting", nonFriend, alterPrivate.ToString(), expectedPresent: false);
 
         // Friend path: public + friends_only.
         await SendFriendRequestAndAcceptAsync(client, friend, owner);
@@ -105,17 +114,19 @@ public class PublicSystemsControllerTests : BaseEndpointTest
 
         var principal = "parity-guarded-alter";
         var alterId = await CreateAlterAsync(client, principal, "GuardedAlter");
+        await EnsurePublicProfileAsync(client, principal, "guarded-alter");
 
         using var updateReq = new HttpRequestMessage(HttpMethod.Patch, $"/api/systems/me/alters/{alterId}")
         {
             Content = JsonContent.Create(new { security_level = "private" })
         };
+        AttachPrincipalAuth(updateReq, client, principal);
         var updateRes = await client.SendAsync(updateReq);
         await Assert.That(updateRes.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
 
         var publicRes = await client.GetAsync($"/api/systems/{principal}/alters/{alterId}");
         var publicBody = await publicRes.Content.ReadAsStringAsync();
-        await Assert.That(publicRes.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+        await Assert.That(publicRes.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
     }
 
     [Test, ApiIntegration]
@@ -139,6 +150,10 @@ public class PublicSystemsControllerTests : BaseEndpointTest
         _ = await CreateAlterAsync(client, nonFriend, "SeedNonFriend");
         _ = await CreateAlterAsync(client, friend, "SeedFriend");
         _ = await CreateAlterAsync(client, trusted, "SeedTrusted");
+        await EnsurePublicProfileAsync(client, owner, "alters-owner");
+        await EnsurePublicProfileAsync(client, nonFriend, "alters-nonfriend");
+        await EnsurePublicProfileAsync(client, friend, "alters-friend");
+        await EnsurePublicProfileAsync(client, trusted, "alters-trusted");
 
         // Owner alters with different visibility levels.
         var alterPublic = await CreateAlterAsync(client, owner, "VisPublic");
@@ -152,10 +167,10 @@ public class PublicSystemsControllerTests : BaseEndpointTest
         await SetAlterSecurityLevelAsync(client, owner, alterPrivate, "private");
 
         // Baseline (non-friend): only public should be visible.
-        await AssertContainsAsync(client, $"/api/systems/{owner}/alters/{alterPublic}", null, alterPublic.ToString(), expectedPresent: true);
-        await AssertContainsAsync(client, $"/api/systems/{owner}/alters/{alterFriends}", null, "alter_not_found", expectedPresent: true, expectedStatus: HttpStatusCode.NotFound);
-        await AssertContainsAsync(client, $"/api/systems/{owner}/alters/{alterTrusted}", null, "alter_not_found", expectedPresent: true, expectedStatus: HttpStatusCode.NotFound);
-        await AssertContainsAsync(client, $"/api/systems/{owner}/alters/{alterPrivate}", null, "alter_not_found", expectedPresent: true, expectedStatus: HttpStatusCode.NotFound);
+        await AssertContainsAsync(client, $"/api/systems/{owner}/alters/{alterPublic}", nonFriend, alterPublic.ToString(), expectedPresent: true);
+        await AssertContainsAsync(client, $"/api/systems/{owner}/alters/{alterFriends}", nonFriend, "alter_not_found", expectedPresent: true, expectedStatus: HttpStatusCode.NotFound);
+        await AssertContainsAsync(client, $"/api/systems/{owner}/alters/{alterTrusted}", nonFriend, "alter_not_found", expectedPresent: true, expectedStatus: HttpStatusCode.NotFound);
+        await AssertContainsAsync(client, $"/api/systems/{owner}/alters/{alterPrivate}", nonFriend, "alter_not_found", expectedPresent: true, expectedStatus: HttpStatusCode.NotFound);
 
         // Friend path: public + friends_only.
         await SendFriendRequestAndAcceptAsync(client, friend, owner);
@@ -185,17 +200,19 @@ public class PublicSystemsControllerTests : BaseEndpointTest
 
         var principal = "parity-guarded-tag";
         var tagId = await CreateTagAsync(client, principal, "GuardedTag");
+        await EnsurePublicProfileAsync(client, principal, "guarded-tag");
 
         using var updateReq = new HttpRequestMessage(HttpMethod.Patch, $"/api/systems/me/tags/{tagId}")
         {
             Content = JsonContent.Create(new { security_level = "private" })
         };
+        AttachPrincipalAuth(updateReq, client, principal);
         var updateRes = await client.SendAsync(updateReq);
         await Assert.That(updateRes.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
 
         var publicRes = await client.GetAsync($"/api/systems/{principal}/tags/{tagId}");
         var publicBody = await publicRes.Content.ReadAsStringAsync();
-        await Assert.That(publicRes.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+        await Assert.That(publicRes.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
     }
 
     [Test, ApiIntegration]
@@ -219,6 +236,10 @@ public class PublicSystemsControllerTests : BaseEndpointTest
         _ = await CreateAlterAsync(client, nonFriend, "SeedNonFriend");
         _ = await CreateAlterAsync(client, friend, "SeedFriend");
         _ = await CreateAlterAsync(client, trusted, "SeedTrusted");
+        await EnsurePublicProfileAsync(client, owner, "tags-owner");
+        await EnsurePublicProfileAsync(client, nonFriend, "tags-nonfriend");
+        await EnsurePublicProfileAsync(client, friend, "tags-friend");
+        await EnsurePublicProfileAsync(client, trusted, "tags-trusted");
 
         // Owner tags with different visibility levels.
         var tagPublic = await CreateTagAsync(client, owner, "TagPublic");
@@ -232,10 +253,10 @@ public class PublicSystemsControllerTests : BaseEndpointTest
         await SetTagSecurityLevelAsync(client, owner, tagPrivate, "private");
 
         // Baseline (non-friend): only public should be visible.
-        await AssertContainsAsync(client, $"/api/systems/{owner}/tags/{tagPublic}", null, tagPublic, expectedPresent: true);
-        await AssertContainsAsync(client, $"/api/systems/{owner}/tags/{tagFriends}", null, "tag_not_found", expectedPresent: true, expectedStatus: HttpStatusCode.NotFound);
-        await AssertContainsAsync(client, $"/api/systems/{owner}/tags/{tagTrusted}", null, "tag_not_found", expectedPresent: true, expectedStatus: HttpStatusCode.NotFound);
-        await AssertContainsAsync(client, $"/api/systems/{owner}/tags/{tagPrivate}", null, "tag_not_found", expectedPresent: true, expectedStatus: HttpStatusCode.NotFound);
+        await AssertContainsAsync(client, $"/api/systems/{owner}/tags/{tagPublic}", nonFriend, tagPublic, expectedPresent: true);
+        await AssertContainsAsync(client, $"/api/systems/{owner}/tags/{tagFriends}", nonFriend, "tag_not_found", expectedPresent: true, expectedStatus: HttpStatusCode.NotFound);
+        await AssertContainsAsync(client, $"/api/systems/{owner}/tags/{tagTrusted}", nonFriend, "tag_not_found", expectedPresent: true, expectedStatus: HttpStatusCode.NotFound);
+        await AssertContainsAsync(client, $"/api/systems/{owner}/tags/{tagPrivate}", nonFriend, "tag_not_found", expectedPresent: true, expectedStatus: HttpStatusCode.NotFound);
 
         // Friend path: public + friends_only.
         await SendFriendRequestAndAcceptAsync(client, friend, owner);
@@ -249,6 +270,21 @@ public class PublicSystemsControllerTests : BaseEndpointTest
 
         await AssertContainsAsync(client, $"/api/systems/{owner}/tags/{tagTrusted}", trusted, tagTrusted, expectedPresent: true);
         await AssertContainsAsync(client, $"/api/systems/{owner}/tags/{tagPrivate}", trusted, "tag_not_found", expectedPresent: true, expectedStatus: HttpStatusCode.NotFound);
+    }
+
+    private static async Task EnsurePublicProfileAsync(HttpClient client, string principal, string username)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/settings/username")
+        {
+            Content = JsonContent.Create(new { username })
+        };
+        AttachPrincipalAuth(request, client, principal);
+
+        var response = await client.SendAsync(request);
+        var body = await response.Content.ReadAsStringAsync();
+
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.NoContent)
+            .Because($"Expected username seed 204 for '{principal}', got {(int)response.StatusCode}. Body: {body}");
     }
 
 }

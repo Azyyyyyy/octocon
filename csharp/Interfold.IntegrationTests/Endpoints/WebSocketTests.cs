@@ -29,7 +29,7 @@ public class WebSocketTests : BaseEndpointTest
         
         using var ws = await client.ConnectAsync(uri, token);
 
-        await Assert.That(ws.State == WebSocketState.Open).IsTrue().Because($"Expected websocket to be open after connecting to /api/socket/weboscket, got {ws.State}.");
+        await Assert.That(ws.State).IsEqualTo(WebSocketState.Open).Because($"Expected websocket to be open after connecting to /api/socket/weboscket, got {ws.State}.");
 
         var arrayJoinFrame = PhxArrayFrame.CreateBytes(
             "51", "51", "system:sys-phx-join", "phx_join",
@@ -41,12 +41,15 @@ public class WebSocketTests : BaseEndpointTest
         using var arrayJoinDoc = JsonDocument.Parse(arrayJoinReply);
         var arrayRoot = arrayJoinDoc.RootElement;
 
-        await Assert.That(arrayRoot.ValueKind == JsonValueKind.Array).IsTrue().Because($"Expected array-frame reply for array-frame request. Payload: {arrayJoinReply}");
-        await Assert.That(arrayRoot.GetArrayLength() >= 5).IsTrue().Because($"Expected 5-element Phoenix array reply. Payload: {arrayJoinReply}");
-        await Assert.That(string.Equals(arrayRoot[0].GetString(), "51", StringComparison.Ordinal)).IsTrue().Because($"Expected join_ref=51 in array reply. Payload: {arrayJoinReply}");
-        await Assert.That(string.Equals(arrayRoot[1].GetString(), "51", StringComparison.Ordinal)).IsTrue().Because($"Expected ref=51 in array reply. Payload: {arrayJoinReply}");
-        await Assert.That(string.Equals(arrayRoot[2].GetString(), "system:sys-phx-join", StringComparison.Ordinal)).IsTrue().Because($"Expected topic to match array join topic. Payload: {arrayJoinReply}");
-        await Assert.That(string.Equals(arrayRoot[3].GetString(), "phx_reply", StringComparison.Ordinal)).IsTrue().Because($"Expected array reply event phx_reply. Payload: {arrayJoinReply}");
+        using (Assert.Multiple())
+        {
+            await Assert.That(arrayRoot.ValueKind).IsEqualTo(JsonValueKind.Array).Because($"Expected array-frame reply for array-frame request. Payload: {arrayJoinReply}");
+            await Assert.That(arrayRoot.GetArrayLength()).IsGreaterThanOrEqualTo(5).Because($"Expected 5-element Phoenix array reply. Payload: {arrayJoinReply}");
+            await Assert.That(arrayRoot[0].GetString()).IsEqualTo("51").Because($"Expected join_ref=51 in array reply. Payload: {arrayJoinReply}");
+            await Assert.That(arrayRoot[1].GetString()).IsEqualTo("51").Because($"Expected ref=51 in array reply. Payload: {arrayJoinReply}");
+            await Assert.That(arrayRoot[2].GetString()).IsEqualTo("system:sys-phx-join").Because($"Expected topic to match array join topic. Payload: {arrayJoinReply}");
+            await Assert.That(arrayRoot[3].GetString()).IsEqualTo("phx_reply").Because($"Expected array reply event phx_reply. Payload: {arrayJoinReply}");
+        }
     }
     
     [Test, ApiIntegration]
@@ -77,8 +80,11 @@ public class WebSocketTests : BaseEndpointTest
         using var joinDoc = JsonDocument.Parse(joinReply);
         var payload = joinDoc.RootElement.GetProperty("payload");
 
-        await Assert.That(string.Equals(payload.GetProperty("status").GetString(), "error", StringComparison.Ordinal)).IsTrue().Because($"Expected status=error for unsupported protocol version. Payload: {joinReply}");
-        await Assert.That(string.Equals(payload.GetProperty("response").GetProperty("reason").GetString(), "unsupported_protocol_version", StringComparison.Ordinal)).IsTrue().Because($"Expected reason=unsupported_protocol_version. Payload: {joinReply}");
+        using (Assert.Multiple())
+        {
+            await Assert.That(payload.GetProperty("status").GetString()).IsEqualTo("error").Because($"Expected status=error for unsupported protocol version. Payload: {joinReply}");
+            await Assert.That(payload.GetProperty("response").GetProperty("reason").GetString()).IsEqualTo("unsupported_protocol_version").Because($"Expected reason=unsupported_protocol_version. Payload: {joinReply}");
+        }
 
         await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "test done", token);
     }
@@ -112,12 +118,15 @@ public class WebSocketTests : BaseEndpointTest
         var payload = joinDoc.RootElement.GetProperty("payload");
         var response = payload.GetProperty("response");
 
-        await Assert.That(string.Equals(payload.GetProperty("status").GetString(), "ok", StringComparison.Ordinal)).IsTrue().Because($"Expected status=ok for iOS batched join. Payload: {joinReply}");
-        await Assert.That(response.TryGetProperty("batched", out var batchedEl) && batchedEl.ValueKind == JsonValueKind.True).IsTrue().Because($"Expected batched=true for iOS join above threshold. Payload: {joinReply}");
+        using (Assert.Multiple())
+        {
+            await Assert.That(payload.GetProperty("status").GetString()).IsEqualTo("ok").Because($"Expected status=ok for iOS batched join. Payload: {joinReply}");
+            await Assert.That(response.GetProperty("batched").ValueKind).IsEqualTo(JsonValueKind.True).Because($"Expected batched=true for iOS join above threshold. Payload: {joinReply}");
+        }
 
         var batchedComplete = await ReceiveWebSocketTextAsync(ws, token);
         using var batchedCompleteDoc = JsonDocument.Parse(batchedComplete);
-        await Assert.That(string.Equals(batchedCompleteDoc.RootElement.GetProperty("event").GetString(), "batched_init_complete", StringComparison.Ordinal)).IsTrue().Because($"Expected batched_init_complete after iOS batched join. Payload: {batchedComplete}");
+        await Assert.That(batchedCompleteDoc.RootElement.GetProperty("event").GetString()).IsEqualTo("batched_init_complete").Because($"Expected batched_init_complete after iOS batched join. Payload: {batchedComplete}");
 
         await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "test done", token);
     }
@@ -144,10 +153,13 @@ public class WebSocketTests : BaseEndpointTest
         using var secondDoc = JsonDocument.Parse(second);
         using var thirdDoc = JsonDocument.Parse(third);
 
-        await Assert.That(string.Equals(firstDoc.RootElement.GetProperty("payload").GetProperty("status").GetString(), "ok", StringComparison.Ordinal)).IsTrue().Because($"Expected first join to be accepted. Payload: {first}");
-        await Assert.That(string.Equals(secondDoc.RootElement.GetProperty("payload").GetProperty("status").GetString(), "ok", StringComparison.Ordinal)).IsTrue().Because($"Expected second join to be accepted. Payload: {second}");
-        await Assert.That(string.Equals(thirdDoc.RootElement.GetProperty("payload").GetProperty("status").GetString(), "error", StringComparison.Ordinal)).IsTrue().Because($"Expected third join to be rate-limited. Payload: {third}");
-        await Assert.That(string.Equals(thirdDoc.RootElement.GetProperty("payload").GetProperty("response").GetProperty("reason").GetString(), "rate_limited", StringComparison.Ordinal)).IsTrue().Because($"Expected reason=rate_limited on third join. Payload: {third}");
+        using (Assert.Multiple())
+        {
+            await Assert.That(firstDoc.RootElement.GetProperty("payload").GetProperty("status").GetString()).IsEqualTo("ok").Because($"Expected first join to be accepted. Payload: {first}");
+            await Assert.That(secondDoc.RootElement.GetProperty("payload").GetProperty("status").GetString()).IsEqualTo("ok").Because($"Expected second join to be accepted. Payload: {second}");
+            await Assert.That(thirdDoc.RootElement.GetProperty("payload").GetProperty("status").GetString()).IsEqualTo("error").Because($"Expected third join to be rate-limited. Payload: {third}");
+            await Assert.That(thirdDoc.RootElement.GetProperty("payload").GetProperty("response").GetProperty("reason").GetString()).IsEqualTo("rate_limited").Because($"Expected reason=rate_limited on third join. Payload: {third}");
+        }
 
         await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "test done", token);
     }
@@ -192,7 +204,7 @@ public class WebSocketTests : BaseEndpointTest
         var createAlterReply = await ReceiveWebSocketTextAsync(ws, token);
         using var createAlterDoc = JsonDocument.Parse(createAlterReply);
         var createPayload = createAlterDoc.RootElement.GetProperty("payload").GetProperty("response");
-        await Assert.That(createPayload.GetProperty("status").GetInt32() == 201).IsTrue().Because($"Expected alter create 201. Payload: {createAlterReply}");
+        await Assert.That(createPayload.GetProperty("status").GetInt32()).IsEqualTo(201).Because($"Expected alter create 201. Payload: {createAlterReply}");
 
         var createBody = createPayload.GetProperty("body").GetString() ?? string.Empty;
         using var createBodyDoc = JsonDocument.Parse(createBody);
@@ -222,24 +234,27 @@ public class WebSocketTests : BaseEndpointTest
                 ? root[3].GetString() ?? string.Empty
                 : root.GetProperty("event").GetString() ?? string.Empty;
 
-            if (string.Equals(eventName, "phx_reply", StringComparison.Ordinal))
+            if (eventName == "phx_reply")
             {
                 endpointAck = frame;
                 continue;
             }
 
-            if (string.Equals(eventName, "fronting_changed", StringComparison.Ordinal))
+            if (eventName == "fronting_changed")
             {
                 frontingChangedPush = frame;
             }
         }
 
-        await Assert.That(endpointAck is not null).IsTrue().Because("Expected endpoint ack (phx_reply) for front start call.");
-        await Assert.That(frontingChangedPush is not null).IsTrue().Because("Expected fronting_changed push after front start call.");
+        using (Assert.Multiple())
+        {
+            await Assert.That(endpointAck).IsNotNull().Because("Expected endpoint ack (phx_reply) for front start call.");
+            await Assert.That(frontingChangedPush).IsNotNull().Because("Expected fronting_changed push after front start call.");
+        }
 
         using var pushDoc = JsonDocument.Parse(frontingChangedPush!);
         var pushPayload = pushDoc.RootElement.GetProperty("payload");
-        await Assert.That(pushPayload.TryGetProperty("fronts", out var frontsEl) && frontsEl.ValueKind == JsonValueKind.Array).IsTrue().Because($"Expected fronting_changed payload to include fronts array. Payload: {frontingChangedPush}");
+        await Assert.That(pushPayload.GetProperty("fronts").ValueKind).IsEqualTo(JsonValueKind.Array).Because($"Expected fronting_changed payload to include fronts array. Payload: {frontingChangedPush}");
 
         await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "test done", token);
     }
@@ -281,8 +296,11 @@ public class WebSocketTests : BaseEndpointTest
         }.ToBytes();
 
         var alterResult = await SendEndpointAndCaptureAsync(createAlterFrame, "alter_created");
-        await Assert.That(alterResult.ack is not null).IsTrue().Because("Expected endpoint ack for alter create.");
-        await Assert.That(alterResult.push is not null).IsTrue().Because("Expected alter_created push after alter create.");
+        using (Assert.Multiple())
+        {
+            await Assert.That(alterResult.ack).IsNotNull().Because("Expected endpoint ack for alter create.");
+            await Assert.That(alterResult.push).IsNotNull().Because("Expected alter_created push after alter create.");
+        }
 
         var createTagFrame = new PhxFrame<PhxEndpointPayload>
         {
@@ -294,8 +312,11 @@ public class WebSocketTests : BaseEndpointTest
         }.ToBytes();
 
         var tagResult = await SendEndpointAndCaptureAsync(createTagFrame, "tag_created");
-        await Assert.That(tagResult.ack is not null).IsTrue().Because("Expected endpoint ack for tag create.");
-        await Assert.That(tagResult.push is not null).IsTrue().Because("Expected tag_created push after tag create.");
+        using (Assert.Multiple())
+        {
+            await Assert.That(tagResult.ack).IsNotNull().Because("Expected endpoint ack for tag create.");
+            await Assert.That(tagResult.push).IsNotNull().Because("Expected tag_created push after tag create.");
+        }
 
         var createFieldFrame = new PhxFrame<PhxEndpointPayload>
         {
@@ -307,8 +328,11 @@ public class WebSocketTests : BaseEndpointTest
         }.ToBytes();
 
         var fieldResult = await SendEndpointAndCaptureAsync(createFieldFrame, "fields_updated");
-        await Assert.That(fieldResult.ack is not null).IsTrue().Because("Expected endpoint ack for field create.");
-        await Assert.That(fieldResult.push is not null).IsTrue().Because("Expected fields_updated push after field create.");
+        using (Assert.Multiple())
+        {
+            await Assert.That(fieldResult.ack).IsNotNull().Because("Expected endpoint ack for field create.");
+            await Assert.That(fieldResult.push).IsNotNull().Because("Expected fields_updated push after field create.");
+        }
 
         await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "test done", token);
         return;
@@ -332,13 +356,13 @@ public class WebSocketTests : BaseEndpointTest
                 using var doc = JsonDocument.Parse(received);
                 var name = EventNameFromFrame(doc.RootElement);
 
-                if (string.Equals(name, "phx_reply", StringComparison.Ordinal))
+                if (name == "phx_reply")
                 {
                     ack = received;
                     continue;
                 }
 
-                if (string.Equals(name, expectedPushEvent, StringComparison.Ordinal))
+                if (name == expectedPushEvent)
                 {
                     push = received;
                 }
@@ -394,27 +418,30 @@ public class WebSocketTests : BaseEndpointTest
         {
             var frame = await ReceiveWebSocketTextAsync(senderWs, token);
             var eventName = GetEventName(frame);
-            if (string.Equals(eventName, "phx_reply", StringComparison.Ordinal))
+            if (eventName == "phx_reply")
             {
                 senderAck = frame;
                 continue;
             }
 
-            if (string.Equals(eventName, "friend_request_sent", StringComparison.Ordinal))
+            if (eventName == "friend_request_sent")
             {
                 senderPush = frame;
             }
         }
 
-        await Assert.That(senderAck is not null).IsTrue().Because("Expected endpoint ack on sender socket for friend request send.");
-        await Assert.That(senderPush is not null).IsTrue().Because("Expected friend_request_sent push on sender socket.");
+        using (Assert.Multiple())
+        {
+            await Assert.That(senderAck).IsNotNull().Because("Expected endpoint ack on sender socket for friend request send.");
+            await Assert.That(senderPush).IsNotNull().Because("Expected friend_request_sent push on sender socket.");
+        }
 
         var recipientReadTask = ReceiveWebSocketTextAsync(recipientWs, token);
         var completed = await Task.WhenAny(recipientReadTask, Task.Delay(TimeSpan.FromSeconds(5)));
         await Assert.That(ReferenceEquals(completed, recipientReadTask)).IsTrue().Because("Timed out waiting for recipient-side friend_request_received push.");
 
         var recipientFrame = await recipientReadTask;
-        await Assert.That(string.Equals(GetEventName(recipientFrame), "friend_request_received", StringComparison.Ordinal)).IsTrue().Because($"Expected recipient push event friend_request_received. Payload: {recipientFrame}");
+        await Assert.That(GetEventName(recipientFrame)).IsEqualTo("friend_request_received").Because($"Expected recipient push event friend_request_received. Payload: {recipientFrame}");
 
         await senderWs.CloseAsync(WebSocketCloseStatus.NormalClosure, "test done", token);
         await recipientWs.CloseAsync(WebSocketCloseStatus.NormalClosure, "test done", token);
@@ -463,7 +490,7 @@ public class WebSocketTests : BaseEndpointTest
         _ = await ReceiveWebSocketTextAsync(senderWs, token);
         _ = await ReceiveWebSocketTextAsync(senderWs, token);
         var recipientEvent = await ReceiveWebSocketTextAsync(recipientWs, token);
-        await Assert.That(string.Equals(GetEventName(recipientEvent), "friend_request_received", StringComparison.Ordinal)).IsTrue().Because("Expected friend_request_received");
+        await Assert.That(GetEventName(recipientEvent)).IsEqualTo("friend_request_received").Because("Expected friend_request_received");
 
         var acceptFrame = new PhxFrame<PhxEndpointPayload> {
             Topic = "system:" + recipientSystemId,
@@ -486,18 +513,21 @@ public class WebSocketTests : BaseEndpointTest
         {
             var frame = await ReceiveWebSocketTextAsync(recipientWs, token);
             var eventName = GetEventName(frame);
-            if (string.Equals(eventName, "phx_reply", StringComparison.Ordinal))
+            if (eventName == "phx_reply")
             {
                 recipientAck = frame;
             }
-            else if (string.Equals(eventName, "friend_added", StringComparison.Ordinal))
+            else if (eventName == "friend_added")
             {
                 recipientFriendAdded = frame;
             }
         }
 
-        await Assert.That(recipientAck is not null).IsTrue().Because("Expected endpoint ack on recipient socket for accept.");
-        await Assert.That(recipientFriendAdded is not null).IsTrue().Because("Expected friend_added push on recipient socket after accept.");
+        using (Assert.Multiple())
+        {
+            await Assert.That(recipientAck).IsNotNull().Because("Expected endpoint ack on recipient socket for accept.");
+            await Assert.That(recipientFriendAdded).IsNotNull().Because("Expected friend_added push on recipient socket after accept.");
+        }
 
         string? senderFriendAdded = null;
         string? senderRequestCleared = null;
@@ -508,14 +538,17 @@ public class WebSocketTests : BaseEndpointTest
             await Assert.That(ReferenceEquals(senderCompleted, senderTask)).IsTrue().Because("Timed out waiting for sender-side event after accept.");
             var senderFrame = await senderTask;
             var senderEventName = GetEventName(senderFrame);
-            if (string.Equals(senderEventName, "friend_added", StringComparison.Ordinal))
+            if (senderEventName == "friend_added")
                 senderFriendAdded = senderFrame;
-            else if (string.Equals(senderEventName, "friend_request_removed", StringComparison.Ordinal))
+            else if (senderEventName == "friend_request_removed")
                 senderRequestCleared = senderFrame;
         }
 
-        await Assert.That(senderFriendAdded is not null).IsTrue().Because("Expected friend_added push on sender socket after accept.");
-        await Assert.That(senderRequestCleared is not null).IsTrue().Because("Expected friend_request_removed push on sender socket after accept (outgoing request cleanup).");
+        using (Assert.Multiple())
+        {
+            await Assert.That(senderFriendAdded).IsNotNull().Because("Expected friend_added push on sender socket after accept.");
+            await Assert.That(senderRequestCleared).IsNotNull().Because("Expected friend_request_removed push on sender socket after accept (outgoing request cleanup).");
+        }
 
         await senderWs.CloseAsync(WebSocketCloseStatus.NormalClosure, "test done", token);
         await recipientWs.CloseAsync(WebSocketCloseStatus.NormalClosure, "test done", token);
@@ -564,7 +597,7 @@ public class WebSocketTests : BaseEndpointTest
         _ = await ReceiveWebSocketTextAsync(senderWs, token);
         _ = await ReceiveWebSocketTextAsync(senderWs, token);
         var recipientEvent = await ReceiveWebSocketTextAsync(recipientWs, token);
-        await Assert.That(string.Equals(GetEventName(recipientEvent), "friend_request_received", StringComparison.Ordinal)).IsTrue().Because("Expected friend_request_received");
+        await Assert.That(GetEventName(recipientEvent)).IsEqualTo("friend_request_received").Because("Expected friend_request_received");
 
         var rejectFrame = new PhxFrame<PhxEndpointPayload> {
             Topic = "system:" + recipientSystemId,
@@ -587,25 +620,28 @@ public class WebSocketTests : BaseEndpointTest
         {
             var frame = await ReceiveWebSocketTextAsync(recipientWs, token);
             var eventName = GetEventName(frame);
-            if (string.Equals(eventName, "phx_reply", StringComparison.Ordinal))
+            if (eventName == "phx_reply")
             {
                 recipientAck = frame;
             }
-            else if (string.Equals(eventName, "friend_request_removed", StringComparison.Ordinal))
+            else if (eventName == "friend_request_removed")
             {
                 recipientRemoved = frame;
             }
         }
 
-        await Assert.That(recipientAck is not null).IsTrue().Because("Expected endpoint ack on recipient socket for reject.");
-        await Assert.That(recipientRemoved is not null).IsTrue().Because("Expected friend_request_removed push on recipient socket after reject.");
+        using (Assert.Multiple())
+        {
+            await Assert.That(recipientAck).IsNotNull().Because("Expected endpoint ack on recipient socket for reject.");
+            await Assert.That(recipientRemoved).IsNotNull().Because("Expected friend_request_removed push on recipient socket after reject.");
+        }
 
         var senderReadTask = ReceiveWebSocketTextAsync(senderWs, token);
         var completed = await Task.WhenAny(senderReadTask, Task.Delay(TimeSpan.FromSeconds(5)));
         await Assert.That(ReferenceEquals(completed, senderReadTask)).IsTrue().Because("Timed out waiting for sender-side friend_request_removed push.");
 
         var senderRemoved = await senderReadTask;
-        await Assert.That(string.Equals(GetEventName(senderRemoved), "friend_request_removed", StringComparison.Ordinal)).IsTrue().Because($"Expected sender push event friend_request_removed. Event: {GetEventName(senderRemoved)}");
+        await Assert.That(GetEventName(senderRemoved)).IsEqualTo("friend_request_removed").Because($"Expected sender push event friend_request_removed. Event: {GetEventName(senderRemoved)}");
 
         await senderWs.CloseAsync(WebSocketCloseStatus.NormalClosure, "test done", token);
         await recipientWs.CloseAsync(WebSocketCloseStatus.NormalClosure, "test done", token);
@@ -655,7 +691,7 @@ public class WebSocketTests : BaseEndpointTest
         _ = await ReceiveWebSocketTextAsync(senderWs, token);
 
         var recipientReceived = await ReceiveWebSocketTextAsync(recipientWs, token);
-        await Assert.That(string.Equals(GetEventName(recipientReceived), "friend_request_received", StringComparison.Ordinal)).IsTrue().Because("Expected friend_request_received before cancel.");
+        await Assert.That(GetEventName(recipientReceived)).IsEqualTo("friend_request_received").Because("Expected friend_request_received before cancel.");
 
         var cancelFrame = new PhxFrame<PhxEndpointPayload> {
             Topic = "system:" + senderSystemId,
@@ -678,25 +714,28 @@ public class WebSocketTests : BaseEndpointTest
         {
             var frame = await ReceiveWebSocketTextAsync(senderWs, token);
             var eventName = GetEventName(frame);
-            if (string.Equals(eventName, "phx_reply", StringComparison.Ordinal))
+            if (eventName == "phx_reply")
             {
                 senderAck = frame;
             }
-            else if (string.Equals(eventName, "friend_request_removed", StringComparison.Ordinal))
+            else if (eventName == "friend_request_removed")
             {
                 senderRemoved = frame;
             }
         }
 
-        await Assert.That(senderAck is not null).IsTrue().Because("Expected endpoint ack on sender socket for cancel.");
-        await Assert.That(senderRemoved is not null).IsTrue().Because("Expected friend_request_removed push on sender socket after cancel.");
+        using (Assert.Multiple())
+        {
+            await Assert.That(senderAck).IsNotNull().Because("Expected endpoint ack on sender socket for cancel.");
+            await Assert.That(senderRemoved).IsNotNull().Because("Expected friend_request_removed push on sender socket after cancel.");
+        }
 
         var recipientReadTask = ReceiveWebSocketTextAsync(recipientWs, token);
         var completed = await Task.WhenAny(recipientReadTask, Task.Delay(TimeSpan.FromSeconds(5), token));
         await Assert.That(ReferenceEquals(completed, recipientReadTask)).IsTrue().Because("Timed out waiting for recipient-side friend_request_removed push.");
 
         var recipientRemoved = await recipientReadTask;
-        await Assert.That(string.Equals(GetEventName(recipientRemoved), "friend_request_removed", StringComparison.Ordinal)).IsTrue().Because($"Expected recipient push event friend_request_removed. Event: {GetEventName(recipientRemoved)}");
+        await Assert.That(GetEventName(recipientRemoved)).IsEqualTo("friend_request_removed").Because($"Expected recipient push event friend_request_removed. Event: {GetEventName(recipientRemoved)}");
 
         await senderWs.CloseAsync(WebSocketCloseStatus.NormalClosure, "test done", token);
         await recipientWs.CloseAsync(WebSocketCloseStatus.NormalClosure, "test done", token);
@@ -746,7 +785,7 @@ public class WebSocketTests : BaseEndpointTest
         _ = await ReceiveWebSocketTextAsync(senderWs, token);
 
         var recipientReceived = await ReceiveWebSocketTextAsync(recipientWs, token);
-        await Assert.That(string.Equals(GetEventName(recipientReceived), "friend_request_received", StringComparison.Ordinal)).IsTrue().Because("Expected friend_request_received before accept.");
+        await Assert.That(GetEventName(recipientReceived)).IsEqualTo("friend_request_received").Because("Expected friend_request_received before accept.");
 
         var acceptFrame = new PhxFrame<PhxEndpointPayload> {
             Topic = "system:" + recipientSystemId,
@@ -769,18 +808,21 @@ public class WebSocketTests : BaseEndpointTest
         {
             var frame = await ReceiveWebSocketTextAsync(recipientWs, token);
             var eventName = GetEventName(frame);
-            if (string.Equals(eventName, "phx_reply", StringComparison.Ordinal))
+            if (eventName == "phx_reply")
             {
                 recipientAcceptAck = frame;
             }
-            else if (string.Equals(eventName, "friend_added", StringComparison.Ordinal))
+            else if (eventName == "friend_added")
             {
                 recipientAdded = frame;
             }
         }
 
-        await Assert.That(recipientAcceptAck is not null).IsTrue().Because("Expected endpoint ack on recipient socket for accept.");
-        await Assert.That(recipientAdded is not null).IsTrue().Because("Expected friend_added push on recipient socket after accept.");
+        using (Assert.Multiple())
+        {
+            await Assert.That(recipientAcceptAck).IsNotNull().Because("Expected endpoint ack on recipient socket for accept.");
+            await Assert.That(recipientAdded).IsNotNull().Because("Expected friend_added push on recipient socket after accept.");
+        }
 
         _ = await ReceiveWebSocketTextAsync(senderWs, token);
         _ = await ReceiveWebSocketTextAsync(senderWs, token);
@@ -806,25 +848,28 @@ public class WebSocketTests : BaseEndpointTest
         {
             var frame = await ReceiveWebSocketTextAsync(senderWs, token);
             var eventName = GetEventName(frame);
-            if (string.Equals(eventName, "phx_reply", StringComparison.Ordinal))
+            if (eventName == "phx_reply")
             {
                 senderRemoveAck = frame;
             }
-            else if (string.Equals(eventName, "friend_removed", StringComparison.Ordinal))
+            else if (eventName == "friend_removed")
             {
                 senderRemoved = frame;
             }
         }
 
-        await Assert.That(senderRemoveAck is not null).IsTrue().Because("Expected endpoint ack on sender socket for remove.");
-        await Assert.That(senderRemoved is not null).IsTrue().Because("Expected friend_removed push on sender socket after remove.");
+        using (Assert.Multiple())
+        {
+            await Assert.That(senderRemoveAck).IsNotNull().Because("Expected endpoint ack on sender socket for remove.");
+            await Assert.That(senderRemoved).IsNotNull().Because("Expected friend_removed push on sender socket after remove.");
+        }
 
         var recipientReadTask = ReceiveWebSocketTextAsync(recipientWs, token);
         var completed = await Task.WhenAny(recipientReadTask, Task.Delay(TimeSpan.FromSeconds(5), token));
         await Assert.That(ReferenceEquals(completed, recipientReadTask)).IsTrue().Because("Timed out waiting for recipient-side friend_removed push.");
 
         var recipientRemoved = await recipientReadTask;
-        await Assert.That(string.Equals(GetEventName(recipientRemoved), "friend_removed", StringComparison.Ordinal)).IsTrue().Because($"Expected recipient push event friend_removed. Event: {GetEventName(recipientRemoved)}");
+        await Assert.That(GetEventName(recipientRemoved)).IsEqualTo("friend_removed").Because($"Expected recipient push event friend_removed. Event: {GetEventName(recipientRemoved)}");
 
         await senderWs.CloseAsync(WebSocketCloseStatus.NormalClosure, "test done", token);
         await recipientWs.CloseAsync(WebSocketCloseStatus.NormalClosure, "test done", token);
@@ -874,7 +919,7 @@ public class WebSocketTests : BaseEndpointTest
         _ = await ReceiveWebSocketTextAsync(senderWs, token);
 
         var recipientReceived = await ReceiveWebSocketTextAsync(recipientWs, token);
-        await Assert.That(string.Equals(GetEventName(recipientReceived), "friend_request_received", StringComparison.Ordinal)).IsTrue().Because("Expected friend_request_received before accept.");
+        await Assert.That(GetEventName(recipientReceived)).IsEqualTo("friend_request_received").Because("Expected friend_request_received before accept.");
 
         var acceptFrame = new PhxFrame<PhxEndpointPayload> {
             Topic = "system:" + recipientSystemId,
@@ -894,7 +939,7 @@ public class WebSocketTests : BaseEndpointTest
         for (var i = 0; i < 5; i++)
         {
             var frame = await ReceiveWebSocketTextAsync(recipientWs, token);
-            if (string.Equals(GetEventName(frame), "friend_added", StringComparison.Ordinal))
+            if (GetEventName(frame) == "friend_added")
                 break;
         }
 
@@ -922,18 +967,21 @@ public class WebSocketTests : BaseEndpointTest
         {
             var frame = await ReceiveWebSocketTextAsync(senderWs, token);
             var eventName = GetEventName(frame);
-            if (string.Equals(eventName, "phx_reply", StringComparison.Ordinal))
+            if (eventName == "phx_reply")
             {
                 trustAck = frame;
             }
-            else if (string.Equals(eventName, "friend_trusted", StringComparison.Ordinal))
+            else if (eventName == "friend_trusted")
             {
                 trustPush = frame;
             }
         }
 
-        await Assert.That(trustAck is not null).IsTrue().Because("Expected endpoint ack on sender socket for trust.");
-        await Assert.That(trustPush is not null).IsTrue().Because("Expected friend_trusted push on sender socket after trust.");
+        using (Assert.Multiple())
+        {
+            await Assert.That(trustAck).IsNotNull().Because("Expected endpoint ack on sender socket for trust.");
+            await Assert.That(trustPush).IsNotNull().Because("Expected friend_trusted push on sender socket after trust.");
+        }
 
         var untrustFrame = new PhxFrame<PhxEndpointPayload> {
             Topic = "system:" + senderSystemId,
@@ -956,18 +1004,21 @@ public class WebSocketTests : BaseEndpointTest
         {
             var frame = await ReceiveWebSocketTextAsync(senderWs, token);
             var eventName = GetEventName(frame);
-            if (string.Equals(eventName, "phx_reply", StringComparison.Ordinal))
+            if (eventName == "phx_reply")
             {
                 untrustAck = frame;
             }
-            else if (string.Equals(eventName, "friend_untrusted", StringComparison.Ordinal))
+            else if (eventName == "friend_untrusted")
             {
                 untrustPush = frame;
             }
         }
 
-        await Assert.That(untrustAck is not null).IsTrue().Because("Expected endpoint ack on sender socket for untrust.");
-        await Assert.That(untrustPush is not null).IsTrue().Because("Expected friend_untrusted push on sender socket after untrust.");
+        using (Assert.Multiple())
+        {
+            await Assert.That(untrustAck).IsNotNull().Because("Expected endpoint ack on sender socket for untrust.");
+            await Assert.That(untrustPush).IsNotNull().Because("Expected friend_untrusted push on sender socket after untrust.");
+        }
 
         await senderWs.CloseAsync(WebSocketCloseStatus.NormalClosure, "test done", token);
         await recipientWs.CloseAsync(WebSocketCloseStatus.NormalClosure, "test done", token);
@@ -1037,14 +1088,17 @@ public class WebSocketTests : BaseEndpointTest
             await Assert.That(ReferenceEquals(bCompleted, bTask)).IsTrue().Because("Timed out waiting for B-side event after mutual send.");
             var bFrame = await bTask;
             var bEventName = GetEventName(bFrame);
-            if (string.Equals(bEventName, "phx_reply", StringComparison.Ordinal))
+            if (bEventName == "phx_reply")
                 bAck = bFrame;
-            else if (string.Equals(bEventName, "friend_added", StringComparison.Ordinal))
+            else if (bEventName == "friend_added")
                 bFriendAdded = bFrame;
         }
 
-        await Assert.That(bAck is not null).IsTrue().Because("Expected endpoint ack on B socket for mutual send.");
-        await Assert.That(bFriendAdded is not null).IsTrue().Because("Expected friend_added push on B socket after mutual send auto-accept.");
+        using (Assert.Multiple())
+        {
+            await Assert.That(bAck).IsNotNull().Because("Expected endpoint ack on B socket for mutual send.");
+            await Assert.That(bFriendAdded).IsNotNull().Because("Expected friend_added push on B socket after mutual send auto-accept.");
+        }
 
         string? aFriendAdded = null;
         string? aRequestCleared = null;
@@ -1055,14 +1109,17 @@ public class WebSocketTests : BaseEndpointTest
             await Assert.That(ReferenceEquals(aCompleted, aTask)).IsTrue().Because("Timed out waiting for A-side event after mutual send.");
             var aFrame = await aTask;
             var aEventName = GetEventName(aFrame);
-            if (string.Equals(aEventName, "friend_added", StringComparison.Ordinal))
+            if (aEventName == "friend_added")
                 aFriendAdded = aFrame;
-            else if (string.Equals(aEventName, "friend_request_removed", StringComparison.Ordinal))
+            else if (aEventName == "friend_request_removed")
                 aRequestCleared = aFrame;
         }
 
-        await Assert.That(aFriendAdded is not null).IsTrue().Because("Expected friend_added push on A socket after mutual send auto-accept.");
-        await Assert.That(aRequestCleared is not null).IsTrue().Because("Expected friend_request_removed push on A socket after mutual send auto-accept (outgoing request cleanup).");
+        using (Assert.Multiple())
+        {
+            await Assert.That(aFriendAdded).IsNotNull().Because("Expected friend_added push on A socket after mutual send auto-accept.");
+            await Assert.That(aRequestCleared).IsNotNull().Because("Expected friend_request_removed push on A socket after mutual send auto-accept (outgoing request cleanup).");
+        }
 
         await wsA.CloseAsync(WebSocketCloseStatus.NormalClosure, "test done", token);
         await wsB.CloseAsync(WebSocketCloseStatus.NormalClosure, "test done", token);
@@ -1129,24 +1186,5 @@ public class WebSocketTests : BaseEndpointTest
 
         return Encoding.UTF8.GetString(ms.ToArray());
     }
-
-    private static string CreateRandomToken(InterfoldWebApplicationFactory factory, string systemId)
-    {
-        var config = factory.Services.GetRequiredService<IConfiguration>();
-        var authConfig = config.Get<AuthenticationConfiguration>();
-
-        Assert.NotNull(authConfig);
-        AuthHelper.EnsureEs256KeyMaterial(authConfig);
-        
-        var jti = Guid.NewGuid().ToString("N");
-
-        // Set expiry to 100 years in the future. This is practically permanent
-        // but avoids DateTimeOffset.MaxValue which can cause int64 overflow on validation.
-        // If a token is compromised, it can be revoked explicitly via POST /auth/revoke.
-        var now = DateTimeOffset.UtcNow;
-        var expiresAt = now.AddYears(100);
-
-        var token = AuthHelper.CreateToken(authConfig, expiresAt, now, jti, systemId);
-        return token;
-    }
 }
+

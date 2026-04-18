@@ -28,15 +28,18 @@ public class PollsControllerTests : BaseEndpointTest
         {
             Content = JsonContent.Create(new { title = tooLongTitle })
         };
+        AttachPrincipalAuth(req, client, principal);
         var res = await client.SendAsync(req);
         var body = await res.Content.ReadAsStringAsync();
 
-        await Assert.That(res.StatusCode).IsEqualTo(HttpStatusCode.UnprocessableEntity);
-
         // Verify error response includes expected fields.
-        await Assert.That(body.Contains("\"code\"", StringComparison.OrdinalIgnoreCase)).IsTrue();
-        await Assert.That(body.Contains("\"entityRef\"", StringComparison.OrdinalIgnoreCase)).IsTrue();
-        await Assert.That(body.Contains("poll:title_too_long", StringComparison.OrdinalIgnoreCase)).IsTrue();
+        using (Assert.Multiple())
+        {
+            await Assert.That(res.StatusCode).IsEqualTo(HttpStatusCode.UnprocessableEntity);
+            await Assert.That(body.Contains("\"code\"", StringComparison.OrdinalIgnoreCase)).IsTrue();
+            await Assert.That(body.Contains("\"entityRef\"", StringComparison.OrdinalIgnoreCase)).IsTrue();
+            await Assert.That(body.Contains("poll:title_too_long", StringComparison.OrdinalIgnoreCase)).IsTrue();
+        }
     }
     
     [Test, ApiIntegration]
@@ -59,11 +62,15 @@ public class PollsControllerTests : BaseEndpointTest
         {
             Content = JsonContent.Create(new { title = validTitle, description = tooLongDesc })
         };
+        AttachPrincipalAuth(req, client, principal);
         var res = await client.SendAsync(req);
         var body = await res.Content.ReadAsStringAsync();
 
-        await Assert.That(res.StatusCode).IsEqualTo(HttpStatusCode.UnprocessableEntity);
-        await Assert.That(body.Contains("poll:description_too_long", StringComparison.OrdinalIgnoreCase)).IsTrue();
+        using (Assert.Multiple())
+        {
+            await Assert.That(res.StatusCode).IsEqualTo(HttpStatusCode.UnprocessableEntity);
+            await Assert.That(body.Contains("poll:description_too_long", StringComparison.OrdinalIgnoreCase)).IsTrue();
+        }
     }
     
     [Test, ApiIntegration]
@@ -89,10 +96,9 @@ public class PollsControllerTests : BaseEndpointTest
             {
                 Content = JsonContent.Create(new { title = $"Poll_{type}", type })
             };
+            AttachPrincipalAuth(createReq, client, principal);
             var createRes = await client.SendAsync(createReq);
             var createBody = await createRes.Content.ReadAsStringAsync();
-
-            await Assert.That(createRes.StatusCode).IsEqualTo(HttpStatusCode.Created);
 
             // Extract poll ID from response.
             using var createDoc = JsonDocument.Parse(createBody);
@@ -100,14 +106,18 @@ public class PollsControllerTests : BaseEndpointTest
                 .GetProperty("data")
                 .GetProperty("id")
                 .GetString();
-            
-            await Assert.That(pollId).IsNotNullOrWhiteSpace();
+
+            using (Assert.Multiple())
+            {
+                await Assert.That(createRes.StatusCode).IsEqualTo(HttpStatusCode.Created);
+                await Assert.That(pollId).IsNotNullOrWhiteSpace();
+            }
 
             // Verify poll retrieves with correct canonical type.
-            var getRes = await client.GetAsync($"/api/polls/{pollId}");
+            using var getReq = new HttpRequestMessage(HttpMethod.Get, $"/api/polls/{pollId}");
+            AttachPrincipalAuth(getReq, client, principal);
+            var getRes = await client.SendAsync(getReq);
             var getBody = await getRes.Content.ReadAsStringAsync();
-
-            await Assert.That(getRes.StatusCode).IsEqualTo(HttpStatusCode.OK);
 
             // Legacy aliases (single_choice, multiple_choice) should read back as canonical Elixir type names (vote, choice).
             var expectedType = type switch
@@ -117,7 +127,11 @@ public class PollsControllerTests : BaseEndpointTest
                 _ => type
             };
 
-            await Assert.That(getBody.Contains($"\"type\":\"{expectedType}\"", StringComparison.Ordinal)).IsTrue();
+            using (Assert.Multiple())
+            {
+                await Assert.That(getRes.StatusCode).IsEqualTo(HttpStatusCode.OK);
+                await Assert.That(getBody.Contains($"\"type\":\"{expectedType}\"", StringComparison.Ordinal)).IsTrue();
+            }
         }
     }
 
@@ -139,10 +153,9 @@ public class PollsControllerTests : BaseEndpointTest
         {
             Content = JsonContent.Create(new { title = "TimeEndEdgeCase", time_end = initialTimeEnd })
         };
+        AttachPrincipalAuth(createReq, client, "parity-poll-time-end");
         var createRes = await client.SendAsync(createReq);
         var createBody = await createRes.Content.ReadAsStringAsync();
-
-        await Assert.That(createRes.StatusCode).IsEqualTo(HttpStatusCode.Created);
 
         using var createDoc = JsonDocument.Parse(createBody);
         var pollId = createDoc.RootElement
@@ -150,28 +163,37 @@ public class PollsControllerTests : BaseEndpointTest
             .GetProperty("id")
             .GetString();
 
-        await Assert.That(pollId).IsNotNullOrWhiteSpace();
+        using (Assert.Multiple())
+        {
+            await Assert.That(createRes.StatusCode).IsEqualTo(HttpStatusCode.Created);
+            await Assert.That(pollId).IsNotNullOrWhiteSpace();
+        }
 
         using var patchReq = new HttpRequestMessage(HttpMethod.Patch, $"/api/polls/{pollId}")
         {
             Content = JsonContent.Create(new { time_end = (DateTime?)null })
         };
+        AttachPrincipalAuth(patchReq, client, "parity-poll-time-end");
         var patchRes = await client.SendAsync(patchReq);
         var patchBody = await patchRes.Content.ReadAsStringAsync();
 
         await Assert.That(patchRes.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
 
-        var getRes = await client.GetAsync($"/api/polls/{pollId}");
+        using var getReq = new HttpRequestMessage(HttpMethod.Get, $"/api/polls/{pollId}");
+        AttachPrincipalAuth(getReq, client, "parity-poll-time-end");
+        var getRes = await client.SendAsync(getReq);
         var getBody = await getRes.Content.ReadAsStringAsync();
-
-        await Assert.That(getRes.StatusCode).IsEqualTo(HttpStatusCode.OK);
 
         using var getDoc = JsonDocument.Parse(getBody);
         var timeEndElement = getDoc.RootElement
             .GetProperty("data")
             .GetProperty("time_end");
 
-        await Assert.That(timeEndElement.ValueKind).IsEqualTo(JsonValueKind.Null);
+        using (Assert.Multiple())
+        {
+            await Assert.That(getRes.StatusCode).IsEqualTo(HttpStatusCode.OK);
+            await Assert.That(timeEndElement.ValueKind).IsEqualTo(JsonValueKind.Null);
+        }
     }
 
     [Test, ApiIntegration]
@@ -193,11 +215,15 @@ public class PollsControllerTests : BaseEndpointTest
         {
             Content = JsonContent.Create(new { title = tooLongTitle })
         };
+        AttachPrincipalAuth(req, client, principal);
         var res = await client.SendAsync(req);
         var body = await res.Content.ReadAsStringAsync();
 
-        await Assert.That(res.StatusCode).IsEqualTo(HttpStatusCode.UnprocessableEntity);
-        await Assert.That(body.Contains("poll:title_too_long", StringComparison.OrdinalIgnoreCase)).IsTrue();
+        using (Assert.Multiple())
+        {
+            await Assert.That(res.StatusCode).IsEqualTo(HttpStatusCode.UnprocessableEntity);
+            await Assert.That(body.Contains("poll:title_too_long", StringComparison.OrdinalIgnoreCase)).IsTrue();
+        }
     }
     
     [Test, ApiIntegration]
@@ -226,6 +252,7 @@ public class PollsControllerTests : BaseEndpointTest
                     ? JsonContent.Create(new { title = "LegacyPoll" })
                     : null
             };
+            AttachPrincipalAuth(req, client, principal);
             var res = await client.SendAsync(req);
 
             await Assert.That(res.StatusCode).IsEqualTo(HttpStatusCode.NotFound);

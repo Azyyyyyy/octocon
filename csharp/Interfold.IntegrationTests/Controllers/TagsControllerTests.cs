@@ -42,17 +42,20 @@ public class TagsControllerTests : BaseEndpointTest
         {
             Content = JsonContent.Create(new { parentTagId })
         };
+        AttachPrincipalAuth(setReq, client, principal);
         var setRes = await client.SendAsync(setReq);
-
-        await Assert.That(setRes.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
 
         using var removeReq = new HttpRequestMessage(HttpMethod.Delete, $"/api/systems/me/tags/{childTagId}/parent")
         {
             Content = JsonContent.Create(new { })
         };
+        AttachPrincipalAuth(removeReq, client, principal);
         var removeRes = await client.SendAsync(removeReq);
 
-        await Assert.That(removeRes.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
+        using (Assert.Multiple())
+        {
+            await Assert.That(setRes.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
+            await Assert.That(removeRes.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
+        }
     }
-    
 }

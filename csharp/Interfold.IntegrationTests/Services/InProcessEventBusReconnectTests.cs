@@ -28,8 +28,11 @@ public sealed class InProcessEventBusReconnectTests : BaseEndpointTest
 
         await bus.PublishAsync(new TestEvent("second"));
         var secondReceived = await MoveNextWithTimeoutAsync(secondEnumerator, TimeSpan.FromSeconds(2));
-        await Assert.That(secondReceived).IsTrue();
-        await Assert.That(secondEnumerator.Current.Value).IsEqualTo("second");
+        using (Assert.Multiple())
+        {
+            await Assert.That(secondReceived).IsTrue();
+            await Assert.That(secondEnumerator.Current.Value).IsEqualTo("second");
+        }
     }
 
     [Test]
@@ -59,8 +62,11 @@ public sealed class InProcessEventBusReconnectTests : BaseEndpointTest
 
         await bus.PublishAsync(new TestEvent("final"), finalCts.Token);
         var finalReceived = await MoveNextWithTimeoutAsync(finalEnumerator, TimeSpan.FromSeconds(2));
-        await Assert.That(finalReceived).IsTrue();
-        await Assert.That(finalEnumerator.Current.Value).IsEqualTo("final");
+        using (Assert.Multiple())
+        {
+            await Assert.That(finalReceived).IsTrue();
+            await Assert.That(finalEnumerator.Current.Value).IsEqualTo("final");
+        }
     }
 
     private static async Task<bool> MoveNextWithTimeoutAsync(IAsyncEnumerator<TestEvent> enumerator, TimeSpan timeout)

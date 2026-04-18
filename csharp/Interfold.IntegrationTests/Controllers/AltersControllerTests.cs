@@ -1,4 +1,5 @@
 ﻿using System.Net;
+using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
 using Interfold.IntegrationTests.Attributes;
@@ -34,7 +35,7 @@ public class AltersControllerTests : BaseEndpointTest
             {
                 Content = JsonContent.Create(new { username = "avatar-parity" })
             };
-            usernameRequest.Headers.Add("X-Interfold-Principal", principalId);
+            AttachPrincipalAuth(usernameRequest, client, principalId);
             var usernameResponse = await client.SendAsync(usernameRequest);
             await Assert.That(usernameResponse.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
 
@@ -42,7 +43,7 @@ public class AltersControllerTests : BaseEndpointTest
             {
                 Content = JsonContent.Create(new { name = "AvatarTarget" })
             };
-            createRequest.Headers.Add("X-Interfold-Principal", principalId);
+            AttachPrincipalAuth(createRequest, client, principalId);
 
             var createResponse = await client.SendAsync(createRequest);
             var createBody = await createResponse.Content.ReadAsStringAsync();
@@ -50,32 +51,42 @@ public class AltersControllerTests : BaseEndpointTest
 
             var alterId = ReadTrailingIntFromLocation(createResponse);
 
-            using var uploadRequest = BuildMultipartUploadRequest($"/api/systems/me/alters/{alterId}/avatar", principalId, "avatar-alter.png", "image/png");
+            using var uploadRequest = BuildMultipartUploadRequest(client, $"/api/systems/me/alters/{alterId}/avatar", principalId, "avatar-alter.png", "image/png");
             var uploadResponse = await client.SendAsync(uploadRequest);
             await Assert.That(uploadResponse.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
 
-            var publicAlterResponse = await client.GetAsync($"/api/systems/{principalId}/alters/{alterId}");
+            using var publicAlterRequest = new HttpRequestMessage(HttpMethod.Get, $"/api/systems/{principalId}/alters/{alterId}");
+            AttachPrincipalAuth(publicAlterRequest, client, principalId);
+            var publicAlterResponse = await client.SendAsync(publicAlterRequest);
             var publicAlterBody = await publicAlterResponse.Content.ReadAsStringAsync();
-            await Assert.That(publicAlterResponse.StatusCode).IsEqualTo(HttpStatusCode.OK);
 
             var expectedPrefix = $"{publicBase}/{principalId}/{alterId}/";
             var alterAvatarUrl = FindStringContaining(publicAlterBody, expectedPrefix);
-            await Assert.That(alterAvatarUrl).IsNotNullOrWhiteSpace();
+            using (Assert.Multiple())
+            {
+                await Assert.That(publicAlterResponse.StatusCode).IsEqualTo(HttpStatusCode.OK);
+                await Assert.That(alterAvatarUrl).IsNotNullOrWhiteSpace();
+            }
 
             using var deleteReq = new HttpRequestMessage(HttpMethod.Delete, $"/api/systems/me/alters/{alterId}/avatar")
             {
                 Content = JsonContent.Create(new { })
             };
-            deleteReq.Headers.Add("X-Interfold-Principal", principalId);
+            AttachPrincipalAuth(deleteReq, client, principalId);
             var deleteRes = await client.SendAsync(deleteReq);
             await Assert.That(deleteRes.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
 
-            var afterDeleteResponse = await client.GetAsync($"/api/systems/{principalId}/alters/{alterId}");
+            using var afterDeleteRequest = new HttpRequestMessage(HttpMethod.Get, $"/api/systems/{principalId}/alters/{alterId}");
+            AttachPrincipalAuth(afterDeleteRequest, client, principalId);
+            var afterDeleteResponse = await client.SendAsync(afterDeleteRequest);
             var afterDeleteBody = await afterDeleteResponse.Content.ReadAsStringAsync();
-            await Assert.That(afterDeleteResponse.StatusCode).IsEqualTo(HttpStatusCode.OK);
 
             var staleAvatarUrl = FindStringContaining(afterDeleteBody, expectedPrefix);
-            await Assert.That(staleAvatarUrl).IsNullOrWhiteSpace();
+            using (Assert.Multiple())
+            {
+                await Assert.That(afterDeleteResponse.StatusCode).IsEqualTo(HttpStatusCode.OK);
+                await Assert.That(staleAvatarUrl).IsNullOrWhiteSpace();
+            }
         }
         finally
         {
@@ -127,11 +138,14 @@ public class AltersControllerTests : BaseEndpointTest
         // Non-friend: only public field visible.
         var nonFriendRes = await client.GetAsync($"/api/systems/{owner}/alters/{alterId}");
         var nonFriendBody = await nonFriendRes.Content.ReadAsStringAsync();
-        await Assert.That(nonFriendRes.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That(nonFriendBody).Contains("PublicValue");
-        await Assert.That(nonFriendBody).DoesNotContain("FriendsValue");
-        await Assert.That(nonFriendBody).DoesNotContain("TrustedValue");
-        await Assert.That(nonFriendBody).DoesNotContain("PrivateValue");
+        using (Assert.Multiple())
+        {
+            await Assert.That(nonFriendRes.StatusCode).IsEqualTo(HttpStatusCode.OK);
+            await Assert.That(nonFriendBody).Contains("PublicValue");
+            await Assert.That(nonFriendBody).DoesNotContain("FriendsValue");
+            await Assert.That(nonFriendBody).DoesNotContain("TrustedValue");
+            await Assert.That(nonFriendBody).DoesNotContain("PrivateValue");
+        }
 
         // Establish friend relationship.
         await SendFriendRequestAndAcceptAsync(client, friend, owner);
@@ -140,11 +154,14 @@ public class AltersControllerTests : BaseEndpointTest
         var friendReq = new HttpRequestMessage(HttpMethod.Get, $"/api/systems/{owner}/alters/{alterId}");
         var friendRes = await client.SendAsync(friendReq);
         var friendBody = await friendRes.Content.ReadAsStringAsync();
-        await Assert.That(friendRes.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That(friendBody).Contains("PublicValue");
-        await Assert.That(friendBody).Contains("FriendsValue");
-        await Assert.That(friendBody).DoesNotContain("TrustedValue");
-        await Assert.That(friendBody).DoesNotContain("PrivateValue");
+        using (Assert.Multiple())
+        {
+            await Assert.That(friendRes.StatusCode).IsEqualTo(HttpStatusCode.OK);
+            await Assert.That(friendBody).Contains("PublicValue");
+            await Assert.That(friendBody).Contains("FriendsValue");
+            await Assert.That(friendBody).DoesNotContain("TrustedValue");
+            await Assert.That(friendBody).DoesNotContain("PrivateValue");
+        }
 
         // Establish trusted relationship.
         await SendFriendRequestAndAcceptAsync(client, trusted, owner);
@@ -154,11 +171,14 @@ public class AltersControllerTests : BaseEndpointTest
         var trustedReq = new HttpRequestMessage(HttpMethod.Get, $"/api/systems/{owner}/alters/{alterId}");
         var trustedRes = await client.SendAsync(trustedReq);
         var trustedBody = await trustedRes.Content.ReadAsStringAsync();
-        await Assert.That(trustedRes.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That(trustedBody).Contains("PublicValue");
-        await Assert.That(trustedBody).Contains("FriendsValue");
-        await Assert.That(trustedBody).Contains("TrustedValue");
-        await Assert.That(trustedBody).DoesNotContain("PrivateValue");
+        using (Assert.Multiple())
+        {
+            await Assert.That(trustedRes.StatusCode).IsEqualTo(HttpStatusCode.OK);
+            await Assert.That(trustedBody).Contains("PublicValue");
+            await Assert.That(trustedBody).Contains("FriendsValue");
+            await Assert.That(trustedBody).Contains("TrustedValue");
+            await Assert.That(trustedBody).DoesNotContain("PrivateValue");
+        }
     }
     
         [Test, ApiIntegration]
@@ -168,10 +188,7 @@ public class AltersControllerTests : BaseEndpointTest
             .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
             .WithConfiguration("OCTOCON_AUTH_CHALLENGE_ENABLED", "false");
 
-        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
-        {
-            AllowAutoRedirect = false
-        });
+        using var client = factory.CreateDefaultClient();
 
         var owner = "settings-guarded-fields-owner";
         var nonFriend = "settings-guarded-fields-nonfriend";
@@ -203,11 +220,14 @@ public class AltersControllerTests : BaseEndpointTest
         // Non-friend: only public field visible.
         var nonFriendRes = await client.GetAsync($"/api/systems/{owner}/alters/{alterId}");
         var nonFriendBody = await nonFriendRes.Content.ReadAsStringAsync();
-        await Assert.That(nonFriendRes.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That(nonFriendBody).Contains("PublicValue");
-        await Assert.That(nonFriendBody).DoesNotContain("FriendsValue");
-        await Assert.That(nonFriendBody).DoesNotContain("TrustedValue");
-        await Assert.That(nonFriendBody).DoesNotContain("PrivateValue");
+        using (Assert.Multiple())
+        {
+            await Assert.That(nonFriendRes.StatusCode).IsEqualTo(HttpStatusCode.OK);
+            await Assert.That(nonFriendBody).Contains("PublicValue");
+            await Assert.That(nonFriendBody).DoesNotContain("FriendsValue");
+            await Assert.That(nonFriendBody).DoesNotContain("TrustedValue");
+            await Assert.That(nonFriendBody).DoesNotContain("PrivateValue");
+        }
 
         // Establish friend relationship.
         await SendFriendRequestAndAcceptAsync(client, friend, owner);
@@ -216,11 +236,14 @@ public class AltersControllerTests : BaseEndpointTest
         var friendReq = new HttpRequestMessage(HttpMethod.Get, $"/api/systems/{owner}/alters/{alterId}");
         var friendRes = await client.SendAsync(friendReq);
         var friendBody = await friendRes.Content.ReadAsStringAsync();
-        await Assert.That(friendRes.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That(friendBody).Contains("PublicValue");
-        await Assert.That(friendBody).Contains("FriendsValue");
-        await Assert.That(friendBody).DoesNotContain("TrustedValue");
-        await Assert.That(friendBody).DoesNotContain("PrivateValue");
+        using (Assert.Multiple())
+        {
+            await Assert.That(friendRes.StatusCode).IsEqualTo(HttpStatusCode.OK);
+            await Assert.That(friendBody).Contains("PublicValue");
+            await Assert.That(friendBody).Contains("FriendsValue");
+            await Assert.That(friendBody).DoesNotContain("TrustedValue");
+            await Assert.That(friendBody).DoesNotContain("PrivateValue");
+        }
 
         // Establish trusted relationship.
         await SendFriendRequestAndAcceptAsync(client, trusted, owner);
@@ -230,11 +253,14 @@ public class AltersControllerTests : BaseEndpointTest
         var trustedReq = new HttpRequestMessage(HttpMethod.Get, $"/api/systems/{owner}/alters/{alterId}");
         var trustedRes = await client.SendAsync(trustedReq);
         var trustedBody = await trustedRes.Content.ReadAsStringAsync();
-        await Assert.That(trustedRes.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That(trustedBody).Contains("PublicValue");
-        await Assert.That(trustedBody).Contains("FriendsValue");
-        await Assert.That(trustedBody).Contains("TrustedValue");
-        await Assert.That(trustedBody).DoesNotContain("PrivateValue");
+        using (Assert.Multiple())
+        {
+            await Assert.That(trustedRes.StatusCode).IsEqualTo(HttpStatusCode.OK);
+            await Assert.That(trustedBody).Contains("PublicValue");
+            await Assert.That(trustedBody).Contains("FriendsValue");
+            await Assert.That(trustedBody).Contains("TrustedValue");
+            await Assert.That(trustedBody).DoesNotContain("PrivateValue");
+        }
     }
         [Test, ApiIntegration]
     public async Task AlterJournal_ListWhenEmpty_ReturnsDataAsEmptyArray()
@@ -252,15 +278,18 @@ public class AltersControllerTests : BaseEndpointTest
         var alterId = await CreateAlterAsync(client, principal, "NoJournalAlter");
 
         using var listReq = new HttpRequestMessage(HttpMethod.Get, $"/api/systems/me/alters/{alterId}/journals");
+        AttachPrincipalAuth(listReq, client, principal);
         var listRes = await client.SendAsync(listReq);
         var listBody = await listRes.Content.ReadAsStringAsync();
 
-        await Assert.That(listRes.StatusCode).IsEqualTo(HttpStatusCode.OK);
-
         using var doc = JsonDocument.Parse(listBody);
-        await Assert.That(doc.RootElement.TryGetProperty("data", out var dataProp)).IsTrue();
-        await Assert.That(dataProp.ValueKind).IsEqualTo(JsonValueKind.Array);
-        await Assert.That(dataProp.GetArrayLength()).IsEqualTo(0);
+        using (Assert.Multiple())
+        {
+            await Assert.That(listRes.StatusCode).IsEqualTo(HttpStatusCode.OK);
+            await Assert.That(doc.RootElement.TryGetProperty("data", out var dataProp)).IsTrue();
+            await Assert.That(dataProp.ValueKind).IsEqualTo(JsonValueKind.Array);
+            await Assert.That(dataProp.GetArrayLength()).IsEqualTo(0);
+        }
     }
 
     [Test, ApiIntegration]
@@ -283,50 +312,61 @@ public class AltersControllerTests : BaseEndpointTest
         {
             Content = JsonContent.Create(new { title = "NestedParityJournal" })
         };
+        AttachPrincipalAuth(createReq, client, principal);
         var createRes = await client.SendAsync(createReq);
         var createBody = await createRes.Content.ReadAsStringAsync();
-
-        await Assert.That(createRes.StatusCode).IsEqualTo(HttpStatusCode.Created);
 
         var entryId = ReadNestedString(createBody, "data", "id");
         if (string.IsNullOrWhiteSpace(entryId))
             entryId = ReadNestedString(createBody, "data", "entry_id");
-        await Assert.That(entryId).IsNotNullOrWhiteSpace();
 
         var replay = ReadBool(createBody, "replay");
-        await Assert.That(replay).IsFalse();
+        using (Assert.Multiple())
+        {
+            await Assert.That(createRes.StatusCode).IsEqualTo(HttpStatusCode.Created);
+            await Assert.That(entryId).IsNotNullOrWhiteSpace();
+            await Assert.That(replay).IsFalse();
+        }
 
         // GET /api/systems/me/alters/:id/journals  →  200 + {data:[...]}
         using var listReq = new HttpRequestMessage(HttpMethod.Get, $"/api/systems/me/alters/{alterId}/journals");
+        AttachPrincipalAuth(listReq, client, principal);
         var listRes = await client.SendAsync(listReq);
         var listBody = await listRes.Content.ReadAsStringAsync();
-
-        await Assert.That(listRes.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That(listBody.Contains("data", StringComparison.OrdinalIgnoreCase)).IsTrue();
+        using (Assert.Multiple())
+        {
+            await Assert.That(listRes.StatusCode).IsEqualTo(HttpStatusCode.OK);
+            await Assert.That(listBody.Contains("data", StringComparison.OrdinalIgnoreCase)).IsTrue();
+        }
 
         // GET /api/systems/me/alters/journals/:journalId  →  200 + {data:{...}}
         using var showReq = new HttpRequestMessage(HttpMethod.Get, $"/api/systems/me/alters/journals/{entryId}");
+        AttachPrincipalAuth(showReq, client, principal);
         var showRes = await client.SendAsync(showReq);
         var showBody = await showRes.Content.ReadAsStringAsync();
-
-        await Assert.That(showRes.StatusCode).IsEqualTo(HttpStatusCode.OK);
 
         var shownId = ReadNestedString(showBody, "data", "id");
         if (string.IsNullOrWhiteSpace(shownId))
             shownId = ReadNestedString(showBody, "data", "entry_id");
-        await Assert.That(string.Equals(shownId, entryId, StringComparison.OrdinalIgnoreCase)).IsTrue();
+        using (Assert.Multiple())
+        {
+            await Assert.That(showRes.StatusCode).IsEqualTo(HttpStatusCode.OK);
+            await Assert.That(string.Equals(shownId, entryId, StringComparison.OrdinalIgnoreCase)).IsTrue();
+        }
 
         // PATCH /api/systems/me/alters/journals/:journalId  →  204
         using var patchReq = new HttpRequestMessage(HttpMethod.Patch, $"/api/systems/me/alters/journals/{entryId}")
         {
             Content = JsonContent.Create(new { title = "UpdatedParityJournal" })
         };
+        AttachPrincipalAuth(patchReq, client, principal);
         var patchRes = await client.SendAsync(patchReq);
 
         await Assert.That(patchRes.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
 
         // DELETE /api/systems/me/alters/journals/:journalId  →  204
         using var deleteReq = new HttpRequestMessage(HttpMethod.Delete, $"/api/systems/me/alters/journals/{entryId}");
+        AttachPrincipalAuth(deleteReq, client, principal);
         var deleteRes = await client.SendAsync(deleteReq);
 
         await Assert.That(deleteRes.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
@@ -351,6 +391,7 @@ public class AltersControllerTests : BaseEndpointTest
         {
             Content = JsonContent.Create(new { title = "ToDelete" })
         };
+        AttachPrincipalAuth(createReq, client, principal);
         var createRes = await client.SendAsync(createReq);
         var createBody = await createRes.Content.ReadAsStringAsync();
         var entryId = ReadNestedString(createBody, "data", "id");
@@ -358,9 +399,11 @@ public class AltersControllerTests : BaseEndpointTest
             entryId = ReadNestedString(createBody, "data", "entry_id");
 
         using var deleteReq = new HttpRequestMessage(HttpMethod.Delete, $"/api/systems/me/alters/journals/{entryId}");
+        AttachPrincipalAuth(deleteReq, client, principal);
         await client.SendAsync(deleteReq);
 
         using var showReq = new HttpRequestMessage(HttpMethod.Get, $"/api/systems/me/alters/journals/{entryId}");
+        AttachPrincipalAuth(showReq, client, principal);
         var showRes = await client.SendAsync(showReq);
 
         await Assert.That(showRes.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
@@ -406,8 +449,11 @@ public class AltersControllerTests : BaseEndpointTest
         using (var doc = JsonDocument.Parse(firstBody))
         {
             var root = doc.RootElement;
-            await Assert.That(root.TryGetProperty("data", out _)).IsTrue();
-            await Assert.That(root.GetProperty("replay").GetBoolean()).IsFalse();
+            using (Assert.Multiple())
+            {
+                await Assert.That(root.TryGetProperty("data", out _)).IsTrue();
+                await Assert.That(root.GetProperty("replay").GetBoolean()).IsFalse();
+            }
         }
 
         // Second call (replay)
@@ -426,8 +472,11 @@ public class AltersControllerTests : BaseEndpointTest
         using (var doc = JsonDocument.Parse(secondBody))
         {
             var root = doc.RootElement;
-            await Assert.That(root.TryGetProperty("data", out _)).IsTrue();
-            await Assert.That(root.GetProperty("replay").GetBoolean()).IsTrue();
+            using (Assert.Multiple())
+            {
+                await Assert.That(root.TryGetProperty("data", out _)).IsTrue();
+                await Assert.That(root.GetProperty("replay").GetBoolean()).IsTrue();
+            }
         }
     }
     
@@ -446,6 +495,7 @@ public class AltersControllerTests : BaseEndpointTest
         // Query a non-existent alter should return 404, not 500
         var principal = "operational-health-test";
         using var req = new HttpRequestMessage(HttpMethod.Get, "/api/systems/me/alters/9999");
+        AttachPrincipalAuth(req, client, principal);
         var res = await client.SendAsync(req);
 
         // Expect 404 (not found) rather than 500 (error), validating guarded read path worked

@@ -15,11 +15,13 @@ public class HeartbeatControllerTests : BaseEndpointTest
         using var client = factory.CreateClient();
 
         var response = await client.GetAsync("/api/heartbeat");
-        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
-
-        await Assert.That(
-            response.Headers.TryGetValues("X-Interfold-Contract", out var contractValues) &&
-            contractValues.Contains("2026-03-v1", StringComparer.Ordinal)).IsTrue();
+        using (Assert.Multiple())
+        {
+            await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
+            await Assert.That(
+                response.Headers.TryGetValues("X-Interfold-Contract", out var contractValues) &&
+                contractValues.Contains("2026-03-v1", StringComparer.Ordinal)).IsTrue();
+        }
     }
     
     [Test, ApiIntegration]
@@ -52,10 +54,13 @@ public class HeartbeatControllerTests : BaseEndpointTest
         request.Headers.Add("X-Request-Id", sentId);
 
         var response = await client.SendAsync(request);
-
-        await Assert.That(
-            response.Headers.TryGetValues("X-Interfold-Request-Id", out var values) &&
-            values.First() == sentId).IsTrue();
+        using (Assert.Multiple())
+        {
+            await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
+            await Assert.That(
+                response.Headers.TryGetValues("X-Interfold-Request-Id", out var values) &&
+                values.First() == sentId).IsTrue();
+        }
     }
     
     [Test, ApiIntegration]
@@ -68,10 +73,13 @@ public class HeartbeatControllerTests : BaseEndpointTest
         for (var i = 0; i < 3; i++)
         {
             var response = await client.GetAsync("/api/heartbeat");
-
-            await Assert.That(
-                response.Headers.TryGetValues("X-Interfold-Request-Id", out var values) &&
-                !string.IsNullOrWhiteSpace(values.First())).IsTrue();
+            using (Assert.Multiple())
+            {
+                await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
+                await Assert.That(
+                    response.Headers.TryGetValues("X-Interfold-Request-Id", out var values) &&
+                    !string.IsNullOrWhiteSpace(values.First())).IsTrue();
+            }
         }
     }
 }

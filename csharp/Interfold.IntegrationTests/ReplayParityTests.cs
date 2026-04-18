@@ -43,10 +43,13 @@ public sealed class ReplayParityTests : BaseEndpointTest
     private static async Task RunTraceAsync(string fixtureFileName)
     {
         var fixturePath = Path.Combine(AppContext.BaseDirectory, "Fixtures", fixtureFileName);
-        await Assert.That(File.Exists(fixturePath)).IsTrue();
 
         var trace = ReplayTrace.Load(fixturePath);
-        await Assert.That(trace.Steps.Count > 0).IsTrue();
+        using (Assert.Multiple())
+        {
+            await Assert.That(File.Exists(fixturePath)).IsTrue();
+            await Assert.That(trace.Steps.Count > 0).IsTrue();
+        }
 
         await using var factory = new InterfoldWebApplicationFactory()
             .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
@@ -87,6 +90,11 @@ public sealed class ReplayParityTests : BaseEndpointTest
             request.Content = new StringContent(bodyJson, Encoding.UTF8, "application/json");
         }
 
+        if (!string.IsNullOrWhiteSpace(step.PrincipalId))
+        {
+            AttachPrincipalAuth(request, client, step.PrincipalId);
+        }
+
         var response = await client.SendAsync(request);
         var body = await response.Content.ReadAsStringAsync();
 
@@ -105,13 +113,9 @@ public sealed class ReplayParityTests : BaseEndpointTest
             using var doc = JsonDocument.Parse(body);
             foreach (var (varName, jsonPath) in captures)
             {
-                if (TryReadStringField(doc.RootElement, jsonPath, out var value))
+                if (TryCaptureValue(doc.RootElement, jsonPath, out var capturedValue))
                 {
-                    vars[varName] = value;
-                }
-                else if (TryReadIntField(doc.RootElement, jsonPath, out var intVal))
-                {
-                    vars[varName] = intVal.ToString();
+                    vars[varName] = capturedValue;
                 }
                 else
                 {
@@ -131,6 +135,39 @@ public sealed class ReplayParityTests : BaseEndpointTest
             template = template.Replace($"{{{key}}}", value, StringComparison.OrdinalIgnoreCase);
 
         return template;
+    }
+
+    private static bool TryCaptureValue(JsonElement root, string jsonPath, out string value)
+    {
+        foreach (var candidate in GetCaptureCandidates(jsonPath))
+        {
+            if (TryReadStringField(root, candidate, out value))
+                return true;
+
+            if (TryReadIntField(root, candidate, out var intValue))
+            {
+                value = intValue.ToString();
+                return true;
+            }
+        }
+
+        value = string.Empty;
+        return false;
+    }
+
+    private static IEnumerable<string> GetCaptureCandidates(string jsonPath)
+    {
+        yield return jsonPath;
+
+        if (jsonPath.Equals("alterId", StringComparison.OrdinalIgnoreCase)
+            || jsonPath.Equals("entryId", StringComparison.OrdinalIgnoreCase)
+            || jsonPath.Equals("pollId", StringComparison.OrdinalIgnoreCase)
+            || jsonPath.Equals("tagId", StringComparison.OrdinalIgnoreCase)
+            || jsonPath.Equals("frontId", StringComparison.OrdinalIgnoreCase))
+        {
+            // Backward compatibility for fixtures that still request legacy create keys.
+            yield return "id";
+        }
     }
 
     private static bool TryReadStringField(JsonElement root, string name, out string value)

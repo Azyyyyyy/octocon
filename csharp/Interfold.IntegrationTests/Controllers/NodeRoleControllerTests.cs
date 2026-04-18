@@ -21,8 +21,11 @@ public class NodeRoleControllerTests : BaseEndpointTest
         var role = ReadStringField(body, "role");
         var ownsSingletons = ReadBoolField(body, "owns_singletons");
 
-        await Assert.That(role).IsEqualTo("auxiliary");
-        await Assert.That(ownsSingletons).IsFalse();
+        using (Assert.Multiple())
+        {
+            await Assert.That(role).IsEqualTo("auxiliary");
+            await Assert.That(ownsSingletons).IsFalse();
+        }
     }
 
     [Test, ApiIntegration]
@@ -41,8 +44,11 @@ public class NodeRoleControllerTests : BaseEndpointTest
         var role = ReadStringField(body, "role");
         var ownsSingletons = ReadBoolField(body, "owns_singletons");
 
-        await Assert.That(role).IsEqualTo("primary");
-        await Assert.That(ownsSingletons).IsTrue();
+        using (Assert.Multiple())
+        {
+            await Assert.That(role).IsEqualTo("primary");
+            await Assert.That(ownsSingletons).IsTrue();
+        }
     }
 
     [Test, ApiIntegration]
@@ -56,12 +62,13 @@ public class NodeRoleControllerTests : BaseEndpointTest
 
         var response = await client.GetAsync("/health/node-role");
 
-        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
-
         var body = await response.Content.ReadAsStringAsync();
         var role = ReadStringField(body, "role");
-
-        await Assert.That(role).IsEqualTo("primary");
+        using (Assert.Multiple())
+        {
+            await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
+            await Assert.That(role).IsEqualTo("primary");
+        }
     }
 
     [Test, ApiIntegration]
@@ -82,8 +89,11 @@ public class NodeRoleControllerTests : BaseEndpointTest
         var role = ReadStringField(body, "role");
         var ownsSingletons = ReadBoolField(body, "owns_singletons");
 
-        await Assert.That(role).IsEqualTo("sidecar");
-        await Assert.That(ownsSingletons).IsFalse();
+        using (Assert.Multiple())
+        {
+            await Assert.That(role).IsEqualTo("sidecar");
+            await Assert.That(ownsSingletons).IsFalse();
+        }
     }
 
     [Test, ApiIntegration]

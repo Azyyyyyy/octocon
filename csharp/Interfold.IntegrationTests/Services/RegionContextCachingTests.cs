@@ -58,8 +58,11 @@ public sealed class RegionContextCachingTests : BaseEndpointTest
     public async Task ResolveConsistency_ReturnsLocal_ForSameRegion()
     {
         var ctx = BuildContext("nam");
-        await Assert.That(ctx.ResolveConsistency("nam")).IsEqualTo("local");
-        await Assert.That(ctx.ResolveConsistency("NAM")).IsEqualTo("local");
+        using (Assert.Multiple())
+        {
+            await Assert.That(ctx.ResolveConsistency("nam")).IsEqualTo("local");
+            await Assert.That(ctx.ResolveConsistency("NAM")).IsEqualTo("local");
+        }
     }
 
     [Test]

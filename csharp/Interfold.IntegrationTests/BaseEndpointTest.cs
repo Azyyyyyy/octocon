@@ -3,7 +3,11 @@ using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
+using Interfold.Infrastructure;
+using Interfold.Infrastructure.Configuration;
 using Interfold.IntegrationTests.TestServices;
+using Microsoft.Extensions.Configuration;
+using TUnit.Core.Services;
 
 namespace Interfold.IntegrationTests;
 
@@ -159,10 +163,10 @@ public class BaseEndpointTest
         return null;
     }
     
-    internal static HttpRequestMessage BuildMultipartUploadRequest(string path, string principalId, string fileName, string contentType)
+    internal static HttpRequestMessage BuildMultipartUploadRequest(HttpClient client, string path, string principalId, string fileName, string contentType)
     {
         var request = new HttpRequestMessage(HttpMethod.Put, path);
-        request.Headers.Add("X-Interfold-Principal", principalId);
+        AttachPrincipalAuth(request, client, principalId);
         request.Headers.Add("X-Interfold-Idempotency-Key", Guid.NewGuid().ToString("N"));
 
         var data = Encoding.UTF8.GetBytes("octocon-avatar-bytes");
@@ -225,6 +229,10 @@ public class BaseEndpointTest
         await using var factory = new InterfoldWebApplicationFactory()
             .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory");
         using var client = factory.CreateClient();
+        var token = factory.CreateToken("soak-default-principal");
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        client.DefaultRequestHeaders.Remove("X-Interfold-Principal");
+        client.DefaultRequestHeaders.Add("X-Interfold-Principal", "soak-default-principal");
 
         var key = Guid.NewGuid().ToString("N");
 
@@ -257,10 +265,9 @@ public class BaseEndpointTest
 
     internal static async Task UpdateAlterFieldsAsync(HttpClient client, string principal, int alterId, dynamic[] fields)
     {
-        using var req = new HttpRequestMessage(HttpMethod.Patch, $"/api/systems/me/alters/{alterId}")
-        {
-            Content = JsonContent.Create(new { fields })
-        };
+        using var req = new HttpRequestMessage(HttpMethod.Patch, $"/api/systems/me/alters/{alterId}");
+        req.Content = JsonContent.Create(new { fields });
+        AttachPrincipalAuth(req, client, principal);
         var res = await client.SendAsync(req);
 
         await Assert.That(res.StatusCode == HttpStatusCode.NoContent).IsTrue().Because($"Expected alter field update 204, got {(int)res.StatusCode}. Body: {await res.Content.ReadAsStringAsync()}");
@@ -270,6 +277,7 @@ public class BaseEndpointTest
     {
         using var req = new HttpRequestMessage(HttpMethod.Post, "/api/systems/me/alters");
         req.Content = JsonContent.Create(new { name });
+        AttachPrincipalAuth(req, client, principal);
 
         var res = await client.SendAsync(req);
         var body = await res.Content.ReadAsStringAsync();
@@ -284,7 +292,8 @@ public class BaseEndpointTest
 
             foreach (var child in prop.Value.EnumerateObject())
             {
-                if (child.Name.Equals("alterId", StringComparison.OrdinalIgnoreCase) &&
+                if ((child.Name.Equals("alterId", StringComparison.OrdinalIgnoreCase) ||
+                     child.Name.Equals("id", StringComparison.OrdinalIgnoreCase)) &&
                     child.Value.TryGetInt32(out var id))
                     return id;
             }
@@ -297,6 +306,7 @@ public class BaseEndpointTest
     {
         using var req = new HttpRequestMessage(HttpMethod.Post, "/api/systems/me/tags");
         req.Content = JsonContent.Create(new { name });
+        AttachPrincipalAuth(req, client, principal);
         var res = await client.SendAsync(req);
         var body = await res.Content.ReadAsStringAsync();
 
@@ -316,6 +326,7 @@ public class BaseEndpointTest
     {
         using var req = new HttpRequestMessage(HttpMethod.Patch, $"/api/systems/me/alters/{alterId}");
         req.Content = JsonContent.Create(new { security_level = securityLevel });
+        AttachPrincipalAuth(req, client, principal);
         var res = await client.SendAsync(req);
         await Assert.That(res.StatusCode == HttpStatusCode.NoContent).IsTrue().Because($"Expected alter security update 204, got {(int)res.StatusCode}. Body: {await res.Content.ReadAsStringAsync()}");
     }
@@ -324,6 +335,7 @@ public class BaseEndpointTest
     {
         using var req = new HttpRequestMessage(HttpMethod.Patch, $"/api/systems/me/tags/{tagId}");
         req.Content = JsonContent.Create(new { security_level = securityLevel });
+        AttachPrincipalAuth(req, client, principal);
         var res = await client.SendAsync(req);
         await Assert.That(res.StatusCode == HttpStatusCode.NoContent).IsTrue().Because($"Expected tag security update 204, got {(int)res.StatusCode}. Body: {await res.Content.ReadAsStringAsync()}");
     }
@@ -332,6 +344,7 @@ public class BaseEndpointTest
     {
         using var req = new HttpRequestMessage(HttpMethod.Post, "/api/systems/me/front/start");
         req.Content = JsonContent.Create(new { id = alterId });
+        AttachPrincipalAuth(req, client, principal);
         var res = await client.SendAsync(req);
         await Assert.That(res.StatusCode == HttpStatusCode.Created).IsTrue().Because($"Expected front start 201, got {(int)res.StatusCode}. Body: {await res.Content.ReadAsStringAsync()}");
     }
@@ -340,11 +353,13 @@ public class BaseEndpointTest
     {
         using var sendReq = new HttpRequestMessage(HttpMethod.Put, $"/api/friend-requests/{recipient}");
         sendReq.Content = JsonContent.Create(new { });
+        AttachPrincipalAuth(sendReq, client, sender);
         var sendRes = await client.SendAsync(sendReq);
         await Assert.That(sendRes.StatusCode == HttpStatusCode.NoContent).IsTrue().Because($"Expected friend-request send 204, got {(int)sendRes.StatusCode}. Body: {await sendRes.Content.ReadAsStringAsync()}");
 
         using var acceptReq = new HttpRequestMessage(HttpMethod.Post, $"/api/friend-requests/{sender}/accept");
         acceptReq.Content = JsonContent.Create(new { });
+        AttachPrincipalAuth(acceptReq, client, recipient);
         var acceptRes = await client.SendAsync(acceptReq);
         await Assert.That(acceptRes.StatusCode == HttpStatusCode.NoContent).IsTrue().Because($"Expected friend-request accept 204, got {(int)acceptRes.StatusCode}. Body: {await acceptRes.Content.ReadAsStringAsync()}");
     }
@@ -353,6 +368,7 @@ public class BaseEndpointTest
     {
         using var req = new HttpRequestMessage(HttpMethod.Post, $"/api/friends/{friendId}/trust");
         req.Content = JsonContent.Create(new { });
+        AttachPrincipalAuth(req, client, principal);
         var res = await client.SendAsync(req);
         await Assert.That(res.StatusCode == HttpStatusCode.NoContent).IsTrue().Because($"Expected trust set 204, got {(int)res.StatusCode}. Body: {await res.Content.ReadAsStringAsync()}");
     }
@@ -360,17 +376,17 @@ public class BaseEndpointTest
     internal static async Task<(HttpStatusCode StatusCode, string Body)> SendFrontStartAsync(
         HttpClient client,
         int alterId,
-        string? comment)
+        string? comment,
+        string principal = "fronting-default-principal")
     {
-        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/systems/me/front/start")
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/systems/me/front/start");
+        request.Content = JsonContent.Create(new
         {
-            Content = JsonContent.Create(new
-            {
-                alterId,
-                comment,
-                idempotencyKey = Guid.NewGuid().ToString("N")
-            })
-        };
+            alterId,
+            comment,
+            idempotencyKey = Guid.NewGuid().ToString("N")
+        });
+        AttachPrincipalAuth(request, client, principal);
 
         var response = await client.SendAsync(request);
         var body = await response.Content.ReadAsStringAsync();
@@ -380,16 +396,16 @@ public class BaseEndpointTest
 
     internal static async Task<(HttpStatusCode StatusCode, string Body)> SendFrontEndAsync(
         HttpClient client,
-        int alterId)
+        int alterId,
+        string principal = "fronting-default-principal")
     {
-        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/systems/me/front/end")
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/systems/me/front/end");
+        request.Content = JsonContent.Create(new
         {
-            Content = JsonContent.Create(new
-            {
-                alterId,
-                idempotencyKey = Guid.NewGuid().ToString("N")
-            })
-        };
+            alterId,
+            idempotencyKey = Guid.NewGuid().ToString("N")
+        });
+        AttachPrincipalAuth(request, client, principal);
 
         var response = await client.SendAsync(request);
         var body = await response.Content.ReadAsStringAsync();
@@ -408,6 +424,7 @@ public class BaseEndpointTest
         using var req = new HttpRequestMessage(HttpMethod.Get, path);
         if (!string.IsNullOrWhiteSpace(principal))
         {
+            AttachPrincipalAuth(req, client, principal);
         }
 
         var res = await client.SendAsync(req);
@@ -423,6 +440,7 @@ public class BaseEndpointTest
     {
         using var req = new HttpRequestMessage(HttpMethod.Post, "/api/systems/me/settings/fields");
         req.Content = JsonContent.Create(new { name = fieldName, type, security_level = securityLevel });
+        AttachPrincipalAuth(req, client, principal);
         var res = await client.SendAsync(req);
         var body = await res.Content.ReadAsStringAsync();
 
@@ -437,5 +455,33 @@ public class BaseEndpointTest
         }
 
         throw new InvalidOperationException($"Cannot extract field ID from response body: {body}");
+    }
+    
+    internal static string CreateRandomToken(InterfoldWebApplicationFactory factory, string systemId)
+    {
+        var config = factory.Services.GetRequiredService<IConfiguration>();
+        var authConfig = config.Get<AuthenticationConfiguration>();
+
+        Assert.NotNull(authConfig);
+        AuthHelper.EnsureEs256KeyMaterial(authConfig);
+        
+        var jti = Guid.NewGuid().ToString("N");
+
+        var now = DateTimeOffset.UtcNow;
+        var expiresAt = now.AddDays(1);
+
+        var token = AuthHelper.CreateToken(authConfig, expiresAt, now, jti, systemId);
+        return token;
+    }
+
+    internal static void AttachPrincipalAuth(HttpRequestMessage request, HttpClient client, string principal)
+    {
+        if (!InterfoldWebApplicationFactory.TryGetFactory(client, out var factory))
+            throw new InvalidOperationException("Could not resolve test factory for HttpClient. Use InterfoldWebApplicationFactory.CreateClient() to create test clients.");
+
+        var token = factory.CreateToken(principal);
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        request.Headers.Remove("X-Interfold-Principal");
+        request.Headers.Add("X-Interfold-Principal", principal);
     }
 }

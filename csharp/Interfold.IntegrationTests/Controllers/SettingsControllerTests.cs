@@ -29,17 +29,22 @@ public class SettingsControllerTests : BaseEndpointTest
 
             var principalId = $"sys-avatar-{Guid.NewGuid():N}"[..18];
 
-            using var uploadRequest = BuildMultipartUploadRequest("/api/settings/avatar", principalId, "avatar-system.png", "image/png");
+            using var uploadRequest = BuildMultipartUploadRequest(client, "/api/settings/avatar", principalId, "avatar-system.png", "image/png");
             var uploadResponse = await client.SendAsync(uploadRequest);
             await Assert.That(uploadResponse.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
 
-            var profileResponse = await client.GetAsync($"/api/systems/{principalId}");
+            using var profileRequest = new HttpRequestMessage(HttpMethod.Get, $"/api/systems/{principalId}");
+            AttachPrincipalAuth(profileRequest, client, principalId);
+            var profileResponse = await client.SendAsync(profileRequest);
             var profileBody = await profileResponse.Content.ReadAsStringAsync();
-            await Assert.That(profileResponse.StatusCode).IsEqualTo(HttpStatusCode.OK);
 
             var avatarUrl = ReadNestedStringField(profileBody, "data", "avatar_url");
-            await Assert.That(avatarUrl).IsNotNullOrWhiteSpace();
-            await Assert.That(avatarUrl.StartsWith($"{publicBase}/{principalId}/self/", StringComparison.Ordinal)).IsTrue();
+            using (Assert.Multiple())
+            {
+                await Assert.That(profileResponse.StatusCode).IsEqualTo(HttpStatusCode.OK);
+                await Assert.That(avatarUrl).IsNotNullOrWhiteSpace();
+                await Assert.That(avatarUrl.StartsWith($"{publicBase}/{principalId}/self/", StringComparison.Ordinal)).IsTrue();
+            }
         }
         finally
         {
@@ -67,6 +72,7 @@ public class SettingsControllerTests : BaseEndpointTest
         {
             Content = JsonContent.Create(new { name = "FallbackField", type = "garbage" })
         };
+        AttachPrincipalAuth(req1, client, principal);
         var res1 = await client.SendAsync(req1);
 
         await Assert.That(res1.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
@@ -91,6 +97,7 @@ public class SettingsControllerTests : BaseEndpointTest
         {
             Content = JsonContent.Create(new { name = "NoTypeField" })
         };
+        AttachPrincipalAuth(req, client, principal);
         var res = await client.SendAsync(req);
 
         await Assert.That(res.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
@@ -129,10 +136,9 @@ public class SettingsControllerTests : BaseEndpointTest
         {
             Content = JsonContent.Create(new { name = "DefaultSecurityField", type = "text" })
         };
+        AttachPrincipalAuth(req, client, principal);
         var res = await client.SendAsync(req);
         var body = await res.Content.ReadAsStringAsync();
-
-        await Assert.That(res.StatusCode).IsEqualTo(HttpStatusCode.Created);
 
         // Extract field and verify security_level defaults to private.
         using var doc = JsonDocument.Parse(body);
@@ -141,6 +147,10 @@ public class SettingsControllerTests : BaseEndpointTest
             .GetProperty("security_level")
             .GetString();
 
-        await Assert.That(securityLevel).IsEqualTo("private");
+        using (Assert.Multiple())
+        {
+            await Assert.That(res.StatusCode).IsEqualTo(HttpStatusCode.Created);
+            await Assert.That(securityLevel).IsEqualTo("private");
+        }
     }
 }

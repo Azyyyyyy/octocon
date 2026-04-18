@@ -28,6 +28,7 @@ public class FrontingControllerTests : BaseEndpointTest
         {
             Content = JsonContent.Create(new { id = alterId })
         };
+        AttachPrincipalAuth(req, client, principal);
         var res = await client.SendAsync(req);
         var body = await res.Content.ReadAsStringAsync();
 
@@ -48,10 +49,12 @@ public class FrontingControllerTests : BaseEndpointTest
         var startAnchor = DateTimeOffset.UtcNow.AddMinutes(-1).ToUnixTimeSeconds();
 
         var started = await SendFrontStartAsync(client, alterId: 101, comment: "phase3-history");
-        await Assert.That(started.StatusCode).IsEqualTo(HttpStatusCode.Created);
-
         var startedFrontId = ReadStringField(started.Body, "frontId");
-        await Assert.That(startedFrontId).IsNotNullOrWhiteSpace();
+        using (Assert.Multiple())
+        {
+            await Assert.That(started.StatusCode).IsEqualTo(HttpStatusCode.Created);
+            await Assert.That(startedFrontId).IsNotNullOrWhiteSpace();
+        }
 
         var ended = await SendFrontEndAsync(client, alterId: 101);
         await Assert.That(ended.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
@@ -59,23 +62,27 @@ public class FrontingControllerTests : BaseEndpointTest
         var endAnchor = DateTimeOffset.UtcNow.AddMinutes(1).ToUnixTimeSeconds();
         using var betweenRequest = new HttpRequestMessage(HttpMethod.Get,
             $"/api/systems/me/front/between?start={startAnchor}&end={endAnchor}");
+        AttachPrincipalAuth(betweenRequest, client, "phase3-fronting-history");
         var betweenResponse = await client.SendAsync(betweenRequest);
         var betweenBody = await betweenResponse.Content.ReadAsStringAsync();
 
-        await Assert.That(betweenResponse.StatusCode).IsEqualTo(HttpStatusCode.OK);
-
         using var doc = System.Text.Json.JsonDocument.Parse(betweenBody);
-        await Assert.That(doc.RootElement.ValueKind).IsEqualTo(System.Text.Json.JsonValueKind.Array);
-        await Assert.That(doc.RootElement.GetArrayLength()).IsGreaterThan(0);
+        using (Assert.Multiple())
+        {
+            await Assert.That(betweenResponse.StatusCode).IsEqualTo(HttpStatusCode.OK);
+            await Assert.That(doc.RootElement.ValueKind).IsEqualTo(System.Text.Json.JsonValueKind.Array);
+            await Assert.That(doc.RootElement.GetArrayLength()).IsGreaterThan(0);
+        }
 
         var row = doc.RootElement.EnumerateArray().First();
         var responseFrontId = ReadStringField(row, "frontId");
-        await Assert.That(responseFrontId).IsEqualTo(startedFrontId);
-
         var responseComment = ReadStringField(row, "comment");
-        await Assert.That(responseComment).IsEqualTo("phase3-history");
-
         var endedAt = ReadNullableStringField(row, "endedAt");
-        await Assert.That(endedAt).IsNotNullOrWhiteSpace();
+        using (Assert.Multiple())
+        {
+            await Assert.That(responseFrontId).IsEqualTo(startedFrontId);
+            await Assert.That(responseComment).IsEqualTo("phase3-history");
+            await Assert.That(endedAt).IsNotNullOrWhiteSpace();
+        }
     }
 }
