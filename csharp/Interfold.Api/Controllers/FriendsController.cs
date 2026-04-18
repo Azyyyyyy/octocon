@@ -24,10 +24,7 @@ public sealed class FriendsController : InterfoldControllerBase
     [HttpGet]
     public async Task<IActionResult> Index(CancellationToken ct)
     {
-        var principal = GetPrincipalId();
-        if (principal is null) return Unauthorized();
-
-        var friendships = await _repository.ListFriendshipsAsync(principal, ct);
+        var friendships = await _repository.ListFriendshipsAsync(PrincipalId, ct);
         var qualified = friendships.Select(QualifyFriendship).ToArray();
         return Ok(new { data = qualified });
     }
@@ -35,9 +32,7 @@ public sealed class FriendsController : InterfoldControllerBase
     [HttpGet("{id}")]
     public async Task<IActionResult> Show(string id, CancellationToken ct)
     {
-        var principal = GetPrincipalId();
-        if (principal is null) return Unauthorized();
-
+        var principal = PrincipalId;
         if (string.Equals(principal, id, StringComparison.Ordinal))
         {
             return BadRequest(new
@@ -67,9 +62,7 @@ public sealed class FriendsController : InterfoldControllerBase
     [HttpDelete("{id}")]
     public async Task<IActionResult> Delete(string id, [FromBody] FriendActionRequest? req, CancellationToken ct)
     {
-        var principal = GetPrincipalId();
-        if (principal is null) return Unauthorized();
-
+        var principal = PrincipalId;
         if (string.Equals(principal, id, StringComparison.Ordinal))
         {
             return BadRequest(new
@@ -108,9 +101,7 @@ public sealed class FriendsController : InterfoldControllerBase
         FriendActionRequest? req,
         CancellationToken ct)
     {
-        var principal = GetPrincipalId();
-        if (principal is null) return Unauthorized();
-
+        var principal = PrincipalId;
         if (string.Equals(principal, id, StringComparison.Ordinal))
         {
             return BadRequest(new { code = selfErrorCode });

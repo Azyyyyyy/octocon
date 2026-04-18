@@ -187,7 +187,7 @@ public sealed class ScyllaFrontingRepository : IFrontingRepository
             var keyspace = _keyspaceResolver.ResolveRegionalKeyspace(systemId);
 
             // Register UDT mapping before selecting the fields UDT column.
-            ScyllaAlterRepository.EnsureAlterFieldUdtMapping(session, keyspace);
+            EnsureAlterFieldUdtMapping(session, keyspace);
 
             // Parallelize the independent SELECT queries
             var primaryTask = session.ExecuteAsync(new SimpleStatement(
@@ -359,7 +359,7 @@ public sealed class ScyllaFrontingRepository : IFrontingRepository
 
             var alterId = frontRow.GetValue<short>("alter_id");
 
-            ScyllaAlterRepository.EnsureAlterFieldUdtMapping(session, keyspace);
+            EnsureAlterFieldUdtMapping(session, keyspace);
             var definitions = await _settingsFields.ListAsync(systemId, cancellationToken);
 
             // Parallelize the three remaining targeted lookups

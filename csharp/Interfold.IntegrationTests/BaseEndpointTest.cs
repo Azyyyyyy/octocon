@@ -295,7 +295,7 @@ public class BaseEndpointTest
         AttachPrincipalAuth(req, client, principal);
         var res = await client.SendAsync(req);
         // 204 = accepted, 409 = already set — both are fine.
-        await Assert.That(res.IsSuccessStatusCode || res.StatusCode == System.Net.HttpStatusCode.Conflict)
+        await Assert.That(res.IsSuccessStatusCode || res.StatusCode == HttpStatusCode.Conflict)
             .IsTrue().Because($"EnsureUserExistsAsync failed for '{principal}': {(int)res.StatusCode}");
     }
 

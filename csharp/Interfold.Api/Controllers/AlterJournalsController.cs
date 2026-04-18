@@ -34,14 +34,11 @@ public sealed class AlterJournalsController : InterfoldControllerBase
         _setPinned = setPinned;
     }
 
-    [HttpGet("{id}/journals")]
-    public async Task<IActionResult> Index(string id, CancellationToken ct)
+    [HttpGet("{alterId:int}/journals")]
+    public async Task<IActionResult> Index(int alterId, CancellationToken ct)
     {
-        var principal = GetPrincipalId();
-        if (principal is null) return Unauthorized();
-
-        if (!TryParseAlterId(id, out var alterId))
-            return BadRequest(new { error = "Invalid alter ID.", code = "invalid_alter_id" });
+        var principal = PrincipalId;
+        CheckAlterId(alterId);
 
         var alterExists = await _alterRepository.ExistsAsync(principal, alterId, ct);
         if (!alterExists) return NotFound(new { error = "Alter not found.", code = "alter_not_found" });
@@ -53,23 +50,17 @@ public sealed class AlterJournalsController : InterfoldControllerBase
     [HttpGet("journals/{journalId}")]
     public async Task<IActionResult> Show(string journalId, CancellationToken ct)
     {
-        var principal = GetPrincipalId();
-        if (principal is null) return Unauthorized();
-
-        var entry = await _journalRepository.GetAlterAsync(principal, journalId, ct);
+        var entry = await _journalRepository.GetAlterAsync(PrincipalId, journalId, ct);
         return entry is null
             ? NotFound(new { error = "Journal entry not found.", code = "journal_entry_not_found" })
             : Ok(new { data = entry });
     }
 
-    [HttpPost("{id}/journals")]
-    public async Task<IActionResult> Create(string id, [FromBody] CreateAlterJournalRequest req, CancellationToken ct)
+    [HttpPost("{alterId:int}/journals")]
+    public async Task<IActionResult> Create(int alterId, [FromBody] CreateAlterJournalRequest req, CancellationToken ct)
     {
-        var principal = GetPrincipalId();
-        if (principal is null) return Unauthorized();
-
-        if (!TryParseAlterId(id, out var alterId))
-            return BadRequest(new { error = "Invalid alter ID.", code = "invalid_alter_id" });
+        var principal = PrincipalId;
+        CheckAlterId(alterId);
 
         var envelope = new CommandEnvelope<CreateAlterJournalEntryCommand>(
             OperationIds.JournalAlterCreate,
@@ -95,13 +86,10 @@ public sealed class AlterJournalsController : InterfoldControllerBase
     [HttpPatch("journals/{journalId}")]
     public async Task<IActionResult> Update(string journalId, [FromBody] UpdateAlterJournalRequest req, CancellationToken ct)
     {
-        var principal = GetPrincipalId();
-        if (principal is null) return Unauthorized();
-
         var envelope = new CommandEnvelope<UpdateAlterJournalEntryCommand>(
             OperationIds.JournalAlterUpdate,
             Guid.NewGuid(),
-            PrincipalId: principal,
+            PrincipalId: PrincipalId,
             IdempotencyKey: GetIdempotencyKey(req.IdempotencyKey),
             ExpectedVersion: req.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
@@ -115,13 +103,10 @@ public sealed class AlterJournalsController : InterfoldControllerBase
     [HttpDelete("journals/{journalId}")]
     public async Task<IActionResult> Delete(string journalId, [FromBody] AlterJournalActionRequest? req, CancellationToken ct)
     {
-        var principal = GetPrincipalId();
-        if (principal is null) return Unauthorized();
-
         var envelope = new CommandEnvelope<DeleteAlterJournalEntryCommand>(
             OperationIds.JournalAlterDelete,
             Guid.NewGuid(),
-            PrincipalId: principal,
+            PrincipalId: PrincipalId,
             IdempotencyKey: GetIdempotencyKey(req?.IdempotencyKey),
             ExpectedVersion: req?.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
@@ -148,18 +133,12 @@ public sealed class AlterJournalsController : InterfoldControllerBase
     public async Task<IActionResult> Unpin(string journalId, [FromBody] AlterJournalActionRequest? req, CancellationToken ct)
         => await SetPinnedInternal(journalId, false, OperationIds.JournalAlterUnpin, req, ct);
 
-    private static bool TryParseAlterId(string value, out int alterId)
-        => int.TryParse(value, out alterId) && alterId > 0;
-
     private async Task<IActionResult> SetLockedInternal(string journalId, bool locked, string operationId, AlterJournalActionRequest? req, CancellationToken ct)
     {
-        var principal = GetPrincipalId();
-        if (principal is null) return Unauthorized();
-
         var envelope = new CommandEnvelope<SetAlterJournalLockedCommand>(
             operationId,
             Guid.NewGuid(),
-            PrincipalId: principal,
+            PrincipalId: PrincipalId,
             IdempotencyKey: GetIdempotencyKey(req?.IdempotencyKey),
             ExpectedVersion: req?.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
@@ -172,13 +151,10 @@ public sealed class AlterJournalsController : InterfoldControllerBase
 
     private async Task<IActionResult> SetPinnedInternal(string journalId, bool pinned, string operationId, AlterJournalActionRequest? req, CancellationToken ct)
     {
-        var principal = GetPrincipalId();
-        if (principal is null) return Unauthorized();
-
         var envelope = new CommandEnvelope<SetAlterJournalPinnedCommand>(
             operationId,
             Guid.NewGuid(),
-            PrincipalId: principal,
+            PrincipalId: PrincipalId,
             IdempotencyKey: GetIdempotencyKey(req?.IdempotencyKey),
             ExpectedVersion: req?.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,

@@ -41,9 +41,6 @@ public sealed class FrontingController : InterfoldControllerBase
     [HttpPost]
     public async Task<IActionResult> Update([FromBody] FrontBulkUpdateRequest req, CancellationToken ct)
     {
-        var principal = GetPrincipalId();
-        if (principal is null) return Unauthorized();
-
         var payload = new BulkUpdateFrontCommand(
             req.Start.Select(x => new FrontStartItem(x.AlterId, x.Comment)).ToArray(),
             req.End.ToArray());
@@ -51,7 +48,7 @@ public sealed class FrontingController : InterfoldControllerBase
         var envelope = new CommandEnvelope<BulkUpdateFrontCommand>(
             OperationIds.FrontBulkUpdate,
             Guid.NewGuid(),
-            PrincipalId: principal,
+            PrincipalId: PrincipalId,
             IdempotencyKey: GetIdempotencyKey(req.IdempotencyKey),
             ExpectedVersion: req.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
@@ -65,16 +62,12 @@ public sealed class FrontingController : InterfoldControllerBase
     [HttpPost("start")]
     public async Task<IActionResult> Start([FromBody] FrontStartRequest req, CancellationToken ct)
     {
-        var principal = GetPrincipalId();
-        if (principal is null) return Unauthorized();
-
         var alterId = req.ResolveAlterId();
-        if (alterId <= 0)
-            return BadRequest(new { error = "Invalid alter ID.", code = "invalid_alter_id" });
+        CheckAlterId(alterId);
 
         var envelope = new CommandEnvelope<StartFrontCommand>(
             OperationIds.FrontStart, Guid.NewGuid(),
-            PrincipalId: principal,
+            PrincipalId: PrincipalId,
             IdempotencyKey: GetIdempotencyKey(req.IdempotencyKey),
             ExpectedVersion: req.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
@@ -98,16 +91,12 @@ public sealed class FrontingController : InterfoldControllerBase
     [HttpPost("end")]
     public async Task<IActionResult> End([FromBody] FrontEndRequest req, CancellationToken ct)
     {
-        var principal = GetPrincipalId();
-        if (principal is null) return Unauthorized();
-
         var alterId = req.ResolveAlterId();
-        if (alterId <= 0)
-            return BadRequest(new { error = "Invalid alter ID.", code = "invalid_alter_id" });
+        CheckAlterId(alterId);
 
         var envelope = new CommandEnvelope<EndFrontCommand>(
             OperationIds.FrontEnd, Guid.NewGuid(),
-            PrincipalId: principal,
+            PrincipalId: PrincipalId,
             IdempotencyKey: GetIdempotencyKey(req.IdempotencyKey),
             ExpectedVersion: req.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
@@ -120,17 +109,13 @@ public sealed class FrontingController : InterfoldControllerBase
     [HttpPost("set")]
     public async Task<IActionResult> Set([FromBody] FrontSetRequest req, CancellationToken ct)
     {
-        var principal = GetPrincipalId();
-        if (principal is null) return Unauthorized();
-
         var alterId = req.ResolveAlterId();
-        if (alterId <= 0)
-            return BadRequest(new { error = "Invalid alter ID.", code = "invalid_alter_id" });
+        CheckAlterId(alterId);
 
         var envelope = new CommandEnvelope<SetFrontCommand>(
             OperationIds.FrontSet,
             Guid.NewGuid(),
-            PrincipalId: principal,
+            PrincipalId: PrincipalId,
             IdempotencyKey: GetIdempotencyKey(req.IdempotencyKey),
             ExpectedVersion: req.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
@@ -144,14 +129,11 @@ public sealed class FrontingController : InterfoldControllerBase
     [HttpPost("primary")]
     public async Task<IActionResult> Primary([FromBody] FrontPrimaryRequest req, CancellationToken ct)
     {
-        var principal = GetPrincipalId();
-        if (principal is null) return Unauthorized();
-
         var alterId = req.ResolveAlterId();
 
         var envelope = new CommandEnvelope<SetPrimaryFrontCommand>(
             OperationIds.FrontPrimary, Guid.NewGuid(),
-            PrincipalId: principal,
+            PrincipalId: PrincipalId,
             IdempotencyKey: GetIdempotencyKey(req.IdempotencyKey),
             ExpectedVersion: req.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
@@ -165,9 +147,6 @@ public sealed class FrontingController : InterfoldControllerBase
     [HttpGet("month")]
     public async Task<IActionResult> Month([FromQuery(Name = "end_anchor")] string endAnchor, CancellationToken ct)
     {
-        var principal = GetPrincipalId();
-        if (principal is null) return Unauthorized();
-
         if (!long.TryParse(endAnchor, out var unixEnd))
             return BadRequest(new { error = "Invalid end anchor. Please pass a valid Unix timestamp.", code = "invalid_end_anchor" });
 
@@ -182,7 +161,7 @@ public sealed class FrontingController : InterfoldControllerBase
         }
 
         var start = end.AddDays(-30);
-        var fronts = await _repository.ListHistoryBetweenAsync(principal, start, end, ct);
+        var fronts = await _repository.ListHistoryBetweenAsync(PrincipalId, start, end, ct);
         return Ok(new { data = fronts });
     }
 
@@ -192,9 +171,6 @@ public sealed class FrontingController : InterfoldControllerBase
         [FromQuery(Name = "end")] string endAnchor,
         CancellationToken ct)
     {
-        var principal = GetPrincipalId();
-        if (principal is null) return Unauthorized();
-
         if (!long.TryParse(startAnchor, out var unixStart) || !long.TryParse(endAnchor, out var unixEnd))
             return BadRequest(new { error = "Invalid start or end anchor. Please pass valid Unix timestamps.", code = "invalid_anchor" });
 
@@ -210,7 +186,7 @@ public sealed class FrontingController : InterfoldControllerBase
             return BadRequest(new { error = "Invalid start or end anchor. Please pass valid Unix timestamps.", code = "invalid_anchor" });
         }
 
-        var fronts = await _repository.ListHistoryBetweenAsync(principal, start, end, ct);
+        var fronts = await _repository.ListHistoryBetweenAsync(PrincipalId, start, end, ct);
         return Ok(new { data = fronts });
     }
 
@@ -218,10 +194,7 @@ public sealed class FrontingController : InterfoldControllerBase
     [HttpGet("{id}")]
     public async Task<IActionResult> Show(string id, CancellationToken ct)
     {
-        var principal = GetPrincipalId();
-        if (principal is null) return Unauthorized();
-
-        var front = await _repository.GetActiveByFrontIdAsync(principal, id, ct);
+        var front = await _repository.GetActiveByFrontIdAsync(PrincipalId, id, ct);
         return front is null
             ? NotFound(new { error = "Front not found.", code = "front_not_found" })
             : Ok(new { data = front });
@@ -230,13 +203,10 @@ public sealed class FrontingController : InterfoldControllerBase
     [HttpDelete("{id}")]
     public async Task<IActionResult> Delete(string id, [FromBody] FrontCommandRequest? req, CancellationToken ct)
     {
-        var principal = GetPrincipalId();
-        if (principal is null) return Unauthorized();
-
         var envelope = new CommandEnvelope<DeleteFrontByIdCommand>(
             OperationIds.FrontDelete,
             Guid.NewGuid(),
-            PrincipalId: principal,
+            PrincipalId: PrincipalId,
             IdempotencyKey: GetIdempotencyKey(req?.IdempotencyKey),
             ExpectedVersion: req?.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
@@ -250,13 +220,10 @@ public sealed class FrontingController : InterfoldControllerBase
     [HttpPost("{id}/comment")]
     public async Task<IActionResult> UpdateComment(string id, [FromBody] FrontCommentRequest req, CancellationToken ct)
     {
-        var principal = GetPrincipalId();
-        if (principal is null) return Unauthorized();
-
         var envelope = new CommandEnvelope<UpdateFrontCommentCommand>(
             OperationIds.FrontCommentUpdate,
             Guid.NewGuid(),
-            PrincipalId: principal,
+            PrincipalId: PrincipalId,
             IdempotencyKey: GetIdempotencyKey(req.IdempotencyKey),
             ExpectedVersion: req.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,

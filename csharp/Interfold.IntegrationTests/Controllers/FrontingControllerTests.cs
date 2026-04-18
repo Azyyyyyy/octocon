@@ -70,7 +70,7 @@ public class FrontingControllerTests : BaseEndpointTest
         var betweenResponse = await client.SendAsync(betweenRequest);
         var betweenBody = await betweenResponse.Content.ReadAsStringAsync();
 
-        using var doc = System.Text.Json.JsonDocument.Parse(betweenBody);
+        using var doc = JsonDocument.Parse(betweenBody);
         var data = betweenResponse.StatusCode == HttpStatusCode.OK
             ? doc.RootElement.GetProperty("data")
             : (JsonElement?)null;
@@ -79,7 +79,7 @@ public class FrontingControllerTests : BaseEndpointTest
             await Assert.That(betweenResponse.StatusCode).IsEqualTo(HttpStatusCode.OK);
             
             Assert.NotNull(data);
-            await Assert.That(data.Value.ValueKind).IsEqualTo(System.Text.Json.JsonValueKind.Array);
+            await Assert.That(data.Value.ValueKind).IsEqualTo(JsonValueKind.Array);
             await Assert.That(data.Value.GetArrayLength()).IsGreaterThan(0);
         }
 

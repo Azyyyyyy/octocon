@@ -34,23 +34,15 @@ public sealed class AltersController : InterfoldControllerBase
     [HttpGet]
     public async Task<IActionResult> List(CancellationToken ct)
     {
-        var principal = GetPrincipalId();
-        if (principal is null) return Unauthorized();
-
-        var alters = await _alterRepository.ListAsync(principal, ct);
+        var alters = await _alterRepository.ListAsync(PrincipalId, ct);
         return Ok(new { data = alters });
     }
 
-    [HttpGet("{id}")]
-    public async Task<IActionResult> Show(string id, CancellationToken ct)
+    [HttpGet("{alterId:int}")]
+    public async Task<IActionResult> Show(int alterId, CancellationToken ct)
     {
-        var principal = GetPrincipalId();
-        if (principal is null) return Unauthorized();
-
-        if (!TryParseAlterId(id, out var alterId))
-            return BadRequest(new { error = "Invalid alter ID.", code = "invalid_alter_id" });
-
-        var alter = await _alterRepository.GetAsync(principal, alterId, ct);
+        CheckAlterId(alterId);
+        var alter = await _alterRepository.GetAsync(PrincipalId, alterId, ct);
         if (alter is null)
         {
             return NotFound(new { error = "Alter not found.", code = "alter_not_found" });
@@ -63,9 +55,7 @@ public sealed class AltersController : InterfoldControllerBase
     [HttpPost]
     public async Task<IActionResult> Create([FromBody] CreateAlterRequest req, CancellationToken ct)
     {
-        var principal = GetPrincipalId();
-        if (principal is null) return Unauthorized();
-
+        var principal = PrincipalId;
         var envelope = new CommandEnvelope<CreateAlterCommand>(
             OperationIds.AlterCreate, Guid.NewGuid(),
             PrincipalId: principal,
@@ -87,15 +77,10 @@ public sealed class AltersController : InterfoldControllerBase
         return StatusCode(StatusCodes.Status201Created, new { data, replay = execution.Result.Replay });
     }
 
-    [HttpPatch("{id}")]
-    public async Task<IActionResult> Update(string id, [FromBody] UpdateAlterRequest req, CancellationToken ct)
+    [HttpPatch("{alterId:int}")]
+    public async Task<IActionResult> Update(int alterId, [FromBody] UpdateAlterRequest req, CancellationToken ct)
     {
-        var principal = GetPrincipalId();
-        if (principal is null) return Unauthorized();
-
-        if (!TryParseAlterId(id, out var alterId))
-            return BadRequest(new { error = "Invalid alter ID.", code = "invalid_alter_id" });
-
+        CheckAlterId(alterId);
         var fields = req.Fields?.Select(f => new AlterFieldCommand(f.Id, f.Value)).ToList();
         var payload = new UpdateAlterCommand(
             AlterId: alterId,
@@ -112,31 +97,28 @@ public sealed class AltersController : InterfoldControllerBase
             Archived: req.Archived,
             Pinned: req.Pinned
         );
+
         var envelope = new CommandEnvelope<UpdateAlterCommand>(
             OperationIds.AlterUpdate, Guid.NewGuid(),
-            PrincipalId: principal,
+            PrincipalId: PrincipalId,
             IdempotencyKey: GetIdempotencyKey(req.IdempotencyKey),
             ExpectedVersion: req.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
             Payload: payload
         );
+
         var result = ToHttpResult(await _updateHandler.HandleAsync(envelope, ct));
         return result is OkObjectResult ? NoContent() : result;
     }
 
     //TODO: To ensure route works as expected - check if we delete alter journal entries, unattach from gobal journals when an alter is deleted and delete them from polls
-    [HttpDelete("{id}")]
-    public async Task<IActionResult> Delete(string id, [FromBody] DeleteAlterRequest? req, CancellationToken ct)
+    [HttpDelete("{alterId:int}")]
+    public async Task<IActionResult> Delete(int alterId, [FromBody] DeleteAlterRequest? req, CancellationToken ct)
     {
-        var principal = GetPrincipalId();
-        if (principal is null) return Unauthorized();
-
-        if (!TryParseAlterId(id, out var alterId))
-            return BadRequest(new { error = "Invalid alter ID.", code = "invalid_alter_id" });
-
+        CheckAlterId(alterId);
         var envelope = new CommandEnvelope<DeleteAlterCommand>(
             OperationIds.AlterDelete, Guid.NewGuid(),
-            PrincipalId: principal,
+            PrincipalId: PrincipalId,
             IdempotencyKey: GetIdempotencyKey(req?.IdempotencyKey),
             ExpectedVersion: req?.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
@@ -146,15 +128,12 @@ public sealed class AltersController : InterfoldControllerBase
         return result is OkObjectResult ? NoContent() : result;
     }
 
-    [HttpPut("{id}/avatar")]
+    [HttpPut("{alterId:int}/avatar")]
     [Consumes("multipart/form-data")]
-    public async Task<IActionResult> UploadAvatarMultipart(string id, CancellationToken ct)
+    public async Task<IActionResult> UploadAvatarMultipart(int alterId, CancellationToken ct)
     {
-        var principal = GetPrincipalId();
-        if (principal is null) return Unauthorized();
-
-        if (!TryParseAlterId(id, out var alterId))
-            return BadRequest(new { error = "Invalid alter ID.", code = "invalid_alter_id" });
+        CheckAlterId(alterId);
+        var principal = PrincipalId;
 
         var upload = await ResolveMultipartUploadAsync(ct);
         var avatarStream = upload.Stream;
@@ -169,7 +148,7 @@ public sealed class AltersController : InterfoldControllerBase
         string avatarUrl;
         try
         {
-            using (avatarStream)
+            await using (avatarStream)
             {
                 avatarUrl = await _avatarStorage.SaveAlterAvatarAsync(principal, alterId, avatarStream, ct);
             }
@@ -310,14 +289,11 @@ public sealed class AltersController : InterfoldControllerBase
 
     private sealed record AvatarUploadPayload(Stream? Stream, string? IdempotencyKey, long? ExpectedVersion, bool EmptyFilePart = false);
 
-    [HttpDelete("{id}/avatar")]
-    public async Task<IActionResult> DeleteAvatar(string id, [FromBody] DeleteAlterRequest? req, CancellationToken ct)
+    [HttpDelete("{alterId:int}/avatar")]
+    public async Task<IActionResult> DeleteAvatar(int alterId, [FromBody] DeleteAlterRequest? req, CancellationToken ct)
     {
-        var principal = GetPrincipalId();
-        if (principal is null) return Unauthorized();
-
-        if (!TryParseAlterId(id, out var alterId))
-            return BadRequest(new { error = "Invalid alter ID.", code = "invalid_alter_id" });
+        CheckAlterId(alterId);
+        var principal = PrincipalId;
 
         var existingAlter = await _alterRepository.GetAsync(principal, alterId, ct);
         var currentAvatarUrl = existingAlter?.AvatarUrl;
@@ -365,9 +341,6 @@ public sealed class AltersController : InterfoldControllerBase
         var result = ToHttpResult(execution);
         return result is OkObjectResult ? NoContent() : result;
     }
-
-    private static bool TryParseAlterId(string value, out int alterId)
-        => int.TryParse(value, out alterId) && alterId > 0;
 }
 
 public sealed record CreateAlterRequest(
@@ -399,18 +372,6 @@ public sealed record UpdateAlterFieldRequest(
 );
 
 public sealed record DeleteAlterRequest(
-    string? IdempotencyKey = null,
-    long? ExpectedVersion = null
-);
-
-public sealed record AlterAvatarRequest(
-    string AvatarUrl,
-    string? IdempotencyKey = null,
-    long? ExpectedVersion = null
-);
-
-public sealed record AlterAvatarMultipartRequest(
-    IFormFile? File,
     string? IdempotencyKey = null,
     long? ExpectedVersion = null
 );

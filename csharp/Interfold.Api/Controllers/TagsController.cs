@@ -41,9 +41,7 @@ public sealed class TagsController : InterfoldControllerBase
         [FromBody] CreateTagRequest body,
         CancellationToken cancellationToken)
     {
-        var principal = GetPrincipalId();
-        if (principal is null) return Unauthorized();
-
+        var principal = PrincipalId;
         var command = new CommandEnvelope<CreateTagCommand>(
             OperationId: OperationIds.TagCreate,
             CommandId: Guid.NewGuid(),
@@ -68,13 +66,10 @@ public sealed class TagsController : InterfoldControllerBase
    [HttpPatch("{id}")]
    public async Task<IActionResult> UpdateTag(string id, [FromBody] UpdateTagRequest body, CancellationToken ct)
    {
-       var principal = GetPrincipalId();
-       if (principal is null) return Unauthorized();
-
        var command = new CommandEnvelope<UpdateTagCommand>(
            OperationId: OperationIds.TagUpdate,
            CommandId: Guid.NewGuid(),
-           PrincipalId: principal,
+           PrincipalId: PrincipalId,
            IdempotencyKey: GetIdempotencyKey(body.IdempotencyKey),
            ExpectedVersion: body.ExpectedVersion,
            OccurredAt: DateTimeOffset.UtcNow,
@@ -89,13 +84,10 @@ public sealed class TagsController : InterfoldControllerBase
    [HttpDelete("{id}")]
    public async Task<IActionResult> DeleteTag(string id, [FromBody] TagIdempotencyRequest? body, CancellationToken ct)
    {
-       var principal = GetPrincipalId();
-       if (principal is null) return Unauthorized();
-
        var command = new CommandEnvelope<DeleteTagCommand>(
            OperationId: OperationIds.TagDelete,
            CommandId: Guid.NewGuid(),
-           PrincipalId: principal,
+           PrincipalId: PrincipalId,
            IdempotencyKey: GetIdempotencyKey(body?.IdempotencyKey),
            ExpectedVersion: body?.ExpectedVersion,
            OccurredAt: DateTimeOffset.UtcNow,
@@ -109,17 +101,13 @@ public sealed class TagsController : InterfoldControllerBase
    [HttpPost("{id}/alter")]
    public async Task<IActionResult> AttachAlter(string id, [FromBody] TagAlterRequest body, CancellationToken ct)
    {
-       var principal = GetPrincipalId();
-       if (principal is null) return Unauthorized();
-
        var alterId = body.AlterId ?? 0;
-       if (alterId <= 0)
-           return BadRequest(new { error = "Invalid alter ID.", code = "invalid_alter_id" });
+       CheckAlterId(alterId);
 
        var command = new CommandEnvelope<AttachAlterToTagCommand>(
            OperationId: OperationIds.TagAttachAlter,
            CommandId: Guid.NewGuid(),
-           PrincipalId: principal,
+           PrincipalId: PrincipalId,
            IdempotencyKey: GetIdempotencyKey(body.IdempotencyKey),
            ExpectedVersion: body.ExpectedVersion,
            OccurredAt: DateTimeOffset.UtcNow,
@@ -133,17 +121,13 @@ public sealed class TagsController : InterfoldControllerBase
    [HttpDelete("{id}/alter")]
    public async Task<IActionResult> DetachAlter(string id, [FromBody] TagAlterRequest body, CancellationToken ct)
    {
-       var principal = GetPrincipalId();
-       if (principal is null) return Unauthorized();
-
        var alterId = body.AlterId ?? 0;
-       if (alterId <= 0)
-           return BadRequest(new { error = "Invalid alter ID.", code = "invalid_alter_id" });
+       CheckAlterId(alterId);
 
        var command = new CommandEnvelope<DetachAlterFromTagCommand>(
            OperationId: OperationIds.TagDetachAlter,
            CommandId: Guid.NewGuid(),
-           PrincipalId: principal,
+           PrincipalId: PrincipalId,
            IdempotencyKey: GetIdempotencyKey(body.IdempotencyKey),
            ExpectedVersion: body.ExpectedVersion,
            OccurredAt: DateTimeOffset.UtcNow,
@@ -157,9 +141,6 @@ public sealed class TagsController : InterfoldControllerBase
    [HttpPost("{id}/parent")]
    public async Task<IActionResult> SetParent(string id, [FromBody] SetParentRequest body, CancellationToken ct)
    {
-       var principal = GetPrincipalId();
-       if (principal is null) return Unauthorized();
-
        var parentTagId = body.ParentTagId;
        if (string.IsNullOrWhiteSpace(parentTagId))
            return BadRequest(new { error = "Invalid parent tag ID.", code = "invalid_parent_tag_id" });
@@ -167,7 +148,7 @@ public sealed class TagsController : InterfoldControllerBase
        var command = new CommandEnvelope<SetParentTagCommand>(
            OperationId: OperationIds.TagSetParent,
            CommandId: Guid.NewGuid(),
-           PrincipalId: principal,
+           PrincipalId: PrincipalId,
            IdempotencyKey: GetIdempotencyKey(body.IdempotencyKey),
            ExpectedVersion: body.ExpectedVersion,
            OccurredAt: DateTimeOffset.UtcNow,
@@ -181,13 +162,10 @@ public sealed class TagsController : InterfoldControllerBase
    [HttpDelete("{id}/parent")]
    public async Task<IActionResult> RemoveParent(string id, [FromBody] TagIdempotencyRequest? body, CancellationToken ct)
    {
-       var principal = GetPrincipalId();
-       if (principal is null) return Unauthorized();
-
        var command = new CommandEnvelope<RemoveParentTagCommand>(
            OperationId: OperationIds.TagRemoveParent,
            CommandId: Guid.NewGuid(),
-           PrincipalId: principal,
+           PrincipalId: PrincipalId,
            IdempotencyKey: GetIdempotencyKey(body?.IdempotencyKey),
            ExpectedVersion: body?.ExpectedVersion,
            OccurredAt: DateTimeOffset.UtcNow,

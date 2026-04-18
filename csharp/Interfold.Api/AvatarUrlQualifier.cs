@@ -6,7 +6,7 @@ internal static class AvatarUrlQualifier
     /// Returns <paramref name="url"/> with the server origin prepended when the stored
     /// value is a relative path. Already-absolute URLs are returned unchanged.
     /// </summary>
-    internal static string? Qualify(string? url, string scheme, Microsoft.AspNetCore.Http.HostString host)
+    internal static string? Qualify(string? url, string scheme, HostString host)
     {
         if (string.IsNullOrWhiteSpace(url))
             return url;

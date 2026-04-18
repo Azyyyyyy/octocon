@@ -39,20 +39,14 @@ public sealed class JournalsController : InterfoldControllerBase
     [HttpGet]
     public async Task<IActionResult> Index(CancellationToken ct)
     {
-        var principal = GetPrincipalId();
-        if (principal is null) return Unauthorized();
-
-        var entries = await _journalRepository.ListGlobalAsync(principal, ct);
+        var entries = await _journalRepository.ListGlobalAsync(PrincipalId, ct);
         return Ok(new { data = entries });
     }
 
     [HttpGet("{id}")]
     public async Task<IActionResult> Show(string id, CancellationToken ct)
     {
-        var principal = GetPrincipalId();
-        if (principal is null) return Unauthorized();
-
-        var entry = await _journalRepository.GetGlobalAsync(principal, id, ct);
+        var entry = await _journalRepository.GetGlobalAsync(PrincipalId, id, ct);
         return entry is null
             ? NotFound(new { error = "Journal entry not found.", code = "journal_entry_not_found" })
             : Ok(new { data = entry });
@@ -61,9 +55,7 @@ public sealed class JournalsController : InterfoldControllerBase
     [HttpPost]
     public async Task<IActionResult> Create([FromBody] CreateGlobalJournalRequest req, CancellationToken ct)
     {
-        var principal = GetPrincipalId();
-        if (principal is null) return Unauthorized();
-
+        var principal = PrincipalId;
         var envelope = new CommandEnvelope<CreateGlobalJournalEntryCommand>(
             OperationIds.JournalGlobalCreate,
             Guid.NewGuid(),
@@ -88,13 +80,10 @@ public sealed class JournalsController : InterfoldControllerBase
     [HttpPatch("{id}")]
     public async Task<IActionResult> Update(string id, [FromBody] UpdateGlobalJournalRequest req, CancellationToken ct)
     {
-        var principal = GetPrincipalId();
-        if (principal is null) return Unauthorized();
-
         var envelope = new CommandEnvelope<UpdateGlobalJournalEntryCommand>(
             OperationIds.JournalGlobalUpdate,
             Guid.NewGuid(),
-            PrincipalId: principal,
+            PrincipalId: PrincipalId,
             IdempotencyKey: GetIdempotencyKey(req.IdempotencyKey),
             ExpectedVersion: req.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
@@ -108,13 +97,10 @@ public sealed class JournalsController : InterfoldControllerBase
     [HttpDelete("{id}")]
     public async Task<IActionResult> Delete(string id, [FromBody] DeleteGlobalJournalRequest? req, CancellationToken ct)
     {
-        var principal = GetPrincipalId();
-        if (principal is null) return Unauthorized();
-
         var envelope = new CommandEnvelope<DeleteGlobalJournalEntryCommand>(
             OperationIds.JournalGlobalDelete,
             Guid.NewGuid(),
-            PrincipalId: principal,
+            PrincipalId: PrincipalId,
             IdempotencyKey: GetIdempotencyKey(req?.IdempotencyKey),
             ExpectedVersion: req?.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
@@ -144,17 +130,13 @@ public sealed class JournalsController : InterfoldControllerBase
     [HttpPost("{id}/alter")]
     public async Task<IActionResult> AttachAlter(string id, [FromBody] JournalAlterRequest req, CancellationToken ct)
     {
-        var principal = GetPrincipalId();
-        if (principal is null) return Unauthorized();
-
         var alterId = req.AlterId ?? 0;
-        if (alterId <= 0)
-            return BadRequest(new { error = "Invalid alter ID.", code = "invalid_alter_id" });
+        CheckAlterId(alterId);
 
         var envelope = new CommandEnvelope<AttachAlterToGlobalJournalCommand>(
             OperationIds.JournalGlobalAttachAlter,
             Guid.NewGuid(),
-            PrincipalId: principal,
+            PrincipalId: PrincipalId,
             IdempotencyKey: GetIdempotencyKey(req.IdempotencyKey),
             ExpectedVersion: req.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
@@ -168,17 +150,13 @@ public sealed class JournalsController : InterfoldControllerBase
     [HttpDelete("{id}/alter")]
     public async Task<IActionResult> DetachAlter(string id, [FromBody] JournalAlterRequest req, CancellationToken ct)
     {
-        var principal = GetPrincipalId();
-        if (principal is null) return Unauthorized();
-
         var alterId = req.AlterId ?? 0;
-        if (alterId <= 0)
-            return BadRequest(new { error = "Invalid alter ID.", code = "invalid_alter_id" });
+        CheckAlterId(alterId);
 
         var envelope = new CommandEnvelope<DetachAlterFromGlobalJournalCommand>(
             OperationIds.JournalGlobalDetachAlter,
             Guid.NewGuid(),
-            PrincipalId: principal,
+            PrincipalId: PrincipalId,
             IdempotencyKey: GetIdempotencyKey(req.IdempotencyKey),
             ExpectedVersion: req.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
@@ -191,13 +169,10 @@ public sealed class JournalsController : InterfoldControllerBase
 
     private async Task<IActionResult> SetLockedInternal(string id, bool locked, string operationId, JournalActionRequest? req, CancellationToken ct)
     {
-        var principal = GetPrincipalId();
-        if (principal is null) return Unauthorized();
-
         var envelope = new CommandEnvelope<SetGlobalJournalLockedCommand>(
             operationId,
             Guid.NewGuid(),
-            PrincipalId: principal,
+            PrincipalId: PrincipalId,
             IdempotencyKey: GetIdempotencyKey(req?.IdempotencyKey),
             ExpectedVersion: req?.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
@@ -210,13 +185,10 @@ public sealed class JournalsController : InterfoldControllerBase
 
     private async Task<IActionResult> SetPinnedInternal(string id, bool pinned, string operationId, JournalActionRequest? req, CancellationToken ct)
     {
-        var principal = GetPrincipalId();
-        if (principal is null) return Unauthorized();
-
         var envelope = new CommandEnvelope<SetGlobalJournalPinnedCommand>(
             operationId,
             Guid.NewGuid(),
-            PrincipalId: principal,
+            PrincipalId: PrincipalId,
             IdempotencyKey: GetIdempotencyKey(req?.IdempotencyKey),
             ExpectedVersion: req?.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,

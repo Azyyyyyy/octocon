@@ -60,27 +60,21 @@ public sealed class PublicSystemsController : InterfoldControllerBase
             return NotFound(new { error = "System not found.", code = "system_not_found" });
         }
 
-        var callerId = GetPrincipalId();
-        var alters = await _alters.ListGuardedAsync(systemId, callerId, ct);
+        var alters = await _alters.ListGuardedAsync(systemId, PrincipalId, ct);
         foreach (var a in alters) a.AvatarUrl = QualifyUrl(a.AvatarUrl);
         return Ok(new { data = alters });
     }
 
     [HttpGet("{systemId}/alters/{id}")]
-    public async Task<IActionResult> ShowAlter([FromRoute] string systemId, [FromRoute] string id, CancellationToken ct)
+    public async Task<IActionResult> ShowAlter([FromRoute] string systemId, [FromRoute] int alterId, CancellationToken ct)
     {
-        if (!int.TryParse(id, out var alterId) || alterId <= 0)
-        {
-            return BadRequest(new { error = "Invalid alter ID.", code = "invalid_alter_id" });
-        }
-
+        CheckAlterId(alterId);
         if (!await SystemExistsAsync(systemId, ct))
         {
             return NotFound(new { error = "System not found.", code = "system_not_found" });
         }
 
-        var callerId = GetPrincipalId();
-        var alter = await _alters.GetGuardedAsync(systemId, alterId, callerId, ct);
+        var alter = await _alters.GetGuardedAsync(systemId, alterId, PrincipalId, ct);
         if (alter is not null) alter.AvatarUrl = QualifyUrl(alter.AvatarUrl);
         return alter is null
             ? NotFound(new { error = "Alter not found.", code = "alter_not_found" })
@@ -96,8 +90,7 @@ public sealed class PublicSystemsController : InterfoldControllerBase
             return NotFound(new { error = "System not found.", code = "system_not_found" });
         }
 
-        var callerId = GetPrincipalId();
-        var tags = await _tags.ListGuardedAsync(systemId, callerId, ct);
+        var tags = await _tags.ListGuardedAsync(systemId, PrincipalId, ct);
         return Ok(new { data = tags });
     }
 
@@ -109,8 +102,7 @@ public sealed class PublicSystemsController : InterfoldControllerBase
             return NotFound(new { error = "System not found.", code = "system_not_found" });
         }
 
-        var callerId = GetPrincipalId();
-        var tag = await _tags.GetGuardedAsync(systemId, id, callerId, ct);
+        var tag = await _tags.GetGuardedAsync(systemId, id, PrincipalId, ct);
         return tag is null
             ? NotFound(new { error = "Tag not found.", code = "tag_not_found" })
             : Ok(new { data = tag });
@@ -125,8 +117,7 @@ public sealed class PublicSystemsController : InterfoldControllerBase
             return NotFound(new { error = "System not found.", code = "system_not_found" });
         }
 
-        var callerId = GetPrincipalId();
-        var fronts = await _fronting.ListActiveGuardedAsync(systemId, callerId, ct);
+        var fronts = await _fronting.ListActiveGuardedAsync(systemId, PrincipalId, ct);
         return Ok(new { data = fronts });
     }
 
@@ -138,8 +129,8 @@ public sealed class PublicSystemsController : InterfoldControllerBase
             return NotFound(new { error = "System not found.", code = "system_not_found" });
         }
 
-        var callerId = GetPrincipalId();
-        if (callerId is not null && string.Equals(callerId, systemId, StringComparison.Ordinal))
+        var principalId = PrincipalId;
+        if (string.Equals(principalId, systemId, StringComparison.Ordinal))
         {
             return StatusCode(StatusCodes.Status403Forbidden, new
             {
@@ -148,11 +139,9 @@ public sealed class PublicSystemsController : InterfoldControllerBase
             });
         }
 
-        var altersTask = _alters.ListGuardedAsync(systemId, callerId, ct);
-        var tagsTask = _tags.ListGuardedAsync(systemId, callerId, ct);
-        var friendshipTask = callerId is null
-            ? Task.FromResult<Interfold.Domain.Friendships.FriendshipReadModel?>(null)
-            : _friendships.GetFriendshipAsync(callerId, systemId, ct);
+        var altersTask = _alters.ListGuardedAsync(systemId, principalId, ct);
+        var tagsTask = _tags.ListGuardedAsync(systemId, principalId, ct);
+        var friendshipTask = _friendships.GetFriendshipAsync(principalId, systemId, ct);
 
         await Task.WhenAll(altersTask, tagsTask, friendshipTask);
 

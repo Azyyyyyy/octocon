@@ -105,7 +105,7 @@ public class BodyJson<T> : JsonConverter<T>
 
     public override void Write(Utf8JsonWriter writer, T value, JsonSerializerOptions options)
     {
-        var format = value == null ? "" : JsonSerializer.Serialize(value, value?.GetType(), options);
+        var format = value == null ? "" : JsonSerializer.Serialize(value, value.GetType(), options);
         writer.WriteStringValue(format);
     }
 }

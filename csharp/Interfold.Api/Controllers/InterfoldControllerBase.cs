@@ -1,5 +1,5 @@
 using System.Diagnostics;
-using System.Security.Claims;
+using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Interfold.Contracts.Operations;
@@ -11,12 +11,28 @@ namespace Interfold.Api.Controllers;
 [Authorize]
 public abstract class InterfoldControllerBase : ControllerBase
 {
-    protected string? GetPrincipalId()
+    protected string PrincipalId
     {
-        var sub = User.FindFirst("sub")?.Value
-                  ?? User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+        get
+        {
+            if (HttpContext.Items.TryGetValue(InterfoldPrincipalMiddleware.PrincipalIdItemKey, out var value)
+                && value is string principal)
+            {
+                return principal;
+            }
 
-        return string.IsNullOrWhiteSpace(sub) ? null : sub;
+            throw new InvalidOperationException(
+                "PrincipalId is unavailable. Ensure InterfoldPrincipalMiddleware is configured.");
+        }
+    }
+
+    protected static void CheckAlterId(int alterId)
+    {
+        if (alterId > 0)
+            return;
+
+        var error = new { error = "Invalid alter ID.", code = "invalid_alter_id" };
+        throw new BadHttpRequestException(JsonSerializer.Serialize(error));
     }
 
     protected string GetIdempotencyKey(string? bodyKey)

@@ -29,10 +29,7 @@ public sealed class PollsController : InterfoldControllerBase
     [HttpGet]
     public async Task<IActionResult> Index(CancellationToken ct)
     {
-        var principal = GetPrincipalId();
-        if (principal is null) return Unauthorized();
-
-        var polls = await _pollRepository.ListAsync(principal, ct);
+        var polls = await _pollRepository.ListAsync(PrincipalId, ct);
         return Ok(new { data = polls });
     }
 
@@ -40,10 +37,7 @@ public sealed class PollsController : InterfoldControllerBase
     [HttpGet("{id}")]
     public async Task<IActionResult> Show(string id, CancellationToken ct)
     {
-        var principal = GetPrincipalId();
-        if (principal is null) return Unauthorized();
-
-        var poll = await _pollRepository.GetAsync(principal, id, ct);
+        var poll = await _pollRepository.GetAsync(PrincipalId, id, ct);
         return poll is null
             ? NotFound(new { error = "Poll not found.", code = "poll_not_found" })
             : Ok(new { data = poll });
@@ -52,9 +46,7 @@ public sealed class PollsController : InterfoldControllerBase
     [HttpPost]
     public async Task<IActionResult> Create([FromBody] CreatePollRequest req, CancellationToken ct)
     {
-        var principal = GetPrincipalId();
-        if (principal is null) return Unauthorized();
-
+        var principal = PrincipalId;
         var envelope = new CommandEnvelope<CreatePollCommand>(
             OperationIds.PollCreate,
             Guid.NewGuid(),
@@ -79,9 +71,6 @@ public sealed class PollsController : InterfoldControllerBase
     [HttpPatch("{id}")]
     public async Task<IActionResult> Update(string id, [FromBody] UpdatePollRequest req, CancellationToken ct)
     {
-        var principal = GetPrincipalId();
-        if (principal is null) return Unauthorized();
-
         if (!req.TryResolveTimeEnd(out var resolvedTimeEnd))
         {
             return BadRequest(new { error = "Invalid time_end.", code = "poll_invalid_time_end" });
@@ -90,7 +79,7 @@ public sealed class PollsController : InterfoldControllerBase
         var envelope = new CommandEnvelope<UpdatePollCommand>(
             OperationIds.PollUpdate,
             Guid.NewGuid(),
-            PrincipalId: principal,
+            PrincipalId: PrincipalId,
             IdempotencyKey: GetIdempotencyKey(req.IdempotencyKey),
             ExpectedVersion: req.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
@@ -104,13 +93,10 @@ public sealed class PollsController : InterfoldControllerBase
     [HttpDelete("{id}")]
     public async Task<IActionResult> Delete(string id, [FromBody] DeletePollRequest? req, CancellationToken ct)
     {
-        var principal = GetPrincipalId();
-        if (principal is null) return Unauthorized();
-
         var envelope = new CommandEnvelope<DeletePollCommand>(
             OperationIds.PollDelete,
             Guid.NewGuid(),
-            PrincipalId: principal,
+            PrincipalId: PrincipalId,
             IdempotencyKey: GetIdempotencyKey(req?.IdempotencyKey),
             ExpectedVersion: req?.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,

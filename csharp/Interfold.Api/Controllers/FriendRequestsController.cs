@@ -30,10 +30,7 @@ public sealed class FriendRequestsController : InterfoldControllerBase
     [HttpGet]
     public async Task<IActionResult> Index(CancellationToken ct)
     {
-        var principal = GetPrincipalId();
-        if (principal is null) return Unauthorized();
-
-        var requests = await _repository.GetFriendRequestsAsync(principal, ct);
+        var requests = await _repository.GetFriendRequestsAsync(PrincipalId, ct);
         var incoming = requests.Incoming
             .Select(x => x with
             {
@@ -60,9 +57,7 @@ public sealed class FriendRequestsController : InterfoldControllerBase
     [HttpPut("{id}")]
     public async Task<IActionResult> Send(string id, [FromBody] FriendRequestActionRequest? req, CancellationToken ct)
     {
-        var principal = GetPrincipalId();
-        if (principal is null) return Unauthorized();
-
+        var principal = PrincipalId;
         if (string.Equals(principal, id, StringComparison.Ordinal))
         {
             return BadRequest(new
@@ -88,9 +83,7 @@ public sealed class FriendRequestsController : InterfoldControllerBase
     [HttpDelete("{id}")]
     public async Task<IActionResult> Cancel(string id, [FromBody] FriendRequestActionRequest? req, CancellationToken ct)
     {
-        var principal = GetPrincipalId();
-        if (principal is null) return Unauthorized();
-
+        var principal = PrincipalId;
         if (string.Equals(principal, id, StringComparison.Ordinal))
         {
             return BadRequest(new
@@ -116,9 +109,7 @@ public sealed class FriendRequestsController : InterfoldControllerBase
     [HttpPost("{id}/accept")]
     public async Task<IActionResult> Accept(string id, [FromBody] FriendRequestActionRequest? req, CancellationToken ct)
     {
-        var principal = GetPrincipalId();
-        if (principal is null) return Unauthorized();
-
+        var principal = PrincipalId;
         if (string.Equals(principal, id, StringComparison.Ordinal))
         {
             return BadRequest(new
@@ -144,9 +135,7 @@ public sealed class FriendRequestsController : InterfoldControllerBase
     [HttpPost("{id}/reject")]
     public async Task<IActionResult> Reject(string id, [FromBody] FriendRequestActionRequest? req, CancellationToken ct)
     {
-        var principal = GetPrincipalId();
-        if (principal is null) return Unauthorized();
-
+        var principal = PrincipalId;
         if (string.Equals(principal, id, StringComparison.Ordinal))
         {
             return BadRequest(new

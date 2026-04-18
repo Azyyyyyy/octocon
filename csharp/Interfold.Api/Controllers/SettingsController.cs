@@ -93,14 +93,12 @@ public sealed class SettingsController : InterfoldControllerBase
     [HttpGet("link_token")]
     public async Task<IActionResult> GetLinkToken(CancellationToken ct)
     {
-        var principal = GetPrincipalId();
-        if (principal is null) return Unauthorized();
-
         // Token creation (write) is gated to primary nodes only — mirrors
         // Octocon.Global.LinkTokenRegistry singleton in the legacy Elixir runtime.
         // On auxiliary/sidecar nodes attempt a read-only lookup; if no token has
         // been provisioned yet, return 503 to inform the caller to retry via a
         // primary node.
+        var principal = PrincipalId;
         if (_singletonTaskOwner.OwnsTask(SingletonTaskNames.LinkTokenRegistry))
         {
             var token = await _accountRepository.GetOrCreateLinkTokenAsync(principal, ct);
@@ -117,9 +115,7 @@ public sealed class SettingsController : InterfoldControllerBase
     [HttpPost("username")]
     public async Task<IActionResult> UpdateUsername([FromBody] SettingsUsernameRequest req, CancellationToken ct)
     {
-        var principal = GetPrincipalId();
-        if (principal is null) return Unauthorized();
-
+        var principal = PrincipalId;
         var envelope = new CommandEnvelope<UpdateUsernameCommand>(
             OperationIds.SettingsUsernameUpdate, Guid.NewGuid(),
             PrincipalId: principal,
@@ -136,13 +132,10 @@ public sealed class SettingsController : InterfoldControllerBase
     [HttpPost("description")]
     public async Task<IActionResult> UpdateDescription([FromBody] SettingsDescriptionRequest req, CancellationToken ct)
     {
-        var principal = GetPrincipalId();
-        if (principal is null) return Unauthorized();
-
         var envelope = new CommandEnvelope<UpdateDescriptionCommand>(
             OperationIds.SettingsDescriptionUpdate,
             Guid.NewGuid(),
-            PrincipalId: principal,
+            PrincipalId: PrincipalId,
             IdempotencyKey: GetIdempotencyKey(req.IdempotencyKey),
             ExpectedVersion: req.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
@@ -156,9 +149,6 @@ public sealed class SettingsController : InterfoldControllerBase
     [HttpPost("push-token")]
     public async Task<IActionResult> AddPushToken([FromBody] SettingsPushTokenRequest req, CancellationToken ct)
     {
-        var principal = GetPrincipalId();
-        if (principal is null) return Unauthorized();
-
         var pushToken = req.Token;
         if (string.IsNullOrWhiteSpace(pushToken))
             return BadRequest(new { error = "Invalid push token.", code = "invalid_push_token" });
@@ -166,7 +156,7 @@ public sealed class SettingsController : InterfoldControllerBase
         var envelope = new CommandEnvelope<AddPushTokenCommand>(
             OperationIds.SettingsPushTokenAdd,
             Guid.NewGuid(),
-            PrincipalId: principal,
+            PrincipalId: PrincipalId,
             IdempotencyKey: GetIdempotencyKey(req.IdempotencyKey),
             ExpectedVersion: req.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
@@ -180,9 +170,6 @@ public sealed class SettingsController : InterfoldControllerBase
     [HttpDelete("push-token")]
     public async Task<IActionResult> RemovePushToken([FromBody] SettingsPushTokenRequest req, CancellationToken ct)
     {
-        var principal = GetPrincipalId();
-        if (principal is null) return Unauthorized();
-
         var pushToken = req.Token;
         if (string.IsNullOrWhiteSpace(pushToken))
             return BadRequest(new { error = "Invalid push token.", code = "invalid_push_token" });
@@ -190,7 +177,7 @@ public sealed class SettingsController : InterfoldControllerBase
         var envelope = new CommandEnvelope<RemovePushTokenCommand>(
             OperationIds.SettingsPushTokenRemove,
             Guid.NewGuid(),
-            PrincipalId: principal,
+            PrincipalId: PrincipalId,
             IdempotencyKey: GetIdempotencyKey(req.IdempotencyKey),
             ExpectedVersion: req.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
@@ -204,20 +191,17 @@ public sealed class SettingsController : InterfoldControllerBase
     [HttpPost("setup-encryption")]
     public async Task<IActionResult> SetupEncryption([FromBody] SettingsEncryptionRequest req, CancellationToken ct)
     {
-        var principal = GetPrincipalId();
-        if (principal is null) return Unauthorized();
-
         if (!TryResolveRecoveryCode(req.RecoveryCode, out var recoveryCode, out var decryptionErrorCode))
             return BadRequest(new { error = "Failed to decrypt recovery code.", code = decryptionErrorCode });
 
-        var envelope = new CommandEnvelope<Interfold.Domain.Settings.SetupEncryptionCommand>(
+        var envelope = new CommandEnvelope<Domain.Settings.SetupEncryptionCommand>(
             OperationIds.SettingsEncryptionSetup,
             Guid.NewGuid(),
-            PrincipalId: principal,
+            PrincipalId: PrincipalId,
             IdempotencyKey: GetIdempotencyKey(req.IdempotencyKey),
             ExpectedVersion: req.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
-            Payload: new Interfold.Domain.Settings.SetupEncryptionCommand(recoveryCode)
+            Payload: new Domain.Settings.SetupEncryptionCommand(recoveryCode)
         );
 
         var execution = await _setupEncryptionHandler.HandleAsync(envelope, ct);
@@ -230,20 +214,17 @@ public sealed class SettingsController : InterfoldControllerBase
     [HttpPost("recover-encryption")]
     public async Task<IActionResult> RecoverEncryption([FromBody] SettingsEncryptionRequest req, CancellationToken ct)
     {
-        var principal = GetPrincipalId();
-        if (principal is null) return Unauthorized();
-
         if (!TryResolveRecoveryCode(req.RecoveryCode, out var recoveryCode, out var decryptionErrorCode))
             return BadRequest(new { error = "Failed to decrypt recovery code.", code = decryptionErrorCode });
 
-        var envelope = new CommandEnvelope<Interfold.Domain.Settings.RecoverEncryptionCommand>(
+        var envelope = new CommandEnvelope<Domain.Settings.RecoverEncryptionCommand>(
             OperationIds.SettingsEncryptionRecover,
             Guid.NewGuid(),
-            PrincipalId: principal,
+            PrincipalId: PrincipalId,
             IdempotencyKey: GetIdempotencyKey(req.IdempotencyKey),
             ExpectedVersion: req.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
-            Payload: new Interfold.Domain.Settings.RecoverEncryptionCommand(recoveryCode)
+            Payload: new Domain.Settings.RecoverEncryptionCommand(recoveryCode)
         );
 
         var execution = await _recoverEncryptionHandler.HandleAsync(envelope, ct);
@@ -258,13 +239,10 @@ public sealed class SettingsController : InterfoldControllerBase
     [HttpPost("reset-encryption")]
     public async Task<IActionResult> ResetEncryption([FromBody] SettingsCommandRequest? req, CancellationToken ct)
     {
-        var principal = GetPrincipalId();
-        if (principal is null) return Unauthorized();
-
         var envelope = new CommandEnvelope<ResetEncryptionCommand>(
             OperationIds.SettingsEncryptionReset,
             Guid.NewGuid(),
-            PrincipalId: principal,
+            PrincipalId: PrincipalId,
             IdempotencyKey: GetIdempotencyKey(req?.IdempotencyKey),
             ExpectedVersion: req?.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
@@ -279,9 +257,7 @@ public sealed class SettingsController : InterfoldControllerBase
     [Consumes("multipart/form-data")]
     public async Task<IActionResult> UploadAvatarMultipart(CancellationToken ct)
     {
-        var principal = GetPrincipalId();
-        if (principal is null) return Unauthorized();
-
+        var principal = PrincipalId;
         var upload = await ResolveMultipartUploadAsync(ct);
         var avatarStream = upload.Stream;
         if (avatarStream is null)
@@ -295,7 +271,7 @@ public sealed class SettingsController : InterfoldControllerBase
         string avatarUrl;
         try
         {
-            using (avatarStream)
+            await using (avatarStream)
             {
                 avatarUrl = await _avatarStorage.SaveSystemAvatarAsync(principal, avatarStream, ct);
             }
@@ -347,9 +323,7 @@ public sealed class SettingsController : InterfoldControllerBase
     [HttpDelete("avatar")]
     public async Task<IActionResult> DeleteAvatar([FromBody] SettingsCommandRequest? req, CancellationToken ct)
     {
-        var principal = GetPrincipalId();
-        if (principal is null) return Unauthorized();
-
+        var principal = PrincipalId;
         var currentProfile = await _accountRepository.GetPublicProfileAsync(principal, ct);
         var currentAvatarUrl = currentProfile?.AvatarUrl;
 
@@ -384,13 +358,10 @@ public sealed class SettingsController : InterfoldControllerBase
     [HttpPost("import-pk")]
     public async Task<IActionResult> ImportPk([FromBody] SettingsImportRequest req, CancellationToken ct)
     {
-        var principal = GetPrincipalId();
-        if (principal is null) return Unauthorized();
-
         var envelope = new CommandEnvelope<ImportPkCommand>(
             OperationIds.SettingsImportPk,
             Guid.NewGuid(),
-            PrincipalId: principal,
+            PrincipalId: PrincipalId,
             IdempotencyKey: GetIdempotencyKey(req.IdempotencyKey),
             ExpectedVersion: req.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
@@ -405,13 +376,10 @@ public sealed class SettingsController : InterfoldControllerBase
     [HttpPost("import-sp")]
     public async Task<IActionResult> ImportSp([FromBody] SettingsImportRequest req, CancellationToken ct)
     {
-        var principal = GetPrincipalId();
-        if (principal is null) return Unauthorized();
-
         var envelope = new CommandEnvelope<ImportSpCommand>(
             OperationIds.SettingsImportSp,
             Guid.NewGuid(),
-            PrincipalId: principal,
+            PrincipalId: PrincipalId,
             IdempotencyKey: GetIdempotencyKey(req.IdempotencyKey),
             ExpectedVersion: req.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
@@ -425,13 +393,10 @@ public sealed class SettingsController : InterfoldControllerBase
     [HttpPost("unlink_discord")]
     public async Task<IActionResult> UnlinkDiscord([FromBody] SettingsCommandRequest? req, CancellationToken ct)
     {
-        var principal = GetPrincipalId();
-        if (principal is null) return Unauthorized();
-
         var envelope = new CommandEnvelope<UnlinkDiscordCommand>(
             OperationIds.SettingsAuthUnlinkDiscord,
             Guid.NewGuid(),
-            PrincipalId: principal,
+            PrincipalId: PrincipalId,
             IdempotencyKey: GetIdempotencyKey(req?.IdempotencyKey),
             ExpectedVersion: req?.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
@@ -445,13 +410,10 @@ public sealed class SettingsController : InterfoldControllerBase
     [HttpPost("unlink_email")]
     public async Task<IActionResult> UnlinkEmail([FromBody] SettingsCommandRequest? req, CancellationToken ct)
     {
-        var principal = GetPrincipalId();
-        if (principal is null) return Unauthorized();
-
         var envelope = new CommandEnvelope<UnlinkEmailCommand>(
             OperationIds.SettingsAuthUnlinkEmail,
             Guid.NewGuid(),
-            PrincipalId: principal,
+            PrincipalId: PrincipalId,
             IdempotencyKey: GetIdempotencyKey(req?.IdempotencyKey),
             ExpectedVersion: req?.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
@@ -466,13 +428,10 @@ public sealed class SettingsController : InterfoldControllerBase
     [HttpPost("unlink_apple")]
     public async Task<IActionResult> UnlinkApple([FromBody] SettingsCommandRequest? req, CancellationToken ct)
     {
-        var principal = GetPrincipalId();
-        if (principal is null) return Unauthorized();
-
         var envelope = new CommandEnvelope<UnlinkAppleCommand>(
             OperationIds.SettingsAuthUnlinkApple,
             Guid.NewGuid(),
-            PrincipalId: principal,
+            PrincipalId: PrincipalId,
             IdempotencyKey: GetIdempotencyKey(req?.IdempotencyKey),
             ExpectedVersion: req?.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
@@ -487,13 +446,10 @@ public sealed class SettingsController : InterfoldControllerBase
     [HttpPost("delete-account")]
     public async Task<IActionResult> DeleteAccount([FromBody] SettingsCommandRequest? req, CancellationToken ct)
     {
-        var principal = GetPrincipalId();
-        if (principal is null) return Unauthorized();
-
         var envelope = new CommandEnvelope<DeleteAccountCommand>(
             OperationIds.SettingsAccountDelete,
             Guid.NewGuid(),
-            PrincipalId: principal,
+            PrincipalId: PrincipalId,
             IdempotencyKey: GetIdempotencyKey(req?.IdempotencyKey),
             ExpectedVersion: req?.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
@@ -507,13 +463,10 @@ public sealed class SettingsController : InterfoldControllerBase
     [HttpPost("wipe-alters")]
     public async Task<IActionResult> WipeAlters([FromBody] SettingsCommandRequest? req, CancellationToken ct)
     {
-        var principal = GetPrincipalId();
-        if (principal is null) return Unauthorized();
-
         var envelope = new CommandEnvelope<WipeAltersCommand>(
             OperationIds.SettingsAltersWipe,
             Guid.NewGuid(),
-            PrincipalId: principal,
+            PrincipalId: PrincipalId,
             IdempotencyKey: GetIdempotencyKey(req?.IdempotencyKey),
             ExpectedVersion: req?.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
@@ -527,13 +480,10 @@ public sealed class SettingsController : InterfoldControllerBase
     [HttpPost("fields")]
     public async Task<IActionResult> CreateField([FromBody] SettingsCreateFieldRequest req, CancellationToken ct)
     {
-        var principal = GetPrincipalId();
-        if (principal is null) return Unauthorized();
-
         var envelope = new CommandEnvelope<CreateFieldCommand>(
             OperationIds.SettingsFieldCreate,
             Guid.NewGuid(),
-            PrincipalId: principal,
+            PrincipalId: PrincipalId,
             IdempotencyKey: GetIdempotencyKey(req.IdempotencyKey),
             ExpectedVersion: req.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
@@ -557,13 +507,10 @@ public sealed class SettingsController : InterfoldControllerBase
     [HttpPatch("fields/{id}")]
     public async Task<IActionResult> UpdateField([FromRoute] string id, [FromBody] SettingsUpdateFieldRequest req, CancellationToken ct)
     {
-        var principal = GetPrincipalId();
-        if (principal is null) return Unauthorized();
-
         var envelope = new CommandEnvelope<UpdateFieldCommand>(
             OperationIds.SettingsFieldUpdate,
             Guid.NewGuid(),
-            PrincipalId: principal,
+            PrincipalId: PrincipalId,
             IdempotencyKey: GetIdempotencyKey(req.IdempotencyKey),
             ExpectedVersion: req.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
@@ -577,13 +524,10 @@ public sealed class SettingsController : InterfoldControllerBase
     [HttpDelete("fields/{id}")]
     public async Task<IActionResult> DeleteField([FromRoute] string id, [FromBody] SettingsCommandRequest? req, CancellationToken ct)
     {
-        var principal = GetPrincipalId();
-        if (principal is null) return Unauthorized();
-
         var envelope = new CommandEnvelope<DeleteFieldCommand>(
             OperationIds.SettingsFieldDelete,
             Guid.NewGuid(),
-            PrincipalId: principal,
+            PrincipalId: PrincipalId,
             IdempotencyKey: GetIdempotencyKey(req?.IdempotencyKey),
             ExpectedVersion: req?.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
@@ -597,13 +541,10 @@ public sealed class SettingsController : InterfoldControllerBase
     [HttpPost("fields/{id}/relocate")]
     public async Task<IActionResult> RelocateField([FromRoute] string id, [FromBody] SettingsRelocateFieldRequest req, CancellationToken ct)
     {
-        var principal = GetPrincipalId();
-        if (principal is null) return Unauthorized();
-
         var envelope = new CommandEnvelope<RelocateFieldCommand>(
             OperationIds.SettingsFieldRelocate,
             Guid.NewGuid(),
-            PrincipalId: principal,
+            PrincipalId: PrincipalId,
             IdempotencyKey: GetIdempotencyKey(req.IdempotencyKey),
             ExpectedVersion: req.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,

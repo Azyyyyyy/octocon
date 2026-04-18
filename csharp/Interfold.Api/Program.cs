@@ -267,7 +267,7 @@ app.Use(async (context, next) =>
                 context.Response.StatusCode = StatusCodes.Status401Unauthorized;
                 context.Response.ContentType = "application/json";
                 var error = new { error = "Token has been revoked.", code = "token_revoked" };
-                var json = System.Text.Json.JsonSerializer.Serialize(error);
+                var json = JsonSerializer.Serialize(error);
                 await context.Response.WriteAsync(json, context.RequestAborted);
                 return;
             }
@@ -303,6 +303,7 @@ app.UseHsts();
 app.UseHttpsRedirection();
 app.UseCors();
 app.UseAuthentication();
+app.UseMiddleware<InterfoldPrincipalMiddleware>();
 app.UseStaticFiles();
 app.UseWebSockets(new WebSocketOptions
 {
