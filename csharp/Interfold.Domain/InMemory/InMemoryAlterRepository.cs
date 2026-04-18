@@ -11,6 +11,7 @@ public sealed class InMemoryAlterRepository : IAlterRepository
     {
         public required int AlterId { get; init; }
         public string? Alias { get; set; }
+        public string? AvatarUrl { get; set; }
         public string Name { get; set; } = string.Empty;
         public VisibilityLevel VisibilityLevel { get; set; } = VisibilityLevel.Public;
         public Dictionary<string, string?> Fields { get; } = new(StringComparer.OrdinalIgnoreCase);
@@ -86,6 +87,15 @@ public sealed class InMemoryAlterRepository : IAlterRepository
             existing.VisibilityLevel = ParseVisibilityLevel(command.SecurityLevel);
         }
 
+        if (command.ClearAvatar)
+        {
+            existing.AvatarUrl = null;
+        }
+        else if (command.AvatarUrl is not null)
+        {
+            existing.AvatarUrl = command.AvatarUrl;
+        }
+
         if (command.Fields is not null)
         {
             foreach (var field in command.Fields)
@@ -121,7 +131,7 @@ public sealed class InMemoryAlterRepository : IAlterRepository
                 x.AlterId,
                 x.Name,
                 null,
-                null,
+                x.AvatarUrl,
                 null,
                 null,
                 x.VisibilityLevel,
@@ -155,11 +165,11 @@ public sealed class InMemoryAlterRepository : IAlterRepository
             .Select(x => new BareAlter(
                 x.AlterId,
                 x.Name,
-                x.Alias,
+                x.AvatarUrl,
                 null,
                 null,
                 null,
-                null!))
+                ResolveGuardedFields(x, definitions)))
             .ToArray();
 
         return rows;
@@ -176,14 +186,14 @@ public sealed class InMemoryAlterRepository : IAlterRepository
             new AlterReadModel(
                 alter.AlterId, 
                 alter.Name, 
-                alter.Alias,
                 null,
+                alter.AvatarUrl,
                 null,
                 null,
                 alter.VisibilityLevel,
                 null,
                 null,
-                null,
+                alter.Alias,
                 null,
                 null,
                 null));
@@ -196,6 +206,7 @@ public sealed class InMemoryAlterRepository : IAlterRepository
         CancellationToken cancellationToken = default)
     {
         var friendshipLevel = await ResolveFriendshipLevelAsync(systemId, viewerSystemId, cancellationToken);
+        var definitions = await ResolveVisibleDefinitionsAsync(systemId, friendshipLevel, cancellationToken);
         if (!_bySystem.TryGetValue(systemId, out var store) || !store.TryGetValue(alterId, out var alter))
         {
             return null;
@@ -209,11 +220,11 @@ public sealed class InMemoryAlterRepository : IAlterRepository
         return new BareAlter(
             alter.AlterId,
             alter.Name,
-            alter.Alias,
+            alter.AvatarUrl,
             null,
             null,
             null,
-            null!);
+            ResolveGuardedFields(alter, definitions));
     }
 
     public Task<bool> AliasTakenByOtherAsync(

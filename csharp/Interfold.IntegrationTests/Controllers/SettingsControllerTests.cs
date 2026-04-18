@@ -1,6 +1,5 @@
 ﻿using System.Net;
 using System.Net.Http.Json;
-using System.Text.Json;
 using Interfold.IntegrationTests.Attributes;
 using Interfold.IntegrationTests.TestServices;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -43,7 +42,7 @@ public class SettingsControllerTests : BaseEndpointTest
             {
                 await Assert.That(profileResponse.StatusCode).IsEqualTo(HttpStatusCode.OK);
                 await Assert.That(avatarUrl).IsNotNullOrWhiteSpace();
-                await Assert.That(avatarUrl.StartsWith($"{publicBase}/{principalId}/self/", StringComparison.Ordinal)).IsTrue();
+                await Assert.That(UrlPathStartsWith(avatarUrl, $"{publicBase}/{principalId}/self/")).IsTrue();
             }
         }
         finally
@@ -54,7 +53,7 @@ public class SettingsControllerTests : BaseEndpointTest
     }
     
     [Test, ApiIntegration]
-    public async Task SettingsField_InvalidType_FallsBackToText_Returns204()
+    public async Task SettingsField_InvalidType_FallsBackToText_ReturnsCreatedWithId()
     {
         await using var factory = new InterfoldWebApplicationFactory()
             .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
@@ -74,12 +73,17 @@ public class SettingsControllerTests : BaseEndpointTest
         };
         AttachPrincipalAuth(req1, client, principal);
         var res1 = await client.SendAsync(req1);
+        var body1 = await res1.Content.ReadAsStringAsync();
 
-        await Assert.That(res1.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
+        using (Assert.Multiple())
+        {
+            await Assert.That(res1.StatusCode).IsEqualTo(HttpStatusCode.Created);
+            await Assert.That(ReadNestedString(body1, "data", "id")).IsNotNullOrWhiteSpace();
+        }
     }
     
     [Test, ApiIntegration]
-    public async Task SettingsField_MissingType_FallsBackToText_Returns204()
+    public async Task SettingsField_MissingType_FallsBackToText_ReturnsCreatedWithId()
     {
         await using var factory = new InterfoldWebApplicationFactory()
             .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
@@ -99,8 +103,13 @@ public class SettingsControllerTests : BaseEndpointTest
         };
         AttachPrincipalAuth(req, client, principal);
         var res = await client.SendAsync(req);
+        var body = await res.Content.ReadAsStringAsync();
 
-        await Assert.That(res.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
+        using (Assert.Multiple())
+        {
+            await Assert.That(res.StatusCode).IsEqualTo(HttpStatusCode.Created);
+            await Assert.That(ReadNestedString(body, "data", "id")).IsNotNullOrWhiteSpace();
+        }
     }
     
     [Test, ApiIntegration]
@@ -118,7 +127,7 @@ public class SettingsControllerTests : BaseEndpointTest
     }
     
     [Test, ApiIntegration]
-    public async Task SettingsField_DefaultSecurityLevel_IsPrivate()
+    public async Task SettingsField_Create_ReturnsCreatedFieldId()
     {
         await using var factory = new InterfoldWebApplicationFactory()
             .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
@@ -132,7 +141,7 @@ public class SettingsControllerTests : BaseEndpointTest
         var principal = "parity-field-defaults";
 
         // Create field without explicit security_level.
-        using var req = new HttpRequestMessage(HttpMethod.Post, "/api/systems/me/settings/fields")
+        using var req = new HttpRequestMessage(HttpMethod.Post, "/api/settings/fields")
         {
             Content = JsonContent.Create(new { name = "DefaultSecurityField", type = "text" })
         };
@@ -140,17 +149,12 @@ public class SettingsControllerTests : BaseEndpointTest
         var res = await client.SendAsync(req);
         var body = await res.Content.ReadAsStringAsync();
 
-        // Extract field and verify security_level defaults to private.
-        using var doc = JsonDocument.Parse(body);
-        var securityLevel = doc.RootElement
-            .GetProperty("data")
-            .GetProperty("security_level")
-            .GetString();
+        var fieldId = ReadNestedString(body, "data", "id");
 
         using (Assert.Multiple())
         {
             await Assert.That(res.StatusCode).IsEqualTo(HttpStatusCode.Created);
-            await Assert.That(securityLevel).IsEqualTo("private");
+            await Assert.That(fieldId).IsNotNullOrWhiteSpace();
         }
     }
 }

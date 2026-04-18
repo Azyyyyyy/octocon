@@ -1,5 +1,6 @@
 ﻿using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
 using Interfold.IntegrationTests.Attributes;
 using Interfold.IntegrationTests.TestServices;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -40,7 +41,7 @@ public class TagsControllerTests : BaseEndpointTest
 
         using var setReq = new HttpRequestMessage(HttpMethod.Post, $"/api/systems/me/tags/{childTagId}/parent")
         {
-            Content = JsonContent.Create(new { parentTagId })
+            Content = JsonContent.Create(new { parentTagId }, options: new JsonSerializerOptions() { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower })
         };
         AttachPrincipalAuth(setReq, client, principal);
         var setRes = await client.SendAsync(setReq);

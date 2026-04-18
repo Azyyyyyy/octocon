@@ -1,5 +1,6 @@
 ﻿using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
 using Interfold.IntegrationTests.Attributes;
 using Interfold.IntegrationTests.TestServices;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -48,36 +49,44 @@ public class FrontingControllerTests : BaseEndpointTest
 
         var startAnchor = DateTimeOffset.UtcNow.AddMinutes(-1).ToUnixTimeSeconds();
 
-        var started = await SendFrontStartAsync(client, alterId: 101, comment: "phase3-history");
-        var startedFrontId = ReadStringField(started.Body, "frontId");
+        var principal = "phase3-fronting-history";
+        var alter = await CreateAlterAsync(client, principal, "test alter");
+
+        var started = await SendFrontStartAsync(client, alterId: alter, comment: "phase3-history", principal);
+        var startedFrontId = ReadStringField(started.Body, "front_id");
         using (Assert.Multiple())
         {
             await Assert.That(started.StatusCode).IsEqualTo(HttpStatusCode.Created);
             await Assert.That(startedFrontId).IsNotNullOrWhiteSpace();
         }
 
-        var ended = await SendFrontEndAsync(client, alterId: 101);
+        var ended = await SendFrontEndAsync(client, alterId: alter, principal);
         await Assert.That(ended.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
 
         var endAnchor = DateTimeOffset.UtcNow.AddMinutes(1).ToUnixTimeSeconds();
         using var betweenRequest = new HttpRequestMessage(HttpMethod.Get,
             $"/api/systems/me/front/between?start={startAnchor}&end={endAnchor}");
-        AttachPrincipalAuth(betweenRequest, client, "phase3-fronting-history");
+        AttachPrincipalAuth(betweenRequest, client, principal);
         var betweenResponse = await client.SendAsync(betweenRequest);
         var betweenBody = await betweenResponse.Content.ReadAsStringAsync();
 
         using var doc = System.Text.Json.JsonDocument.Parse(betweenBody);
+        var data = betweenResponse.StatusCode == HttpStatusCode.OK
+            ? doc.RootElement.GetProperty("data")
+            : (JsonElement?)null;
         using (Assert.Multiple())
         {
             await Assert.That(betweenResponse.StatusCode).IsEqualTo(HttpStatusCode.OK);
-            await Assert.That(doc.RootElement.ValueKind).IsEqualTo(System.Text.Json.JsonValueKind.Array);
-            await Assert.That(doc.RootElement.GetArrayLength()).IsGreaterThan(0);
+            
+            Assert.NotNull(data);
+            await Assert.That(data.Value.ValueKind).IsEqualTo(System.Text.Json.JsonValueKind.Array);
+            await Assert.That(data.Value.GetArrayLength()).IsGreaterThan(0);
         }
 
-        var row = doc.RootElement.EnumerateArray().First();
-        var responseFrontId = ReadStringField(row, "frontId");
+        var row = data.Value.EnumerateArray().First();
+        var responseFrontId = ReadStringField(row, "id");
         var responseComment = ReadStringField(row, "comment");
-        var endedAt = ReadNullableStringField(row, "endedAt");
+        var endedAt = ReadNullableStringField(row, "time_end");
         using (Assert.Multiple())
         {
             await Assert.That(responseFrontId).IsEqualTo(startedFrontId);

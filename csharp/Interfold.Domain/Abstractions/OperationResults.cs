@@ -27,4 +27,6 @@ public sealed record FriendshipCommandResult(string SystemId, string TargetSyste
 
 public sealed record SettingsCommandResult(string SystemId, string Action, bool Replay) : ICommandResult;
 
+public sealed record SettingsFieldCommandResult(string SystemId, string Action, string FieldId, bool Replay) : ICommandResult;
+
 public sealed record EncryptionCommandResult(string SystemId, string Action, string Key, bool Replay) : ICommandResult;

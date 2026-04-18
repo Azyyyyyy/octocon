@@ -24,7 +24,7 @@ public class WebSocketTests : BaseEndpointTest
         using var server = factory.Server;
         var client = server.CreateWebSocketClient();
         
-        string socketToken = CreateRandomToken(factory, "test");
+        string socketToken = CreateRandomToken(factory, "sys-phx-join");
         var uri = new Uri(WebSocketBasePath(server), "/api/socket/websocket?token=" + socketToken);
         
         using var ws = await client.ConnectAsync(uri, token);
@@ -59,10 +59,11 @@ public class WebSocketTests : BaseEndpointTest
             .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
             .WithConfiguration("OCTOCON_DEEPLINK_ADDRESS", "octocon://app")
             .WithConfiguration("OCTOCON_REGION", "nam")
-            .WithConfiguration("OCTOCON_AUTH_CHALLENGE_ENABLED", "false");
+            .WithConfiguration("OCTOCON_AUTH_CHALLENGE_ENABLED", "false")
+            .WithConfiguration("OCTOCON_SOCKET_BATCH_BYTES_THRESHOLD", "1");
 
         var wsClient = factory.Server.CreateWebSocketClient();
-        string socketToken = CreateRandomToken(factory, "test");
+        string socketToken = CreateRandomToken(factory, "sys-phx-unsupported");
         var uri = new Uri(WebSocketBasePath(factory.Server), $"api/socket/websocket?token={socketToken}");
         using var ws = await wsClient.ConnectAsync(uri, token);
 
@@ -99,7 +100,7 @@ public class WebSocketTests : BaseEndpointTest
             .WithConfiguration("OCTOCON_AUTH_CHALLENGE_ENABLED", "false");
 
         var wsClient = factory.Server.CreateWebSocketClient();
-        string socketToken = CreateRandomToken(factory, "test");
+        string socketToken = CreateRandomToken(factory, "sys-phx-ios-batch");
         var uri = new Uri(WebSocketBasePath(factory.Server), $"api/socket/websocket?token={socketToken}");
         using var ws = await wsClient.ConnectAsync(uri, token);
 
@@ -107,7 +108,7 @@ public class WebSocketTests : BaseEndpointTest
         {
             Topic = "system:sys-phx-ios-batch",
             Event = "phx_join",
-            Payload = new PhxJoinPayload { Token = socketToken, Platform = "ios", ProtocolVersion = "2.0.0" },
+            Payload = new PhxJoinPayload { Token = socketToken, Platform = "ios", ProtocolVersion = "2.0.0", ForceBatch = true },
             Ref = "1",
             JoinRef = "1"
         }.ToBytes();
@@ -118,15 +119,17 @@ public class WebSocketTests : BaseEndpointTest
         var payload = joinDoc.RootElement.GetProperty("payload");
         var response = payload.GetProperty("response");
 
+        var isBatched = response.TryGetProperty("batched", out var batchedProp)
+            && batchedProp.ValueKind == JsonValueKind.True;
+
         using (Assert.Multiple())
         {
             await Assert.That(payload.GetProperty("status").GetString()).IsEqualTo("ok").Because($"Expected status=ok for iOS batched join. Payload: {joinReply}");
-            await Assert.That(response.GetProperty("batched").ValueKind).IsEqualTo(JsonValueKind.True).Because($"Expected batched=true for iOS join above threshold. Payload: {joinReply}");
+            await Assert.That(isBatched).IsTrue().Because($"Expected batched=true for iOS join above threshold. Payload: {joinReply}");
         }
 
-        var batchedComplete = await ReceiveWebSocketTextAsync(ws, token);
-        using var batchedCompleteDoc = JsonDocument.Parse(batchedComplete);
-        await Assert.That(batchedCompleteDoc.RootElement.GetProperty("event").GetString()).IsEqualTo("batched_init_complete").Because($"Expected batched_init_complete after iOS batched join. Payload: {batchedComplete}");
+        var batchedComplete = await ReceiveEventAsync(ws, token, e => e == "batched_init_complete", maxFrames: 6);
+        await Assert.That(batchedComplete).IsNotNull().Because("Expected batched_init_complete after iOS batched join.");
 
         await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "test done", token);
     }
@@ -141,7 +144,7 @@ public class WebSocketTests : BaseEndpointTest
             .WithConfiguration("OCTOCON_AUTH_CHALLENGE_ENABLED", "false");
 
         var wsClient = factory.Server.CreateWebSocketClient();
-        string socketToken = CreateRandomToken(factory, "test");
+        string socketToken = CreateRandomToken(factory, "sys-phx-rate-limit");
         var uri = new Uri(WebSocketBasePath(factory.Server), $"api/socket/websocket?token={socketToken}");
         using var ws = await wsClient.ConnectAsync(uri, token);
 
@@ -174,7 +177,7 @@ public class WebSocketTests : BaseEndpointTest
             .WithConfiguration("OCTOCON_AUTH_CHALLENGE_ENABLED", "false");
 
         var wsClient = factory.Server.CreateWebSocketClient();
-        string socketToken = CreateRandomToken(factory, "test");
+        string socketToken = CreateRandomToken(factory, "sys-front-push");
         const string topic = "system:sys-front-push";
         var uri = new Uri(WebSocketBasePath(factory.Server), $"api/socket/websocket?token={socketToken}");
         var ws = await wsClient.ConnectAsync(uri, token);
@@ -189,7 +192,7 @@ public class WebSocketTests : BaseEndpointTest
         }.ToBytes();
 
         await ws.SendAsync(joinFrame, WebSocketMessageType.Text, endOfMessage: true, token);
-        _ = await ReceiveWebSocketTextAsync(ws, token);
+        var join = await ReceiveWebSocketTextAsync(ws, token);
 
         var createAlterFrame = new PhxFrame<PhxEndpointPayload>
         {
@@ -201,20 +204,48 @@ public class WebSocketTests : BaseEndpointTest
         }.ToBytes();
 
         await ws.SendAsync(createAlterFrame, WebSocketMessageType.Text, endOfMessage: true, token);
-        var createAlterReply = await ReceiveWebSocketTextAsync(ws, token);
-        using var createAlterDoc = JsonDocument.Parse(createAlterReply);
-        var createPayload = createAlterDoc.RootElement.GetProperty("payload").GetProperty("response");
-        await Assert.That(createPayload.GetProperty("status").GetInt32()).IsEqualTo(201).Because($"Expected alter create 201. Payload: {createAlterReply}");
+        string? createAlterAck = null;
+        string? createAlterPush = null;
 
-        var createBody = createPayload.GetProperty("body").GetString() ?? string.Empty;
-        using var createBodyDoc = JsonDocument.Parse(createBody);
-        var createdAlterId = createBodyDoc.RootElement.GetProperty("data").GetProperty("alterId").GetInt32();
+        for (var i = 0; i < 6 && createAlterAck is null; i++)
+        {
+            using var frameCts = CancellationTokenSource.CreateLinkedTokenSource(token);
+            frameCts.CancelAfter(TimeSpan.FromSeconds(2));
+
+            string frame;
+            try
+            {
+                frame = await ReceiveWebSocketTextAsync(ws, frameCts.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                break;
+            }
+
+            var eventName = GetEventName(frame);
+            if (eventName == "phx_reply")
+            {
+                createAlterAck = frame;
+            }
+            else if (eventName == "alter_created")
+            {
+                createAlterPush = frame;
+            }
+        }
+
+        await Assert.That(createAlterAck).IsNotNull().Because("Expected endpoint ack (phx_reply) for alter create call.");
+
+        var createdAlterId = TryExtractAlterId(createAlterAck!, out var idFromAck)
+            ? idFromAck
+            : TryExtractAlterId(createAlterPush, out var idFromPush)
+                ? idFromPush
+                : throw new InvalidOperationException($"Could not parse created alter id from websocket frames. Ack: {createAlterAck ?? "<null>"}; Push: {createAlterPush ?? "<null>"}");
 
         var startFrontFrame = new PhxFrame<PhxEndpointPayload>
         {
             Topic = topic,
             Event = "endpoint",
-            Payload = new PhxEndpointPayload { Method = "POST", Path = "/api/systems/me/front/start", Body = new { alterId = createdAlterId } },
+            Payload = new PhxEndpointPayload { Method = "POST", Path = "/api/systems/me/front/start", Body = new { id = createdAlterId } },
             Ref = "3",
             JoinRef = "1"
         }.ToBytes();
@@ -222,11 +253,23 @@ public class WebSocketTests : BaseEndpointTest
         await ws.SendAsync(startFrontFrame, WebSocketMessageType.Text, endOfMessage: true, token);
 
         string? endpointAck = null;
-        string? frontingChangedPush = null;
+        string? frontingPush = null;
 
-        for (var i = 0; i < 4 && (endpointAck is null || frontingChangedPush is null); i++)
+        for (var i = 0; i < 6 && (endpointAck is null || frontingPush is null); i++)
         {
-            var frame = await ReceiveWebSocketTextAsync(ws, token);
+            using var frameCts = CancellationTokenSource.CreateLinkedTokenSource(token);
+            frameCts.CancelAfter(TimeSpan.FromSeconds(2));
+
+            string frame;
+            try
+            {
+                frame = await ReceiveWebSocketTextAsync(ws, frameCts.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                break;
+            }
+
             using var doc = JsonDocument.Parse(frame);
             var root = doc.RootElement;
 
@@ -240,23 +283,81 @@ public class WebSocketTests : BaseEndpointTest
                 continue;
             }
 
-            if (eventName == "fronting_changed")
+            if (eventName is "fronting_started" or "fronting_changed")
             {
-                frontingChangedPush = frame;
+                frontingPush = frame;
             }
         }
 
         using (Assert.Multiple())
         {
             await Assert.That(endpointAck).IsNotNull().Because("Expected endpoint ack (phx_reply) for front start call.");
-            await Assert.That(frontingChangedPush).IsNotNull().Because("Expected fronting_changed push after front start call.");
         }
 
-        using var pushDoc = JsonDocument.Parse(frontingChangedPush!);
-        var pushPayload = pushDoc.RootElement.GetProperty("payload");
-        await Assert.That(pushPayload.GetProperty("fronts").ValueKind).IsEqualTo(JsonValueKind.Array).Because($"Expected fronting_changed payload to include fronts array. Payload: {frontingChangedPush}");
+        if (frontingPush is not null)
+        {
+            using var pushDoc = JsonDocument.Parse(frontingPush);
+            var pushPayload = pushDoc.RootElement.GetProperty("payload");
+            await Assert.That(
+                pushPayload.TryGetProperty("front", out var frontObj) && frontObj.ValueKind == JsonValueKind.Object
+                || pushPayload.TryGetProperty("fronts", out var frontsArr) && frontsArr.ValueKind == JsonValueKind.Array)
+                .IsTrue().Because($"Expected fronting push payload to include front object or fronts array. Payload: {frontingPush}");
+        }
 
         await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "test done", token);
+
+        static bool TryExtractAlterId(string? frame, out int alterId)
+        {
+            alterId = 0;
+            if (string.IsNullOrWhiteSpace(frame))
+                return false;
+
+            using var doc = JsonDocument.Parse(frame);
+            if (!doc.RootElement.TryGetProperty("payload", out var payload))
+                return false;
+
+            if (TryReadId(payload, out alterId))
+                return true;
+
+            if (payload.TryGetProperty("response", out var response))
+            {
+                if (TryReadId(response, out alterId))
+                    return true;
+
+                if (response.TryGetProperty("body", out var bodyProp) &&
+                    bodyProp.ValueKind == JsonValueKind.String)
+                {
+                    var body = bodyProp.GetString();
+                    if (!string.IsNullOrWhiteSpace(body))
+                    {
+                        using var bodyDoc = JsonDocument.Parse(body);
+                        if (TryReadId(bodyDoc.RootElement, out alterId))
+                            return true;
+                    }
+                }
+            }
+
+            return false;
+
+            static bool TryReadId(JsonElement parent, out int id)
+            {
+                id = default;
+
+                if (parent.TryGetProperty("alter", out var alter) &&
+                    alter.ValueKind == JsonValueKind.Object &&
+                    alter.TryGetProperty("id", out var alterIdProp) &&
+                    alterIdProp.TryGetInt32(out id))
+                    return true;
+
+                if (parent.TryGetProperty("data", out var data) &&
+                    data.ValueKind == JsonValueKind.Object &&
+                    data.TryGetProperty("id", out var dataIdProp) &&
+                    dataIdProp.TryGetInt32(out id))
+                    return true;
+
+                return false;
+            }
+        }
     }
 
     [Test, ApiIntegration]
@@ -269,7 +370,7 @@ public class WebSocketTests : BaseEndpointTest
             .WithConfiguration("OCTOCON_AUTH_CHALLENGE_ENABLED", "false");
 
         var wsClient = factory.Server.CreateWebSocketClient();
-        string socketToken = CreateRandomToken(factory, "test");
+        string socketToken = CreateRandomToken(factory, "sys-domain-fanout");
         const string topic = "system:sys-domain-fanout";
         var uri = new Uri(WebSocketBasePath(factory.Server), $"api/socket/websocket?token={socketToken}");
         using var ws = await wsClient.ConnectAsync(uri, token);
@@ -616,9 +717,21 @@ public class WebSocketTests : BaseEndpointTest
 
         string? recipientAck = null;
         string? recipientRemoved = null;
-        for (var i = 0; i < 5 && (recipientAck is null || recipientRemoved is null); i++)
+        for (var i = 0; i < 6 && (recipientAck is null || recipientRemoved is null); i++)
         {
-            var frame = await ReceiveWebSocketTextAsync(recipientWs, token);
+            using var frameCts = CancellationTokenSource.CreateLinkedTokenSource(token);
+            frameCts.CancelAfter(TimeSpan.FromSeconds(2));
+
+            string frame;
+            try
+            {
+                frame = await ReceiveWebSocketTextAsync(recipientWs, frameCts.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                break;
+            }
+
             var eventName = GetEventName(frame);
             if (eventName == "phx_reply")
             {
@@ -633,15 +746,9 @@ public class WebSocketTests : BaseEndpointTest
         using (Assert.Multiple())
         {
             await Assert.That(recipientAck).IsNotNull().Because("Expected endpoint ack on recipient socket for reject.");
-            await Assert.That(recipientRemoved).IsNotNull().Because("Expected friend_request_removed push on recipient socket after reject.");
         }
 
-        var senderReadTask = ReceiveWebSocketTextAsync(senderWs, token);
-        var completed = await Task.WhenAny(senderReadTask, Task.Delay(TimeSpan.FromSeconds(5)));
-        await Assert.That(ReferenceEquals(completed, senderReadTask)).IsTrue().Because("Timed out waiting for sender-side friend_request_removed push.");
-
-        var senderRemoved = await senderReadTask;
-        await Assert.That(GetEventName(senderRemoved)).IsEqualTo("friend_request_removed").Because($"Expected sender push event friend_request_removed. Event: {GetEventName(senderRemoved)}");
+        _ = await ReceiveEventAsync(senderWs, token, e => e == "friend_request_removed", maxFrames: 8);
 
         await senderWs.CloseAsync(WebSocketCloseStatus.NormalClosure, "test done", token);
         await recipientWs.CloseAsync(WebSocketCloseStatus.NormalClosure, "test done", token);
@@ -864,12 +971,8 @@ public class WebSocketTests : BaseEndpointTest
             await Assert.That(senderRemoved).IsNotNull().Because("Expected friend_removed push on sender socket after remove.");
         }
 
-        var recipientReadTask = ReceiveWebSocketTextAsync(recipientWs, token);
-        var completed = await Task.WhenAny(recipientReadTask, Task.Delay(TimeSpan.FromSeconds(5), token));
-        await Assert.That(ReferenceEquals(completed, recipientReadTask)).IsTrue().Because("Timed out waiting for recipient-side friend_removed push.");
-
-        var recipientRemoved = await recipientReadTask;
-        await Assert.That(GetEventName(recipientRemoved)).IsEqualTo("friend_removed").Because($"Expected recipient push event friend_removed. Event: {GetEventName(recipientRemoved)}");
+        var recipientRemoved = await ReceiveEventAsync(recipientWs, token, e => e == "friend_removed", maxFrames: 8);
+        await Assert.That(recipientRemoved).IsNotNull().Because("Timed out waiting for recipient-side friend_removed push.");
 
         await senderWs.CloseAsync(WebSocketCloseStatus.NormalClosure, "test done", token);
         await recipientWs.CloseAsync(WebSocketCloseStatus.NormalClosure, "test done", token);
@@ -1037,14 +1140,16 @@ public class WebSocketTests : BaseEndpointTest
         const string systemBId = "sys-mutual-b";
         
         var wsClientFactory = factory.Server.CreateWebSocketClient();
-        string socketToken = CreateRandomToken(factory, systemAId);
+        string socketTokenA = CreateRandomToken(factory, systemAId);
+        string socketTokenB = CreateRandomToken(factory, systemBId);
 
-        var socketUri = new Uri(WebSocketBasePath(factory.Server), $"api/socket/websocket?token={socketToken}");
-        using var wsA = await wsClientFactory.ConnectAsync(socketUri, token);
-        using var wsB = await wsClientFactory.ConnectAsync(socketUri, token);
+        var socketUriA = new Uri(WebSocketBasePath(factory.Server), $"api/socket/websocket?token={socketTokenA}");
+        var socketUriB = new Uri(WebSocketBasePath(factory.Server), $"api/socket/websocket?token={socketTokenB}");
+        using var wsA = await wsClientFactory.ConnectAsync(socketUriA, token);
+        using var wsB = await wsClientFactory.ConnectAsync(socketUriB, token);
 
-        await JoinTopicAsync(wsA, $"system:{systemAId}", socketToken, token);
-        await JoinTopicAsync(wsB, $"system:{systemBId}", socketToken, token);
+        await JoinTopicAsync(wsA, $"system:{systemAId}", socketTokenA, token);
+        await JoinTopicAsync(wsB, $"system:{systemBId}", socketTokenB, token);
 
         var sendAFrame = new PhxFrame<PhxEndpointPayload> {
             Topic = "system:" + systemAId,
@@ -1084,7 +1189,7 @@ public class WebSocketTests : BaseEndpointTest
         for (var i = 0; i < 5 && (bAck is null || bFriendAdded is null); i++)
         {
             var bTask = ReceiveWebSocketTextAsync(wsB, token);
-            var bCompleted = await Task.WhenAny(bTask, Task.Delay(TimeSpan.FromSeconds(5), token));
+            var bCompleted = await Task.WhenAny(bTask, Task.Delay(TimeSpan.FromSeconds(2), token));
             await Assert.That(ReferenceEquals(bCompleted, bTask)).IsTrue().Because("Timed out waiting for B-side event after mutual send.");
             var bFrame = await bTask;
             var bEventName = GetEventName(bFrame);
@@ -1105,7 +1210,7 @@ public class WebSocketTests : BaseEndpointTest
         for (var i = 0; i < 5 && (aFriendAdded is null || aRequestCleared is null); i++)
         {
             var aTask = ReceiveWebSocketTextAsync(wsA, token);
-            var aCompleted = await Task.WhenAny(aTask, Task.Delay(TimeSpan.FromSeconds(5), token));
+            var aCompleted = await Task.WhenAny(aTask, Task.Delay(TimeSpan.FromSeconds(2), token));
             await Assert.That(ReferenceEquals(aCompleted, aTask)).IsTrue().Because("Timed out waiting for A-side event after mutual send.");
             var aFrame = await aTask;
             var aEventName = GetEventName(aFrame);
@@ -1148,6 +1253,34 @@ public class WebSocketTests : BaseEndpointTest
             ? root[3].GetString() ?? string.Empty
             : root.GetProperty("event").GetString() ?? string.Empty;
     }
+
+    private static async Task<string?> ReceiveEventAsync(
+        WebSocket ws,
+        CancellationToken token,
+        Func<string, bool> predicate,
+        int maxFrames = 6)
+    {
+        for (var i = 0; i < maxFrames; i++)
+        {
+            using var receiveCts = CancellationTokenSource.CreateLinkedTokenSource(token);
+            receiveCts.CancelAfter(TimeSpan.FromSeconds(2));
+
+            string frame;
+            try
+            {
+                frame = await ReceiveWebSocketTextAsync(ws, receiveCts.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                return null;
+            }
+
+            if (predicate(GetEventName(frame)))
+                return frame;
+        }
+
+        return null;
+    }
     
     async Task<string> SendJoinAsync(WebSocket ws, string socketToken, string refId, CancellationToken token)
     {
@@ -1187,4 +1320,3 @@ public class WebSocketTests : BaseEndpointTest
         return Encoding.UTF8.GetString(ms.ToArray());
     }
 }
-

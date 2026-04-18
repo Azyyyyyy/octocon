@@ -61,11 +61,12 @@ public class AltersControllerTests : BaseEndpointTest
             var publicAlterBody = await publicAlterResponse.Content.ReadAsStringAsync();
 
             var expectedPrefix = $"{publicBase}/{principalId}/{alterId}/";
-            var alterAvatarUrl = FindStringContaining(publicAlterBody, expectedPrefix);
+            var alterAvatarUrl = ReadNestedStringField(publicAlterBody, "data", "avatar_url");
             using (Assert.Multiple())
             {
                 await Assert.That(publicAlterResponse.StatusCode).IsEqualTo(HttpStatusCode.OK);
                 await Assert.That(alterAvatarUrl).IsNotNullOrWhiteSpace();
+                await Assert.That(UrlPathStartsWith(alterAvatarUrl, expectedPrefix)).IsTrue();
             }
 
             using var deleteReq = new HttpRequestMessage(HttpMethod.Delete, $"/api/systems/me/alters/{alterId}/avatar")
@@ -81,7 +82,7 @@ public class AltersControllerTests : BaseEndpointTest
             var afterDeleteResponse = await client.SendAsync(afterDeleteRequest);
             var afterDeleteBody = await afterDeleteResponse.Content.ReadAsStringAsync();
 
-            var staleAvatarUrl = FindStringContaining(afterDeleteBody, expectedPrefix);
+            var staleAvatarUrl = ReadNestedStringField(afterDeleteBody, "data", "avatar_url");
             using (Assert.Multiple())
             {
                 await Assert.That(afterDeleteResponse.StatusCode).IsEqualTo(HttpStatusCode.OK);
@@ -114,6 +115,7 @@ public class AltersControllerTests : BaseEndpointTest
         var trusted = "parity-guarded-fields-trusted";
 
         // Ensure all principals exist.
+        await EnsureUserExistsAsync(client, owner);
         _ = await CreateAlterAsync(client, nonFriend, "SeedNonFriend");
         _ = await CreateAlterAsync(client, friend, "SeedFriend");
         _ = await CreateAlterAsync(client, trusted, "SeedTrusted");
@@ -136,7 +138,10 @@ public class AltersControllerTests : BaseEndpointTest
         });
 
         // Non-friend: only public field visible.
-        var nonFriendRes = await client.GetAsync($"/api/systems/{owner}/alters/{alterId}");
+        var nonFriendReq = new HttpRequestMessage(HttpMethod.Get, $"/api/systems/{owner}/alters/{alterId}");
+        AttachPrincipalAuth(nonFriendReq, client, friend);
+
+        var nonFriendRes = await client.SendAsync(nonFriendReq);
         var nonFriendBody = await nonFriendRes.Content.ReadAsStringAsync();
         using (Assert.Multiple())
         {
@@ -152,6 +157,8 @@ public class AltersControllerTests : BaseEndpointTest
 
         // Friend: public + friends_only fields visible.
         var friendReq = new HttpRequestMessage(HttpMethod.Get, $"/api/systems/{owner}/alters/{alterId}");
+        AttachPrincipalAuth(friendReq, client, friend);
+
         var friendRes = await client.SendAsync(friendReq);
         var friendBody = await friendRes.Content.ReadAsStringAsync();
         using (Assert.Multiple())
@@ -169,6 +176,8 @@ public class AltersControllerTests : BaseEndpointTest
 
         // Trusted: public + friends_only + trusted_only fields visible.
         var trustedReq = new HttpRequestMessage(HttpMethod.Get, $"/api/systems/{owner}/alters/{alterId}");
+        AttachPrincipalAuth(trustedReq, client, trusted);
+
         var trustedRes = await client.SendAsync(trustedReq);
         var trustedBody = await trustedRes.Content.ReadAsStringAsync();
         using (Assert.Multiple())
@@ -181,14 +190,14 @@ public class AltersControllerTests : BaseEndpointTest
         }
     }
     
-        [Test, ApiIntegration]
+    [Test, ApiIntegration]
     public async Task CustomFields_FieldSecurityLevelByRelationship_AppliesCorrectly()
     {
         await using var factory = new InterfoldWebApplicationFactory()
             .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
             .WithConfiguration("OCTOCON_AUTH_CHALLENGE_ENABLED", "false");
 
-        using var client = factory.CreateDefaultClient();
+        using var client = factory.CreateClient();
 
         var owner = "settings-guarded-fields-owner";
         var nonFriend = "settings-guarded-fields-nonfriend";
@@ -196,6 +205,7 @@ public class AltersControllerTests : BaseEndpointTest
         var trusted = "settings-guarded-fields-trusted";
 
         // Ensure all principals exist.
+        await EnsureUserExistsAsync(client, owner);
         _ = await CreateAlterAsync(client, nonFriend, "SeedNonFriend");
         _ = await CreateAlterAsync(client, friend, "SeedFriend");
         _ = await CreateAlterAsync(client, trusted, "SeedTrusted");
@@ -218,7 +228,10 @@ public class AltersControllerTests : BaseEndpointTest
         });
 
         // Non-friend: only public field visible.
-        var nonFriendRes = await client.GetAsync($"/api/systems/{owner}/alters/{alterId}");
+        var nonFriendReq = new HttpRequestMessage(HttpMethod.Get, $"/api/systems/{owner}/alters/{alterId}");
+        AttachPrincipalAuth(nonFriendReq, client, nonFriend);
+
+        var nonFriendRes = await client.SendAsync(nonFriendReq);
         var nonFriendBody = await nonFriendRes.Content.ReadAsStringAsync();
         using (Assert.Multiple())
         {
@@ -234,6 +247,7 @@ public class AltersControllerTests : BaseEndpointTest
 
         // Friend: public + friends_only fields visible.
         var friendReq = new HttpRequestMessage(HttpMethod.Get, $"/api/systems/{owner}/alters/{alterId}");
+        AttachPrincipalAuth(friendReq, client, friend);
         var friendRes = await client.SendAsync(friendReq);
         var friendBody = await friendRes.Content.ReadAsStringAsync();
         using (Assert.Multiple())
@@ -251,6 +265,7 @@ public class AltersControllerTests : BaseEndpointTest
 
         // Trusted: public + friends_only + trusted_only fields visible.
         var trustedReq = new HttpRequestMessage(HttpMethod.Get, $"/api/systems/{owner}/alters/{alterId}");
+        AttachPrincipalAuth(trustedReq, client, trusted);
         var trustedRes = await client.SendAsync(trustedReq);
         var trustedBody = await trustedRes.Content.ReadAsStringAsync();
         using (Assert.Multiple())

@@ -19,7 +19,7 @@
       "path": "/api/systems/me/front/start",
       "principalId": "replay-sys-front",
       "idempotencyKey": "replay-front-start-001",
-      "body": { "alterId": "{alterId}" },
+      "body": { "id": "{alterId}" },
       "expectedStatus": 201,
       "expectedReplay": false,
       "captureAs": { "frontId": "frontId" }
@@ -30,7 +30,7 @@
       "path": "/api/systems/me/front/start",
       "principalId": "replay-sys-front",
       "idempotencyKey": "replay-front-start-001",
-      "body": { "alterId": "{alterId}" },
+      "body": { "id": "{alterId}" },
       "expectedStatus": 201,
       "expectedReplay": true
     },

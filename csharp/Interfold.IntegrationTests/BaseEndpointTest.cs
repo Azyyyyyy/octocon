@@ -162,6 +162,17 @@ public class BaseEndpointTest
 
         return null;
     }
+
+    internal static bool UrlPathStartsWith(string? url, string expectedPrefix)
+    {
+        if (string.IsNullOrWhiteSpace(url) || string.IsNullOrWhiteSpace(expectedPrefix))
+            return false;
+
+        if (Uri.TryCreate(url, UriKind.Absolute, out var absolute))
+            return absolute.AbsolutePath.StartsWith(expectedPrefix, StringComparison.Ordinal);
+
+        return url.StartsWith(expectedPrefix, StringComparison.Ordinal);
+    }
     
     internal static HttpRequestMessage BuildMultipartUploadRequest(HttpClient client, string path, string principalId, string fileName, string contentType)
     {
@@ -270,9 +281,24 @@ public class BaseEndpointTest
         AttachPrincipalAuth(req, client, principal);
         var res = await client.SendAsync(req);
 
-        await Assert.That(res.StatusCode == HttpStatusCode.NoContent).IsTrue().Because($"Expected alter field update 204, got {(int)res.StatusCode}. Body: {await res.Content.ReadAsStringAsync()}");
+        await Assert.That(res.StatusCode).IsEqualTo(HttpStatusCode.NoContent).Because($"Expected alter field update 204, got {(int)res.StatusCode}. Body: {await res.Content.ReadAsStringAsync()}");
     }
     
+    /// <summary>
+    /// Ensures a public profile exists for <paramref name="principal"/> by issuing a username update.
+    /// Required for endpoints that gate access on <c>GetPublicProfileAsync</c> returning non-null.
+    /// </summary>
+    internal static async Task EnsureUserExistsAsync(HttpClient client, string principal, string? username = null)
+    {
+        using var req = new HttpRequestMessage(HttpMethod.Post, "/api/settings/username");
+        req.Content = JsonContent.Create(new { username = username ?? principal });
+        AttachPrincipalAuth(req, client, principal);
+        var res = await client.SendAsync(req);
+        // 204 = accepted, 409 = already set — both are fine.
+        await Assert.That(res.IsSuccessStatusCode || res.StatusCode == System.Net.HttpStatusCode.Conflict)
+            .IsTrue().Because($"EnsureUserExistsAsync failed for '{principal}': {(int)res.StatusCode}");
+    }
+
     internal static async Task<int> CreateAlterAsync(HttpClient client, string principal, string name)
     {
         using var req = new HttpRequestMessage(HttpMethod.Post, "/api/systems/me/alters");
@@ -385,7 +411,7 @@ public class BaseEndpointTest
             alterId,
             comment,
             idempotencyKey = Guid.NewGuid().ToString("N")
-        });
+        }, options: new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower });
         AttachPrincipalAuth(request, client, principal);
 
         var response = await client.SendAsync(request);
@@ -404,7 +430,7 @@ public class BaseEndpointTest
         {
             alterId,
             idempotencyKey = Guid.NewGuid().ToString("N")
-        });
+        }, options: new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower });
         AttachPrincipalAuth(request, client, principal);
 
         var response = await client.SendAsync(request);
@@ -429,16 +455,82 @@ public class BaseEndpointTest
 
         var res = await client.SendAsync(req);
         var body = await res.Content.ReadAsStringAsync();
+        var hasNeedle = ContainsNeedle(body, needle);
 
-        await Assert.That(res.StatusCode == expectedStatus).IsTrue().Because($"Expected {path} to return {(int)expectedStatus}, got {(int)res.StatusCode}. Body: {body}");
+        using IDisposable _ = Assert.Multiple();
+        await Assert.That(res.StatusCode).IsEqualTo(expectedStatus).Because($"Expected {path} to return {(int)expectedStatus}, got {(int)res.StatusCode}. Body: {body}");
+        await Assert.That(hasNeedle).IsEquivalentTo(expectedPresent).Because($"Expected body {(expectedPresent ? "to contain" : "not to contain")} '{needle}' for {path}. Body: {body}");
+    }
 
-        var hasNeedle = body.Contains(needle, StringComparison.OrdinalIgnoreCase);
-        await Assert.That(hasNeedle == expectedPresent).IsTrue().Because($"Expected body {(expectedPresent ? "to contain" : "not to contain")} '{needle}' for {path}. Body: {body}");
+    private static bool ContainsNeedle(string body, string needle)
+    {
+        if (string.IsNullOrWhiteSpace(body) || string.IsNullOrWhiteSpace(needle))
+            return false;
+
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            return JsonContainsNeedle(doc.RootElement, needle);
+        }
+        catch (JsonException)
+        {
+            // Fallback for non-JSON payloads.
+            return body.Contains(needle, StringComparison.OrdinalIgnoreCase);
+        }
+    }
+
+    private static bool JsonContainsNeedle(JsonElement element, string needle)
+    {
+        switch (element.ValueKind)
+        {
+            case JsonValueKind.Object:
+                foreach (var property in element.EnumerateObject())
+                {
+                    if (JsonContainsNeedle(property.Value, needle))
+                        return true;
+                }
+                return false;
+
+            case JsonValueKind.Array:
+                foreach (var item in element.EnumerateArray())
+                {
+                    if (JsonContainsNeedle(item, needle))
+                        return true;
+                }
+                return false;
+
+            case JsonValueKind.String:
+                return string.Equals(element.GetString(), needle, StringComparison.OrdinalIgnoreCase);
+
+            case JsonValueKind.Number:
+                return NumberEqualsNeedle(element, needle);
+
+            case JsonValueKind.True:
+            case JsonValueKind.False:
+                return bool.TryParse(needle, out var boolNeedle) && element.GetBoolean() == boolNeedle;
+
+            default:
+                return false;
+        }
+    }
+
+    private static bool NumberEqualsNeedle(JsonElement numberElement, string needle)
+    {
+        if (int.TryParse(needle, out var intNeedle) && numberElement.TryGetInt32(out var intValue))
+            return intValue == intNeedle;
+
+        if (long.TryParse(needle, out var longNeedle) && numberElement.TryGetInt64(out var longValue))
+            return longValue == longNeedle;
+
+        if (decimal.TryParse(needle, out var decimalNeedle) && numberElement.TryGetDecimal(out var decimalValue))
+            return decimalValue == decimalNeedle;
+
+        return false;
     }
 
     internal static async Task<string> CreateSettingsFieldAsync(HttpClient client, string principal, string fieldName, string type, string securityLevel)
     {
-        using var req = new HttpRequestMessage(HttpMethod.Post, "/api/systems/me/settings/fields");
+        using var req = new HttpRequestMessage(HttpMethod.Post, "/api/settings/fields");
         req.Content = JsonContent.Create(new { name = fieldName, type, security_level = securityLevel });
         AttachPrincipalAuth(req, client, principal);
         var res = await client.SendAsync(req);

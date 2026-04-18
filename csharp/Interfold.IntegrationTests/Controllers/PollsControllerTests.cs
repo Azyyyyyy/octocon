@@ -9,6 +9,15 @@ namespace Interfold.IntegrationTests.Controllers;
 
 public class PollsControllerTests : BaseEndpointTest
 {
+    public static IEnumerable<TestDataRow<string>> PollTypes()
+    {
+        yield return new("single_choice", DisplayName: "Single Choice");
+        yield return new("vote", DisplayName: "Vote");
+        yield return new("multiple_choice", DisplayName: "Multiple Choice");
+        yield return new("choice", DisplayName: "Choice");
+        yield return new("approval", DisplayName: "Approval");
+    }
+    
     [Test, ApiIntegration]
     public async Task ErrorResponse_ConflictFormats_IncludeEntityRefAndCode()
     {
@@ -36,9 +45,9 @@ public class PollsControllerTests : BaseEndpointTest
         using (Assert.Multiple())
         {
             await Assert.That(res.StatusCode).IsEqualTo(HttpStatusCode.UnprocessableEntity);
-            await Assert.That(body.Contains("\"code\"", StringComparison.OrdinalIgnoreCase)).IsTrue();
-            await Assert.That(body.Contains("\"entityRef\"", StringComparison.OrdinalIgnoreCase)).IsTrue();
-            await Assert.That(body.Contains("poll:title_too_long", StringComparison.OrdinalIgnoreCase)).IsTrue();
+            await Assert.That(body).Contains("\"code\"");
+            await Assert.That(body).Contains("\"entity_ref\"");
+            await Assert.That(body).Contains("poll:title_too_long");
         }
     }
     
@@ -73,8 +82,8 @@ public class PollsControllerTests : BaseEndpointTest
         }
     }
     
-    [Test, ApiIntegration]
-    public async Task PollType_AllSupportedTypes_RoundTripCorrectly()
+    [Test, ApiIntegration, MethodDataSource(typeof(PollsControllerTests), nameof(PollTypes))]
+    public async Task PollType_AllSupportedTypes_RoundTripCorrectly(string type)
     {
         await using var factory = new InterfoldWebApplicationFactory()
             .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
@@ -86,52 +95,38 @@ public class PollsControllerTests : BaseEndpointTest
         });
 
         var principal = "parity-poll-types";
-
-        // Test all supported poll type variants.
-        var typeVariants = new[] { "single_choice", "vote", "multiple_choice", "choice", "approval" };
-
-        foreach (var type in typeVariants)
+        
+        using var createReq = new HttpRequestMessage(HttpMethod.Post, "/api/polls")
         {
-            using var createReq = new HttpRequestMessage(HttpMethod.Post, "/api/polls")
-            {
-                Content = JsonContent.Create(new { title = $"Poll_{type}", type })
-            };
-            AttachPrincipalAuth(createReq, client, principal);
-            var createRes = await client.SendAsync(createReq);
-            var createBody = await createRes.Content.ReadAsStringAsync();
+            Content = JsonContent.Create(new { title = $"Poll_{type}", type })
+        };
+        AttachPrincipalAuth(createReq, client, principal);
+        var createRes = await client.SendAsync(createReq);
+        var createBody = await createRes.Content.ReadAsStringAsync();
 
-            // Extract poll ID from response.
-            using var createDoc = JsonDocument.Parse(createBody);
-            var pollId = createDoc.RootElement
-                .GetProperty("data")
-                .GetProperty("id")
-                .GetString();
+        // Extract poll ID from response.
+        using var createDoc = JsonDocument.Parse(createBody);
+        var pollId = createDoc.RootElement
+            .GetProperty("data")
+            .GetProperty("id")
+            .GetString();
 
-            using (Assert.Multiple())
-            {
-                await Assert.That(createRes.StatusCode).IsEqualTo(HttpStatusCode.Created);
-                await Assert.That(pollId).IsNotNullOrWhiteSpace();
-            }
+        using (Assert.Multiple())
+        {
+            await Assert.That(createRes.StatusCode).IsEqualTo(HttpStatusCode.Created);
+            await Assert.That(pollId).IsNotNullOrWhiteSpace();
+        }
 
-            // Verify poll retrieves with correct canonical type.
-            using var getReq = new HttpRequestMessage(HttpMethod.Get, $"/api/polls/{pollId}");
-            AttachPrincipalAuth(getReq, client, principal);
-            var getRes = await client.SendAsync(getReq);
-            var getBody = await getRes.Content.ReadAsStringAsync();
+        // Verify poll retrieves with correct canonical type.
+        using var getReq = new HttpRequestMessage(HttpMethod.Get, $"/api/polls/{pollId}");
+        AttachPrincipalAuth(getReq, client, principal);
+        var getRes = await client.SendAsync(getReq);
+        var getBody = await getRes.Content.ReadAsStringAsync();
 
-            // Legacy aliases (single_choice, multiple_choice) should read back as canonical Elixir type names (vote, choice).
-            var expectedType = type switch
-            {
-                "single_choice" => "vote",
-                "multiple_choice" => "choice",
-                _ => type
-            };
-
-            using (Assert.Multiple())
-            {
-                await Assert.That(getRes.StatusCode).IsEqualTo(HttpStatusCode.OK);
-                await Assert.That(getBody.Contains($"\"type\":\"{expectedType}\"", StringComparison.Ordinal)).IsTrue();
-            }
+        using (Assert.Multiple())
+        {
+            await Assert.That(getRes.StatusCode).IsEqualTo(HttpStatusCode.OK);
+            await Assert.That(getBody).Contains($"\"type\":\"{type}\"");
         }
     }
 

@@ -86,7 +86,8 @@ public sealed class ReplayParityTests : BaseEndpointTest
 
         if (step.Body.HasValue)
         {
-            var bodyJson = SubstituteVars(step.Body.Value.GetRawText(), vars);
+            var substitutedBody = SubstituteBodyValue(step.Body.Value, vars);
+            var bodyJson = JsonSerializer.Serialize(substitutedBody);
             request.Content = new StringContent(bodyJson, Encoding.UTF8, "application/json");
         }
 
@@ -98,7 +99,9 @@ public sealed class ReplayParityTests : BaseEndpointTest
         var response = await client.SendAsync(request);
         var body = await response.Content.ReadAsStringAsync();
 
-        await Assert.That((int)response.StatusCode).IsEqualTo(step.ExpectedStatus);
+        var requestBody = request.Content is null ? string.Empty : await request.Content.ReadAsStringAsync();
+        await Assert.That((int)response.StatusCode).IsEqualTo(step.ExpectedStatus)
+            .Because($"[{fixtureFileName}] Step '{step.Name}' ({step.Method.ToUpperInvariant()} {path}) expected {step.ExpectedStatus}, got {(int)response.StatusCode}. Request body: {requestBody}. Response body: {body}");
 
         // Assert replay flag when declared (only when the response has a body).
         if (step.ExpectedReplay.HasValue && !string.IsNullOrEmpty(body))
@@ -137,6 +140,104 @@ public sealed class ReplayParityTests : BaseEndpointTest
         return template;
     }
 
+    private static object? SubstituteBodyValue(JsonElement element, Dictionary<string, string> vars)
+    {
+        switch (element.ValueKind)
+        {
+            case JsonValueKind.Object:
+            {
+                var dict = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
+                foreach (var property in element.EnumerateObject())
+                {
+                    dict[property.Name] = SubstituteBodyValue(property.Value, vars);
+                }
+
+                return dict;
+            }
+
+            case JsonValueKind.Array:
+            {
+                var list = new List<object?>();
+                foreach (var item in element.EnumerateArray())
+                {
+                    list.Add(SubstituteBodyValue(item, vars));
+                }
+
+                return list;
+            }
+
+            case JsonValueKind.String:
+            {
+                var value = element.GetString() ?? string.Empty;
+                if (TryResolvePlaceholderValue(value, vars, out var resolved))
+                    return resolved;
+
+                return SubstituteVars(value, vars);
+            }
+
+            case JsonValueKind.Number:
+                if (element.TryGetInt32(out var intValue)) return intValue;
+                if (element.TryGetInt64(out var longValue)) return longValue;
+                if (element.TryGetDecimal(out var decimalValue)) return decimalValue;
+                return element.GetDouble();
+
+            case JsonValueKind.True:
+                return true;
+
+            case JsonValueKind.False:
+                return false;
+
+            case JsonValueKind.Null:
+            case JsonValueKind.Undefined:
+                return null;
+
+            default:
+                return element.GetRawText();
+        }
+    }
+
+    private static bool TryResolvePlaceholderValue(
+        string value,
+        Dictionary<string, string> vars,
+        out object? resolved)
+    {
+        resolved = null;
+
+        if (value.Length < 3 || value[0] != '{' || value[^1] != '}')
+            return false;
+
+        var variableName = value[1..^1];
+        if (!vars.TryGetValue(variableName, out var variableValue))
+            return false;
+
+        if (int.TryParse(variableValue, out var intValue))
+        {
+            resolved = intValue;
+            return true;
+        }
+
+        if (long.TryParse(variableValue, out var longValue))
+        {
+            resolved = longValue;
+            return true;
+        }
+
+        if (decimal.TryParse(variableValue, out var decimalValue))
+        {
+            resolved = decimalValue;
+            return true;
+        }
+
+        if (bool.TryParse(variableValue, out var boolValue))
+        {
+            resolved = boolValue;
+            return true;
+        }
+
+        resolved = variableValue;
+        return true;
+    }
+
     private static bool TryCaptureValue(JsonElement root, string jsonPath, out string value)
     {
         foreach (var candidate in GetCaptureCandidates(jsonPath))
@@ -158,6 +259,11 @@ public sealed class ReplayParityTests : BaseEndpointTest
     private static IEnumerable<string> GetCaptureCandidates(string jsonPath)
     {
         yield return jsonPath;
+
+        if (jsonPath.Equals("frontId", StringComparison.OrdinalIgnoreCase))
+        {
+            yield return "front_id";
+        }
 
         if (jsonPath.Equals("alterId", StringComparison.OrdinalIgnoreCase)
             || jsonPath.Equals("entryId", StringComparison.OrdinalIgnoreCase)

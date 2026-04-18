@@ -7,7 +7,7 @@ namespace Interfold.Api.Controllers;
 [Route("api/systems/me/tags")]
 public sealed class TagsController : InterfoldControllerBase
 {
-    private readonly ITagRepository _tagRepository;
+   private readonly ITagRepository _tagRepository;
    private readonly CreateTagCommandHandler _create;
    private readonly UpdateTagCommandHandler _update;
    private readonly DeleteTagCommandHandler _delete;
@@ -39,8 +39,7 @@ public sealed class TagsController : InterfoldControllerBase
     [HttpPost]
     public async Task<IActionResult> CreateTag(
         [FromBody] CreateTagRequest body,
-        CancellationToken cancellationToken
-    )
+        CancellationToken cancellationToken)
     {
         var principal = GetPrincipalId();
         if (principal is null) return Unauthorized();
@@ -82,11 +81,11 @@ public sealed class TagsController : InterfoldControllerBase
            Payload: new UpdateTagCommand(id, body.Name, body.Color, body.Description, body.SecurityLevel)
        );
 
-    var result = ToHttpResult(await _update.HandleAsync(command, ct));
-    return result is OkObjectResult ? NoContent() : result;
+        var result = ToHttpResult(await _update.HandleAsync(command, ct));
+       return result is OkObjectResult ? NoContent() : result;
    }
 
-    //TODO: To ensure route works as expected - check if we unattach alters and remove parent tag relationships when a tag is deleted
+   //TODO: To ensure route works as expected - check if we unattach alters and remove parent tag relationships when a tag is deleted
    [HttpDelete("{id}")]
    public async Task<IActionResult> DeleteTag(string id, [FromBody] TagIdempotencyRequest? body, CancellationToken ct)
    {

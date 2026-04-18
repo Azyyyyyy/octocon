@@ -4,7 +4,6 @@ using Microsoft.Net.Http.Headers;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
-using System.Text.Json.Serialization;
 using Interfold.Api.Services;
 using Interfold.Contracts.Operations;
 using Interfold.Domain.Abstractions;
@@ -538,11 +537,21 @@ public sealed class SettingsController : InterfoldControllerBase
             IdempotencyKey: GetIdempotencyKey(req.IdempotencyKey),
             ExpectedVersion: req.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
-            Payload: new CreateFieldCommand(req.Name, req.Type, req.SecurityLevel ?? "private", req.Locked ?? false)
+            Payload: new CreateFieldCommand(req.Name, req.Type ?? string.Empty, req.SecurityLevel ?? "private", req.Locked ?? false)
         );
 
-        var result = ToHttpResult(await _createFieldHandler.HandleAsync(envelope, ct));
-        return result is OkObjectResult ? NoContent() : result;
+        var execution = await _createFieldHandler.HandleAsync(envelope, ct);
+        if (!execution.Accepted)
+            return ToHttpResult(execution);
+
+        return StatusCode(StatusCodes.Status201Created, new
+        {
+            data = new
+            {
+                id = execution.Result!.FieldId
+            },
+            replay = execution.Result.Replay
+        });
     }
 
     [HttpPatch("fields/{id}")]
@@ -663,7 +672,7 @@ public sealed class SettingsController : InterfoldControllerBase
                     continue;
 
                 using var readerText = new StreamReader(section.Body, Encoding.UTF8, true, 1024, leaveOpen: true);
-                var value = (await readerText.ReadToEndAsync()).Trim();
+                var value = (await readerText.ReadToEndAsync(ct)).Trim();
                 if (fieldName.Equals("idempotencyKey", StringComparison.OrdinalIgnoreCase))
                     idempotencyKey = string.IsNullOrWhiteSpace(value) ? null : value;
                 else if (fieldName.Equals("expectedVersion", StringComparison.OrdinalIgnoreCase)
@@ -824,7 +833,7 @@ public sealed record SettingsImportRequest(
 
 public sealed record SettingsCreateFieldRequest(
     string Name,
-    string Type,
+    string? Type,
     string? SecurityLevel,
     bool? Locked,
     string? IdempotencyKey = null,
