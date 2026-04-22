@@ -40,7 +40,7 @@ services:
   scylla-eur:
     image: scylladb/scylla:2025.1
     restart: always
-    command: --seeds=172.30.1.1,172.30.1.2 --smp 1 --memory 750M --overprovisioned 1 --developer-mode 1 --endpoint-snitch GossipingPropertyFileSnitch --api-address 0.0.0.0 --broadcast-address scylla-eur
+    command: --seeds=172.30.1.1,172.30.1.8 --smp 1 --memory 750M --overprovisioned 1 --developer-mode 1 --endpoint-snitch GossipingPropertyFileSnitch --api-address 0.0.0.0 --broadcast-address scylla-eur
     volumes:
       - ../dev/scylla/cassandra-rackdc.eur.properties:/etc/scylla/cassandra-rackdc.properties
       - scylla_eur_data:/var/lib/scylla
@@ -55,12 +55,12 @@ services:
         condition: service_healthy
     networks:
       octo_network:
-        ipv4_address: 172.30.1.2
+        ipv4_address: 172.30.1.8
   
   scylla-sam:
     image: scylladb/scylla:2025.1
     restart: always
-    command: --seeds=172.30.1.1,172.30.1.2 --smp 1 --memory 750M --overprovisioned 1 --developer-mode 1 --endpoint-snitch GossipingPropertyFileSnitch --api-address 0.0.0.0 --broadcast-address scylla-sam
+    command: --seeds=172.30.1.1,172.30.1.8 --smp 1 --memory 750M --overprovisioned 1 --developer-mode 1 --endpoint-snitch GossipingPropertyFileSnitch --api-address 0.0.0.0 --broadcast-address scylla-sam
     volumes:
       - ../dev/scylla/cassandra-rackdc.sam.properties:/etc/scylla/cassandra-rackdc.properties
       - scylla_sam_data:/var/lib/scylla
@@ -80,7 +80,7 @@ services:
   scylla-sas:
     image: scylladb/scylla:2025.1
     restart: always
-    command: --seeds=172.30.1.1,172.30.1.2 --smp 1 --memory 750M --overprovisioned 1 --developer-mode 1 --endpoint-snitch GossipingPropertyFileSnitch --api-address 0.0.0.0 --broadcast-address scylla-sas
+    command: --seeds=172.30.1.1,172.30.1.8 --smp 1 --memory 750M --overprovisioned 1 --developer-mode 1 --endpoint-snitch GossipingPropertyFileSnitch --api-address 0.0.0.0 --broadcast-address scylla-sas
     volumes:
       - ../dev/scylla/cassandra-rackdc.sas.properties:/etc/scylla/cassandra-rackdc.properties
       - scylla_sas_data:/var/lib/scylla
@@ -100,7 +100,7 @@ services:
   scylla-eas:
     image: scylladb/scylla:2025.1
     restart: always
-    command: --seeds=172.30.1.1,172.30.1.2 --smp 1 --memory 750M --overprovisioned 1 --developer-mode 1 --endpoint-snitch GossipingPropertyFileSnitch --api-address 0.0.0.0 --broadcast-address scylla-eas
+    command: --seeds=172.30.1.1,172.30.1.8 --smp 1 --memory 750M --overprovisioned 1 --developer-mode 1 --endpoint-snitch GossipingPropertyFileSnitch --api-address 0.0.0.0 --broadcast-address scylla-eas
     volumes:
       - ../dev/scylla/cassandra-rackdc.eas.properties:/etc/scylla/cassandra-rackdc.properties
       - scylla_eas_data:/var/lib/scylla
@@ -120,7 +120,7 @@ services:
   scylla-ocn:
     image: scylladb/scylla:2025.1
     restart: always
-    command: --seeds=172.30.1.1,172.30.1.2 --smp 1 --memory 750M --overprovisioned 1 --developer-mode 1 --endpoint-snitch GossipingPropertyFileSnitch --api-address 0.0.0.0 --broadcast-address scylla-ocn
+    command: --seeds=172.30.1.1,172.30.1.8 --smp 1 --memory 750M --overprovisioned 1 --developer-mode 1 --endpoint-snitch GossipingPropertyFileSnitch --api-address 0.0.0.0 --broadcast-address scylla-ocn
     volumes:
       - ../dev/scylla/cassandra-rackdc.ocn.properties:/etc/scylla/cassandra-rackdc.properties
       - scylla_ocn_data:/var/lib/scylla
@@ -140,7 +140,7 @@ services:
   scylla-gdpr:
     image: scylladb/scylla:2025.1
     restart: always
-    command: --seeds=172.30.1.1,172.30.1.2 --smp 1 --memory 750M --overprovisioned 1 --developer-mode 1 --endpoint-snitch GossipingPropertyFileSnitch --api-address 0.0.0.0 --broadcast-address scylla-gdpr
+    command: --seeds=172.30.1.1,172.30.1.8 --smp 1 --memory 750M --overprovisioned 1 --developer-mode 1 --endpoint-snitch GossipingPropertyFileSnitch --api-address 0.0.0.0 --broadcast-address scylla-gdpr
     volumes:
       - ../dev/scylla/cassandra-rackdc.gdpr.properties:/etc/scylla/cassandra-rackdc.properties
       - scylla_gdpr_data:/var/lib/scylla
@@ -180,6 +180,7 @@ networks:
       driver: default
       config:
         - subnet: 172.30.0.0/16
+          ip_range: 172.30.0.0/24
 
 volumes:
   scylla_nam_data:
