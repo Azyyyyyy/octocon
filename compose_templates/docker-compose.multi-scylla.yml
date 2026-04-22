@@ -20,7 +20,7 @@ services:
     ports:
       - "9042:9042"
     restart: always
-    command: --seeds=172.18.1.1 --smp 1 --memory 750M --overprovisioned 1 --developer-mode 1 --endpoint-snitch GossipingPropertyFileSnitch --api-address 0.0.0.0 --broadcast-address scylla-nam
+    command: --seeds=172.30.1.1 --smp 1 --memory 750M --overprovisioned 1 --developer-mode 1 --endpoint-snitch GossipingPropertyFileSnitch --api-address 0.0.0.0 --broadcast-address scylla-nam
     volumes:
       - ../dev/scylla/cassandra-rackdc.nam.properties:/etc/scylla/cassandra-rackdc.properties
       - scylla_nam_data:/var/lib/scylla
@@ -32,7 +32,7 @@ services:
     logging: *default-log-rotation
     networks:
       octo_network:
-        ipv4_address: 172.18.1.1
+        ipv4_address: 172.30.1.1
     depends_on:
       scylla-host-aio:
         condition: service_completed_successfully
@@ -40,7 +40,7 @@ services:
   scylla-eur:
     image: scylladb/scylla:2025.1
     restart: always
-    command: --seeds=172.18.1.1,172.18.1.2 --smp 1 --memory 750M --overprovisioned 1 --developer-mode 1 --endpoint-snitch GossipingPropertyFileSnitch --api-address 0.0.0.0 --broadcast-address scylla-eur
+    command: --seeds=172.30.1.1,172.30.1.2 --smp 1 --memory 750M --overprovisioned 1 --developer-mode 1 --endpoint-snitch GossipingPropertyFileSnitch --api-address 0.0.0.0 --broadcast-address scylla-eur
     volumes:
       - ../dev/scylla/cassandra-rackdc.eur.properties:/etc/scylla/cassandra-rackdc.properties
       - scylla_eur_data:/var/lib/scylla
@@ -55,12 +55,12 @@ services:
         condition: service_healthy
     networks:
       octo_network:
-        ipv4_address: 172.18.1.2
+        ipv4_address: 172.30.1.2
   
   scylla-sam:
     image: scylladb/scylla:2025.1
     restart: always
-    command: --seeds=172.18.1.1,172.18.1.2 --smp 1 --memory 750M --overprovisioned 1 --developer-mode 1 --endpoint-snitch GossipingPropertyFileSnitch --api-address 0.0.0.0 --broadcast-address scylla-sam
+    command: --seeds=172.30.1.1,172.30.1.2 --smp 1 --memory 750M --overprovisioned 1 --developer-mode 1 --endpoint-snitch GossipingPropertyFileSnitch --api-address 0.0.0.0 --broadcast-address scylla-sam
     volumes:
       - ../dev/scylla/cassandra-rackdc.sam.properties:/etc/scylla/cassandra-rackdc.properties
       - scylla_sam_data:/var/lib/scylla
@@ -75,12 +75,12 @@ services:
         condition: service_healthy
     networks:
       octo_network:
-        ipv4_address: 172.18.1.3
+        ipv4_address: 172.30.1.3
 
   scylla-sas:
     image: scylladb/scylla:2025.1
     restart: always
-    command: --seeds=172.18.1.1,172.18.1.2 --smp 1 --memory 750M --overprovisioned 1 --developer-mode 1 --endpoint-snitch GossipingPropertyFileSnitch --api-address 0.0.0.0 --broadcast-address scylla-sas
+    command: --seeds=172.30.1.1,172.30.1.2 --smp 1 --memory 750M --overprovisioned 1 --developer-mode 1 --endpoint-snitch GossipingPropertyFileSnitch --api-address 0.0.0.0 --broadcast-address scylla-sas
     volumes:
       - ../dev/scylla/cassandra-rackdc.sas.properties:/etc/scylla/cassandra-rackdc.properties
       - scylla_sas_data:/var/lib/scylla
@@ -95,12 +95,12 @@ services:
         condition: service_healthy
     networks:
       octo_network:
-        ipv4_address: 172.18.1.4
+        ipv4_address: 172.30.1.4
 
   scylla-eas:
     image: scylladb/scylla:2025.1
     restart: always
-    command: --seeds=172.18.1.1,172.18.1.2 --smp 1 --memory 750M --overprovisioned 1 --developer-mode 1 --endpoint-snitch GossipingPropertyFileSnitch --api-address 0.0.0.0 --broadcast-address scylla-eas
+    command: --seeds=172.30.1.1,172.30.1.2 --smp 1 --memory 750M --overprovisioned 1 --developer-mode 1 --endpoint-snitch GossipingPropertyFileSnitch --api-address 0.0.0.0 --broadcast-address scylla-eas
     volumes:
       - ../dev/scylla/cassandra-rackdc.eas.properties:/etc/scylla/cassandra-rackdc.properties
       - scylla_eas_data:/var/lib/scylla
@@ -115,12 +115,12 @@ services:
         condition: service_healthy
     networks:
       octo_network:
-        ipv4_address: 172.18.1.5
+        ipv4_address: 172.30.1.5
 
   scylla-ocn:
     image: scylladb/scylla:2025.1
     restart: always
-    command: --seeds=172.18.1.1,172.18.1.2 --smp 1 --memory 750M --overprovisioned 1 --developer-mode 1 --endpoint-snitch GossipingPropertyFileSnitch --api-address 0.0.0.0 --broadcast-address scylla-ocn
+    command: --seeds=172.30.1.1,172.30.1.2 --smp 1 --memory 750M --overprovisioned 1 --developer-mode 1 --endpoint-snitch GossipingPropertyFileSnitch --api-address 0.0.0.0 --broadcast-address scylla-ocn
     volumes:
       - ../dev/scylla/cassandra-rackdc.ocn.properties:/etc/scylla/cassandra-rackdc.properties
       - scylla_ocn_data:/var/lib/scylla
@@ -135,12 +135,12 @@ services:
       retries: 20
     networks:
       octo_network:
-        ipv4_address: 172.18.1.6
+        ipv4_address: 172.30.1.6
 
   scylla-gdpr:
     image: scylladb/scylla:2025.1
     restart: always
-    command: --seeds=172.18.1.1,172.18.1.2 --smp 1 --memory 750M --overprovisioned 1 --developer-mode 1 --endpoint-snitch GossipingPropertyFileSnitch --api-address 0.0.0.0 --broadcast-address scylla-gdpr
+    command: --seeds=172.30.1.1,172.30.1.2 --smp 1 --memory 750M --overprovisioned 1 --developer-mode 1 --endpoint-snitch GossipingPropertyFileSnitch --api-address 0.0.0.0 --broadcast-address scylla-gdpr
     volumes:
       - ../dev/scylla/cassandra-rackdc.gdpr.properties:/etc/scylla/cassandra-rackdc.properties
       - scylla_gdpr_data:/var/lib/scylla
@@ -155,7 +155,7 @@ services:
       retries: 20
     networks:
       octo_network:
-        ipv4_address: 172.18.1.7
+        ipv4_address: 172.30.1.7
 
   scylla-load-keyspaces:
     image: scylladb/scylla:2025.1
@@ -179,7 +179,7 @@ networks:
     ipam:
       driver: default
       config:
-        - subnet: 172.18.0.0/16
+        - subnet: 172.30.0.0/16
 
 volumes:
   scylla_nam_data:

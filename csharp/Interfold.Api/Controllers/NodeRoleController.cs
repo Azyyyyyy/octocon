@@ -44,7 +44,7 @@ public sealed class NodeRoleController : InterfoldControllerBase
     public async Task<IActionResult> GetDatabaseHealth()
     {
         var result = await _healthChecker.CheckGuardedPathsAsync();
-        return Ok(new
+        return StatusCode(result.Healthy ? 200 : 500, new
         {
             healthy = result.Healthy,
             paths = result.Paths.Select(p => new { p.Path, p.Healthy, p.Message }).ToList()
