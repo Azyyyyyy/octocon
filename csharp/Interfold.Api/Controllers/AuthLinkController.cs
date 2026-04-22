@@ -187,7 +187,22 @@ public sealed class AuthLinkController : ControllerBase
             HttpContext.RequestAborted);
 
         var apiConfig = _apiOptions.CurrentValue;
-        return Redirect($"{apiConfig.DeepLinkAddress}/link_success/{providerKey}");
+        var deepLinkBase = NormalizeDeepLinkBase(apiConfig.DeepLinkAddress);
+        var redirectBase = deepLinkBase.EndsWith("/deep", StringComparison.OrdinalIgnoreCase)
+            ? deepLinkBase
+            : $"{deepLinkBase}/deep";
+
+        return Redirect($"{redirectBase}/link_success/{providerKey}");
+    }
+
+    private static string NormalizeDeepLinkBase(string? deepLinkAddress)
+    {
+        if (string.IsNullOrWhiteSpace(deepLinkAddress))
+        {
+            return "https://octocon.app/deep";
+        }
+
+        return deepLinkAddress.Trim().TrimEnd('/');
     }
 
     private async Task<string?> ExtractProviderIdentityAsync(string provider)

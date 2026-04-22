@@ -209,6 +209,8 @@ builder.Services.AddSwaggerGen(options =>
     });
 });
 
+builder.Services.AddExceptionHandler<ExceptionHandler>();
+
 var app = builder.Build();
 
 // Capture once after Build so we can log ES256 configuration details.
@@ -226,6 +228,8 @@ startupLogger.LogInformation(
     effectiveAuthConfig.JwtEs256PublicKeyFile ?? "(not set)");
 
 // Ensure avatar multipart uploads are buffered before any component touches Request.Body.
+app.UseExceptionHandler("/error");
+
 app.Use(async (context, next) =>
 {
     if (HttpMethods.IsPut(context.Request.Method)
@@ -257,7 +261,7 @@ app.Use(async (context, next) =>
 {
     if (context.User?.Identity?.IsAuthenticated == true)
     {
-        if (context.User.FindFirst("jti")?.Value is string jti && !string.IsNullOrWhiteSpace(jti))
+        if (context.User.FindFirst("jti")?.Value is { } jti && !string.IsNullOrWhiteSpace(jti))
         {
             var revocationRepository = context.RequestServices.GetRequiredService<IAuthTokenRevocationRepository>();
             var isTokenValid = await revocationRepository.ValidateTokenNotRevokedAsync(jti, context.RequestAborted);

@@ -65,7 +65,7 @@ public sealed class PublicSystemsController : InterfoldControllerBase
         return Ok(new { data = alters });
     }
 
-    [HttpGet("{systemId}/alters/{id}")]
+    [HttpGet("{systemId}/alters/{alterId}")]
     public async Task<IActionResult> ShowAlter([FromRoute] string systemId, [FromRoute] int alterId, CancellationToken ct)
     {
         CheckAlterId(alterId);

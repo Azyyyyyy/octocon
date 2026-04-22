@@ -31,8 +31,7 @@ public abstract class InterfoldControllerBase : ControllerBase
         if (alterId > 0)
             return;
 
-        var error = new { error = "Invalid alter ID.", code = "invalid_alter_id" };
-        throw new BadHttpRequestException(JsonSerializer.Serialize(error));
+        throw new InterfoldException("Invalid alter ID.", "invalid_alter_id");
     }
 
     protected string GetIdempotencyKey(string? bodyKey)

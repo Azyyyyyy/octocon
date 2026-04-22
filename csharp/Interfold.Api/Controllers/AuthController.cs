@@ -232,7 +232,38 @@ public sealed class AuthController : ControllerBase
             return apiConfig.FrontendAddress ?? throw new InvalidOperationException("Frontend address is not configured.");
         }
 
-        return $"{apiConfig.DeepLinkAddress ?? throw new InvalidOperationException("Deep endpoint address is not configured.")}/auth/token";
+        return BuildDeepAuthRedirectBase(apiConfig.DeepLinkAddress);
+    }
+
+    /// <summary>
+    /// Builds a deep-link auth callback URL base with legacy compatibility.
+    /// Legacy behavior expects https://octocon.app/deep/auth/token.
+    /// </summary>
+    private static string BuildDeepAuthRedirectBase(string? deepLinkAddress)
+    {
+        var normalizedBase = NormalizeDeepLinkBase(deepLinkAddress);
+
+        if (normalizedBase.EndsWith("/auth/token", StringComparison.OrdinalIgnoreCase))
+        {
+            return normalizedBase;
+        }
+
+        if (normalizedBase.EndsWith("/deep", StringComparison.OrdinalIgnoreCase))
+        {
+            return $"{normalizedBase}/auth/token";
+        }
+
+        return $"{normalizedBase}/deep/auth/token";
+    }
+
+    private static string NormalizeDeepLinkBase(string? deepLinkAddress)
+    {
+        if (string.IsNullOrWhiteSpace(deepLinkAddress))
+        {
+            return "https://octocon.app/deep";
+        }
+
+        return deepLinkAddress.Trim().TrimEnd('/');
     }
 
     private string BuildMetadataJson()
