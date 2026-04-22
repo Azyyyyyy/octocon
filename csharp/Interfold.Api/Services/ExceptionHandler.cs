@@ -1,3 +1,4 @@
+using Interfold.Contracts;
 using Microsoft.AspNetCore.Diagnostics;
 
 namespace Interfold.Api.Services;
