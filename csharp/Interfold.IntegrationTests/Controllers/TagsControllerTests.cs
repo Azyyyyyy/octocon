@@ -26,9 +26,7 @@ public class TagsControllerTests : BaseEndpointTest
     [Test, ApiIntegration]
     public async Task TagParent_SetAndRemove_Returns204()
     {
-        await using var factory = new InterfoldWebApplicationFactory()
-            .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
-            .WithConfiguration("OCTOCON_AUTH_CHALLENGE_ENABLED", "false");
+        await using var factory = new InterfoldWebApplicationFactory("inmemory");
 
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
         {

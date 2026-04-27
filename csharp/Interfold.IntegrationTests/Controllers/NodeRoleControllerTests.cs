@@ -9,8 +9,7 @@ public class NodeRoleControllerTests : BaseEndpointTest
     [Test, ApiIntegration]
     public async Task NodeRole_DefaultsToAuxiliary_WhenNoEnvVarSet()
     {
-        await using var factory = new InterfoldWebApplicationFactory()
-            .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory");
+        await using var factory = new InterfoldWebApplicationFactory("inmemory");
         using var client = factory.CreateClient();
 
         var response = await client.GetAsync("/health/node-role");
@@ -31,8 +30,7 @@ public class NodeRoleControllerTests : BaseEndpointTest
     [Test, ApiIntegration]
     public async Task NodeRole_ReturnsPrimary_WhenOctoconNodeGroupIsPrimary()
     {
-        await using var factory = new InterfoldWebApplicationFactory()
-            .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
+        await using var factory = new InterfoldWebApplicationFactory("inmemory")
             .WithConfiguration("OCTOCON_NODE_GROUP", "primary");
         using var client = factory.CreateClient();
 
@@ -55,8 +53,7 @@ public class NodeRoleControllerTests : BaseEndpointTest
     public async Task NodeRole_ReturnsPrimary_WhenFlyProcessGroupIsPrimary()
     {
         // FLY_PROCESS_GROUP takes precedence; OCTOCON_NODE_GROUP is not set.
-        await using var factory = new InterfoldWebApplicationFactory()
-            .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
+        await using var factory = new InterfoldWebApplicationFactory("inmemory")
             .WithConfiguration("FLY_PROCESS_GROUP", "primary");
         using var client = factory.CreateClient();
 
@@ -75,8 +72,7 @@ public class NodeRoleControllerTests : BaseEndpointTest
     public async Task NodeRole_FlyProcessGroup_TakesPrecedenceOver_OctoconNodeGroup()
     {
         // FLY_PROCESS_GROUP=sidecar should win over OCTOCON_NODE_GROUP=primary.
-        await using var factory = new InterfoldWebApplicationFactory()
-            .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
+        await using var factory = new InterfoldWebApplicationFactory("inmemory")
             .WithConfiguration("OCTOCON_NODE_GROUP", "primary")
             .WithConfiguration("FLY_PROCESS_GROUP", "sidecar");
         using var client = factory.CreateClient();
@@ -99,8 +95,7 @@ public class NodeRoleControllerTests : BaseEndpointTest
     [Test, ApiIntegration]
     public async Task NodeRole_Endpoint_IsAnonymous()
     {
-        await using var factory = new InterfoldWebApplicationFactory()
-            .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory");
+        await using var factory = new InterfoldWebApplicationFactory("inmemory");
         using var client = factory.CreateClient();
 
         // Un-authenticated request — must not return 401.

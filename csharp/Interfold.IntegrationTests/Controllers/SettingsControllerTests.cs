@@ -19,8 +19,7 @@ public class SettingsControllerTests : BaseEndpointTest
         {
             Directory.CreateDirectory(storageRoot);
 
-            await using var factory = new InterfoldWebApplicationFactory()
-                .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
+            await using var factory = new InterfoldWebApplicationFactory("inmemory")
                 .WithConfiguration("OCTOCON_AVATAR_STORAGE_ROOT", storageRoot)
                 .WithConfiguration("OCTOCON_AVATAR_PUBLIC_BASE", publicBase);
             
@@ -55,9 +54,7 @@ public class SettingsControllerTests : BaseEndpointTest
     [Test, ApiIntegration]
     public async Task SettingsField_InvalidType_FallsBackToText_ReturnsCreatedWithId()
     {
-        await using var factory = new InterfoldWebApplicationFactory()
-            .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
-            .WithConfiguration("OCTOCON_AUTH_CHALLENGE_ENABLED", "false");
+        await using var factory = new InterfoldWebApplicationFactory("inmemory");
 
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
         {
@@ -85,9 +82,7 @@ public class SettingsControllerTests : BaseEndpointTest
     [Test, ApiIntegration]
     public async Task SettingsField_MissingType_FallsBackToText_ReturnsCreatedWithId()
     {
-        await using var factory = new InterfoldWebApplicationFactory()
-            .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
-            .WithConfiguration("OCTOCON_AUTH_CHALLENGE_ENABLED", "false");
+        await using var factory = new InterfoldWebApplicationFactory("inmemory");
 
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
         {
@@ -129,9 +124,7 @@ public class SettingsControllerTests : BaseEndpointTest
     [Test, ApiIntegration]
     public async Task SettingsField_Create_ReturnsCreatedFieldId()
     {
-        await using var factory = new InterfoldWebApplicationFactory()
-            .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
-            .WithConfiguration("OCTOCON_AUTH_CHALLENGE_ENABLED", "false");
+        await using var factory = new InterfoldWebApplicationFactory("inmemory");
 
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
         {

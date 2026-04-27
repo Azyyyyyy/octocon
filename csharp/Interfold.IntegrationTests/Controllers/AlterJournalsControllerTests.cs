@@ -6,19 +6,15 @@ using Microsoft.AspNetCore.Mvc.Testing;
 
 namespace Interfold.IntegrationTests.Controllers;
 
+[Category("Alter Journals")]
 public class AlterJournalsControllerTests : BaseEndpointTest
 {
-    [Test, ApiIntegration]
+    [Test, ApiIntegration, Category("Index")]
     public async Task AlterJournal_ListWhenEmpty_ReturnsDataAsEmptyArray()
     {
-        await using var factory = new InterfoldWebApplicationFactory()
-            .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
-            .WithConfiguration("OCTOCON_AUTH_CHALLENGE_ENABLED", "false");
+        await using var factory = new InterfoldWebApplicationFactory("inmemory");
 
-        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
-        {
-            AllowAutoRedirect = false
-        });
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions());
 
         var principal = "parity-alter-journal-empty-list";
         var alterId = await CreateAlterAsync(client, principal, "NoJournalAlter");
@@ -41,9 +37,7 @@ public class AlterJournalsControllerTests : BaseEndpointTest
     [Test, ApiIntegration]
     public async Task AlterJournal_NestedCreate_Returns201WithDataAndReplay()
     {
-        await using var factory = new InterfoldWebApplicationFactory()
-            .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
-            .WithConfiguration("OCTOCON_AUTH_CHALLENGE_ENABLED", "false");
+        await using var factory = new InterfoldWebApplicationFactory("inmemory");
 
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
         {
@@ -122,9 +116,7 @@ public class AlterJournalsControllerTests : BaseEndpointTest
     [Test, ApiIntegration]
     public async Task AlterJournal_ShowAfterDelete_Returns404()
     {
-        await using var factory = new InterfoldWebApplicationFactory()
-            .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
-            .WithConfiguration("OCTOCON_AUTH_CHALLENGE_ENABLED", "false");
+        await using var factory = new InterfoldWebApplicationFactory("inmemory");
 
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
         {

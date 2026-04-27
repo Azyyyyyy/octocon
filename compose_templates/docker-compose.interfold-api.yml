@@ -51,7 +51,7 @@ services:
           "CMD",
           "/bin/bash",
           "-lc",
-          "exec 3<>/dev/tcp/localhost/8080; printf 'GET /health/database HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&3; grep -q 'HTTP/1.1 200' <&3"
+          "command -v openssl >/dev/null 2>&1 || exit 1; printf 'GET /health/database HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n' | openssl s_client -quiet -connect localhost:8081 -servername localhost 2>/dev/null | grep -m1 -q 'HTTP/1.1 200'"
         ]
       interval: 15s
       timeout: 5s

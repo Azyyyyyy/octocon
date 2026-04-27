@@ -42,7 +42,7 @@ jobs:
             core.exportVariable('ACTIONS_RESULTS_URL', process.env['ACTIONS_RESULTS_URL']);
         
       - name: Test
-        run: dotnet test --verbosity normal
+        run: dotnet test --verbosity normal --coverage
 
       - name: Publish
         run: dotnet publish ${{ env.PROJECT_PATH }} --configuration Release --no-build --output ./csharp/Interfold.Api/publish
@@ -54,14 +54,21 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build Docker image (from published output)
-        run: |
-          docker build -f ${{ env.DOCKERFILE_PATH }} \
-            -t ${{ steps.lower.outputs.IMAGE_NAME }}:${{ github.sha }} \
-            -t ${{ steps.lower.outputs.IMAGE_NAME }}:latest \
-            ./csharp/Interfold.Api
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/octocon-wasm
+          tags: |
+            type=ref,event=branch
+            type=sha,prefix=sha-
+            type=raw,value=latest,enable=${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
 
-      - name: Push Docker image
-        run: |
-          docker push ${{ steps.lower.outputs.IMAGE_NAME }}:${{ github.sha }}
-          docker push ${{ steps.lower.outputs.IMAGE_NAME }}:latest
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ env.DOCKERFILE_PATH }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}

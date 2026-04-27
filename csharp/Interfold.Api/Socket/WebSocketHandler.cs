@@ -311,6 +311,7 @@ public static async Task HandleUserSocketAsync(HttpContext context)
                     replyAsArrayFrame,
                     context.RequestAborted,
                     sendGate);
+                await socket.CloseAsync(WebSocketCloseStatus.PolicyViolation, unauthorizedReason, context.RequestAborted);
             }
 
             continue;
@@ -466,11 +467,6 @@ static async Task<(bool IsAuthorized, string? FailureReason)> IsSocketJoinTokenA
     var authConfig = context.RequestServices
         .GetRequiredService<IOptionsMonitor<AuthenticationConfiguration>>().CurrentValue;
 
-    if (!authConfig.AuthEnabled ?? false)
-    {
-        return (true, null);
-    }
-    
     var logger = context.RequestServices.GetRequiredService<ILoggerFactory>()
         .CreateLogger("WebSocketTokenAuth");
 

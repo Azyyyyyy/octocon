@@ -11,8 +11,14 @@ namespace Interfold.IntegrationTests.TestServices;
 
 public class InterfoldWebApplicationFactory : WebApplicationFactory<Program>
 {
-    private readonly Dictionary<string, string?> _configurationOverrides = new();
+    private readonly Dictionary<string, string?> _configurationOverrides;
     private static readonly ConditionalWeakTable<HttpClient, InterfoldWebApplicationFactory> ClientFactories = new();
+
+    public InterfoldWebApplicationFactory(string persistenceType)
+    {
+        _configurationOverrides = [];
+        _configurationOverrides["OCTOCON_PERSISTENCE"] = persistenceType;
+    }
 
     public InterfoldWebApplicationFactory WithConfiguration(string key, string? value)
     {

@@ -3,6 +3,7 @@ using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
+using Interfold.Domain.Auth;
 using Interfold.Infrastructure;
 using Interfold.Infrastructure.Configuration;
 using Interfold.IntegrationTests.TestServices;
@@ -237,8 +238,7 @@ public class BaseEndpointTest
     internal static async Task RunSoakAsync(
         Func<HttpClient, string, Task<HttpResponseMessage>> requestFactory)
     {
-        await using var factory = new InterfoldWebApplicationFactory()
-            .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory");
+        await using var factory = new InterfoldWebApplicationFactory("inmemory");
         using var client = factory.CreateClient();
         var token = factory.CreateToken("soak-default-principal");
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
@@ -549,9 +549,10 @@ public class BaseEndpointTest
         throw new InvalidOperationException($"Cannot extract field ID from response body: {body}");
     }
     
-    internal static string CreateRandomToken(InterfoldWebApplicationFactory factory, string systemId)
+    internal static async Task<string> CreateRandomToken(InterfoldWebApplicationFactory factory, string systemId)
     {
         var config = factory.Services.GetRequiredService<IConfiguration>();
+        var rev = factory.Services.GetRequiredService<IAuthTokenRevocationRepository>();
         var authConfig = config.Get<AuthenticationConfiguration>();
 
         Assert.NotNull(authConfig);
@@ -563,6 +564,8 @@ public class BaseEndpointTest
         var expiresAt = now.AddDays(1);
 
         var token = AuthHelper.CreateToken(authConfig, expiresAt, now, jti, systemId);
+        await rev.RecordTokenAsync(jti, systemId, expiresAt, CancellationToken.None);
+        
         return token;
     }
 

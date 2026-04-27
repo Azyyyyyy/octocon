@@ -12,9 +12,7 @@ public class PublicSystemsControllerTests : BaseEndpointTest
     [Test, ApiIntegration]
     public async Task PublicBatch_SelfLookup_Returns403InvalidEndpoint()
     {
-        await using var factory = new InterfoldWebApplicationFactory()
-            .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
-            .WithConfiguration("OCTOCON_AUTH_CHALLENGE_ENABLED", "false");
+        await using var factory = new InterfoldWebApplicationFactory("inmemory");
 
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
         {
@@ -40,9 +38,7 @@ public class PublicSystemsControllerTests : BaseEndpointTest
     [Test, ApiIntegration, Skip("Need to rework")] //Well all of them really...
     public async Task Visibility_NonFriendFriendTrusted_AppliesToFronting()
     {
-        await using var factory = new InterfoldWebApplicationFactory()
-            .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
-            .WithConfiguration("OCTOCON_AUTH_CHALLENGE_ENABLED", "false");
+        await using var factory = new InterfoldWebApplicationFactory("inmemory");
 
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
         {
@@ -103,9 +99,7 @@ public class PublicSystemsControllerTests : BaseEndpointTest
     [Test, ApiIntegration]
     public async Task PublicAlter_PrivateSecurity_Returns404ForAnonymous()
     {
-        await using var factory = new InterfoldWebApplicationFactory()
-            .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
-            .WithConfiguration("OCTOCON_AUTH_CHALLENGE_ENABLED", "false");
+        await using var factory = new InterfoldWebApplicationFactory("inmemory");
 
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
         {
@@ -132,9 +126,7 @@ public class PublicSystemsControllerTests : BaseEndpointTest
     [Test, ApiIntegration]
     public async Task Visibility_NonFriendFriendTrusted_AppliesAcrossPublicReads()
     {
-        await using var factory = new InterfoldWebApplicationFactory()
-            .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
-            .WithConfiguration("OCTOCON_AUTH_CHALLENGE_ENABLED", "false");
+        await using var factory = new InterfoldWebApplicationFactory("inmemory");
 
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
         {
@@ -189,9 +181,7 @@ public class PublicSystemsControllerTests : BaseEndpointTest
     [Test, ApiIntegration]
     public async Task PublicTag_PrivateSecurity_Returns404ForAnonymous()
     {
-        await using var factory = new InterfoldWebApplicationFactory()
-            .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
-            .WithConfiguration("OCTOCON_AUTH_CHALLENGE_ENABLED", "false");
+        await using var factory = new InterfoldWebApplicationFactory("inmemory");
 
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
         {
@@ -218,9 +208,7 @@ public class PublicSystemsControllerTests : BaseEndpointTest
     [Test, ApiIntegration]
     public async Task Visibility_NonFriendFriendTrusted_AppliesToTags()
     {
-        await using var factory = new InterfoldWebApplicationFactory()
-            .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
-            .WithConfiguration("OCTOCON_AUTH_CHALLENGE_ENABLED", "false");
+        await using var factory = new InterfoldWebApplicationFactory("inmemory");
 
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
         {

@@ -21,9 +21,7 @@ public class PollsControllerTests : BaseEndpointTest
     [Test, ApiIntegration]
     public async Task ErrorResponse_ConflictFormats_IncludeEntityRefAndCode()
     {
-        await using var factory = new InterfoldWebApplicationFactory()
-            .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
-            .WithConfiguration("OCTOCON_AUTH_CHALLENGE_ENABLED", "false");
+        await using var factory = new InterfoldWebApplicationFactory("inmemory");
 
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
         {
@@ -54,9 +52,7 @@ public class PollsControllerTests : BaseEndpointTest
     [Test, ApiIntegration]
     public async Task PollValidation_DescriptionTooLong_Returns422()
     {
-        await using var factory = new InterfoldWebApplicationFactory()
-            .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
-            .WithConfiguration("OCTOCON_AUTH_CHALLENGE_ENABLED", "false");
+        await using var factory = new InterfoldWebApplicationFactory("inmemory");
 
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
         {
@@ -85,9 +81,7 @@ public class PollsControllerTests : BaseEndpointTest
     [Test, ApiIntegration, MethodDataSource(typeof(PollsControllerTests), nameof(PollTypes))]
     public async Task PollType_AllSupportedTypes_RoundTripCorrectly(string type)
     {
-        await using var factory = new InterfoldWebApplicationFactory()
-            .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
-            .WithConfiguration("OCTOCON_AUTH_CHALLENGE_ENABLED", "false");
+        await using var factory = new InterfoldWebApplicationFactory("inmemory");
 
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
         {
@@ -133,9 +127,7 @@ public class PollsControllerTests : BaseEndpointTest
     [Test, ApiIntegration]
     public async Task PollUpdate_TimeEndNullOnly_ClearsExistingTimeEnd()
     {
-        await using var factory = new InterfoldWebApplicationFactory()
-            .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
-            .WithConfiguration("OCTOCON_AUTH_CHALLENGE_ENABLED", "false");
+        await using var factory = new InterfoldWebApplicationFactory("inmemory");
 
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
         {
@@ -194,9 +186,7 @@ public class PollsControllerTests : BaseEndpointTest
     [Test, ApiIntegration]
     public async Task PollValidation_TitleTooLong_Returns422()
     {
-        await using var factory = new InterfoldWebApplicationFactory()
-            .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
-            .WithConfiguration("OCTOCON_AUTH_CHALLENGE_ENABLED", "false");
+        await using var factory = new InterfoldWebApplicationFactory("inmemory");
 
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
         {
@@ -224,9 +214,7 @@ public class PollsControllerTests : BaseEndpointTest
     [Test, ApiIntegration]
     public async Task LegacyRoute_SystemsMePolls_Returns404()
     {
-        await using var factory = new InterfoldWebApplicationFactory()
-            .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
-            .WithConfiguration("OCTOCON_AUTH_CHALLENGE_ENABLED", "false");
+        await using var factory = new InterfoldWebApplicationFactory("inmemory");
 
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
         {

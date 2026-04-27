@@ -327,11 +327,6 @@ static SecurityToken ValidateJwtTokenSignatureForBearer(
     TokenValidationParameters validationParameters,
     AuthenticationConfiguration config)
 {
-    if (!config.AuthEnabled ?? false)
-    {
-        return new JsonWebToken(token);
-    }
-    
     if (string.IsNullOrWhiteSpace(token))
     {
         throw new SecurityTokenInvalidSignatureException("Token is empty.");

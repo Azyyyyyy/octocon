@@ -10,8 +10,7 @@ public class HeartbeatControllerTests : BaseEndpointTest
     [Test, ApiIntegration]
     public async Task Api_Heartbeat_ReturnsContractHeader()
     {
-        await using var factory = new InterfoldWebApplicationFactory()
-            .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory");
+        await using var factory = new InterfoldWebApplicationFactory("inmemory");
         using var client = factory.CreateClient();
 
         var response = await client.GetAsync("/api/heartbeat");
@@ -27,9 +26,7 @@ public class HeartbeatControllerTests : BaseEndpointTest
     [Test, ApiIntegration]
     public async Task OperationalHealth_GuardedPaths_ListGuardedAsync_Succeeds()
     {
-        await using var factory = new InterfoldWebApplicationFactory()
-            .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
-            .WithConfiguration("OCTOCON_AUTH_CHALLENGE_ENABLED", "false");
+        await using var factory = new InterfoldWebApplicationFactory("inmemory");
 
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
         {
@@ -45,8 +42,7 @@ public class HeartbeatControllerTests : BaseEndpointTest
     [Test, ApiIntegration]
     public async Task Idempotency_CorrelationId_EchoedFromRequestHeader()
     {
-        await using var factory = new InterfoldWebApplicationFactory()
-            .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory");
+        await using var factory = new InterfoldWebApplicationFactory("inmemory");
         using var client = factory.CreateClient();
 
         var sentId = Guid.NewGuid().ToString("N");
@@ -66,8 +62,7 @@ public class HeartbeatControllerTests : BaseEndpointTest
     [Test, ApiIntegration]
     public async Task Idempotency_RequestId_PresentOnEveryResponse()
     {
-        await using var factory = new InterfoldWebApplicationFactory()
-            .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory");
+        await using var factory = new InterfoldWebApplicationFactory("inmemory");
         using var client = factory.CreateClient();
 
         for (var i = 0; i < 3; i++)

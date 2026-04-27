@@ -51,9 +51,7 @@ public sealed class ReplayParityTests : BaseEndpointTest
             await Assert.That(trace.Steps.Count > 0).IsTrue();
         }
 
-        await using var factory = new InterfoldWebApplicationFactory()
-            .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
-            .WithConfiguration("OCTOCON_AUTH_CHALLENGE_ENABLED", "false");
+        await using var factory = new InterfoldWebApplicationFactory("inmemory");
         
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
         {

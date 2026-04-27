@@ -13,9 +13,7 @@ public class FrontingControllerTests : BaseEndpointTest
     [Test, ApiIntegration]
     public async Task FrontStart_LegacyIdField_Returns201()
     {
-        await using var factory = new InterfoldWebApplicationFactory()
-            .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
-            .WithConfiguration("OCTOCON_AUTH_CHALLENGE_ENABLED", "false");
+        await using var factory = new InterfoldWebApplicationFactory("inmemory");
 
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
         {
@@ -39,11 +37,9 @@ public class FrontingControllerTests : BaseEndpointTest
     [Test, ApiIntegration]
     public async Task Api_FrontHistoryBetween_IncludesEndedFronts()
     {
-        await using var factory = new InterfoldWebApplicationFactory()
-            .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
+        await using var factory = new InterfoldWebApplicationFactory("inmemory")
             .WithConfiguration("OCTOCON_DEEPLINK_ADDRESS", "octocon://app")
-            .WithConfiguration("OCTOCON_REGION", "nam")
-            .WithConfiguration("OCTOCON_AUTH_CHALLENGE_ENABLED", "false");
+            .WithConfiguration("OCTOCON_REGION", "nam");
 
         using var client = factory.CreateClient();
 

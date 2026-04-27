@@ -20,9 +20,7 @@ public sealed class AuthControllerTests : BaseEndpointTest
     [Test, ApiIntegration]
     public async Task Api_AuthRequest_FallsBackTo403_WhenChallengeDisabled()
     {
-        await using var factory = new InterfoldWebApplicationFactory()
-            .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
-            .WithConfiguration("OCTOCON_AUTH_CHALLENGE_ENABLED", "false");
+        await using var factory = new InterfoldWebApplicationFactory("inmemory");
         
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
         {
@@ -38,9 +36,7 @@ public sealed class AuthControllerTests : BaseEndpointTest
     [Test, ApiIntegration]
     public async Task Api_AuthRequest_IssuesChallengeRedirect_WhenChallengeEnabledAndSchemeConfigured()
     {
-        await using var factory = new InterfoldWebApplicationFactory()
-            .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
-            .WithConfiguration("OCTOCON_AUTH_CHALLENGE_ENABLED", "true")
+        await using var factory = new InterfoldWebApplicationFactory("inmemory")
             .WithConfiguration("OCTOCON_AUTH_CHALLENGE_GOOGLE_SCHEME", "oauth-google")
             .WithConfiguration("OCTOCON_AUTH_CHALLENGE_GOOGLE_ENDPOINT", "https://accounts.example.test/oauth/authorize");
 
@@ -67,8 +63,7 @@ public sealed class AuthControllerTests : BaseEndpointTest
     [Test, ApiIntegration]
     public async Task Api_AuthAndIdempotencyFlow_VerifiesEndToEndBehavior()
     {
-        await using var factory = new InterfoldWebApplicationFactory()
-            .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
+        await using var factory = new InterfoldWebApplicationFactory("inmemory")
             .WithConfiguration("OCTOCON_TEST_AUTH_ALLOW_PRINCIPAL_HEADER", "true");
 
         using var client = factory.CreateClient();
@@ -133,9 +128,7 @@ public sealed class AuthControllerTests : BaseEndpointTest
     [Test, ApiIntegration, Skip("To readd")]
     public async Task Api_FailsFast_WithoutJwtAuthority_WhenDevHeaderBypassOff()
     {
-        await using var factory = new InterfoldWebApplicationFactory()
-            .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
-            .WithConfiguration("OCTOCON_AUTH_CHALLENGE_ENABLED", "true");
+        await using var factory = new InterfoldWebApplicationFactory("inmemory");
 
         using var client = factory.CreateClient();
 
@@ -155,11 +148,9 @@ public sealed class AuthControllerTests : BaseEndpointTest
     [Test, ApiIntegration]
     public async Task Api_OAuthCallback_IssuesJwsCompactSerializationToken()
     {
-        await using var factory = new InterfoldWebApplicationFactory()
-            .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
+        await using var factory = new InterfoldWebApplicationFactory("inmemory")
             .WithConfiguration("OCTOCON_DEEPLINK_ADDRESS", "octocon://app")
-            .WithConfiguration("OCTOCON_REGION", "nam")
-            .WithConfiguration("OCTOCON_AUTH_CHALLENGE_ENABLED", "false");
+            .WithConfiguration("OCTOCON_REGION", "nam");
 
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
         {

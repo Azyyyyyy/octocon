@@ -155,14 +155,6 @@ public static class ConfigurationServiceCollectionExtensions
 
     private static void ApplyAuthentication(AuthenticationConfiguration opts, IConfiguration config)
     {
-        var authEnabled = 
-#if DEBUG
-            bool.TryParse(config["OCTOCON_AUTH_CHALLENGE_ENABLED"], out var resultApi) && resultApi;
-#else
-        true;
-#endif
-
-        opts.AuthEnabled             = authEnabled;
         opts.CallbackBaseUrl         = config["OCTOCON_AUTH_CALLBACK_BASE_URL"];
         opts.DeepLinkSecret          = config["OCTOCON_AUTH_DEEP_LINK_SECRET"];
         opts.JwtAuthority            = config["OCTOCON_JWT_AUTHORITY"] ?? "octocon-local";

@@ -22,8 +22,7 @@ public class AltersControllerTests : BaseEndpointTest
         {
             Directory.CreateDirectory(storageRoot);
 
-            await using var factory = new InterfoldWebApplicationFactory()
-                .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
+            await using var factory = new InterfoldWebApplicationFactory("inmemory")
                 .WithConfiguration("OCTOCON_AVATAR_STORAGE_ROOT", storageRoot)
                 .WithConfiguration("OCTOCON_AVATAR_PUBLIC_BASE", publicBase);
             
@@ -100,9 +99,7 @@ public class AltersControllerTests : BaseEndpointTest
     [Test, ApiIntegration]
     public async Task FieldSecurityLevelByRelationship_AppliesCorrectly()
     {
-        await using var factory = new InterfoldWebApplicationFactory()
-            .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
-            .WithConfiguration("OCTOCON_AUTH_CHALLENGE_ENABLED", "false");
+        await using var factory = new InterfoldWebApplicationFactory("inmemory");
 
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
         {
@@ -193,9 +190,7 @@ public class AltersControllerTests : BaseEndpointTest
     [Test, ApiIntegration]
     public async Task CustomFields_FieldSecurityLevelByRelationship_AppliesCorrectly()
     {
-        await using var factory = new InterfoldWebApplicationFactory()
-            .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
-            .WithConfiguration("OCTOCON_AUTH_CHALLENGE_ENABLED", "false");
+        await using var factory = new InterfoldWebApplicationFactory("inmemory");
 
         using var client = factory.CreateClient();
 
@@ -280,9 +275,7 @@ public class AltersControllerTests : BaseEndpointTest
         [Test, ApiIntegration]
     public async Task AlterJournal_ListWhenEmpty_ReturnsDataAsEmptyArray()
     {
-        await using var factory = new InterfoldWebApplicationFactory()
-            .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
-            .WithConfiguration("OCTOCON_AUTH_CHALLENGE_ENABLED", "false");
+        await using var factory = new InterfoldWebApplicationFactory("inmemory");
 
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
         {
@@ -310,9 +303,7 @@ public class AltersControllerTests : BaseEndpointTest
     [Test, ApiIntegration]
     public async Task AlterJournal_NestedCreate_Returns201WithDataAndReplay()
     {
-        await using var factory = new InterfoldWebApplicationFactory()
-            .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
-            .WithConfiguration("OCTOCON_AUTH_CHALLENGE_ENABLED", "false");
+        await using var factory = new InterfoldWebApplicationFactory("inmemory");
 
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
         {
@@ -390,9 +381,7 @@ public class AltersControllerTests : BaseEndpointTest
     [Test, ApiIntegration]
     public async Task AlterJournal_ShowAfterDelete_Returns404()
     {
-        await using var factory = new InterfoldWebApplicationFactory()
-            .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
-            .WithConfiguration("OCTOCON_AUTH_CHALLENGE_ENABLED", "false");
+        await using var factory = new InterfoldWebApplicationFactory("inmemory");
 
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
         {
@@ -432,8 +421,7 @@ public class AltersControllerTests : BaseEndpointTest
             Skip.Test("Live Integration or postgres connection has not been set");
         }
 
-        await using var factory = new InterfoldWebApplicationFactory()
-            .WithConfiguration("OCTOCON_PERSISTENCE", "scylla-postgres")
+        await using var factory = new InterfoldWebApplicationFactory("scylla-postgres")
             .WithConfiguration("OCTOCON_POSTGRES_CONNECTION", IntegrationTestEnvironment.PostgresConnection)
             .WithConfiguration("OCTOCON_SCYLLA_CONTACT_POINTS", IntegrationTestEnvironment.GetVariable("OCTOCON_TEST_SCYLLA_CONTACT_POINTS", "127.0.0.1"))
             .WithConfiguration("OCTOCON_SCYLLA_USERNAME", IntegrationTestEnvironment.GetVariable("OCTOCON_TEST_SCYLLA_USERNAME", "cassandra"))
@@ -498,9 +486,7 @@ public class AltersControllerTests : BaseEndpointTest
     [Test, ApiIntegration]
     public async Task OperationalHealth_GuardedPaths_GetGuardedAsync_Succeeds()
     {
-        await using var factory = new InterfoldWebApplicationFactory()
-            .WithConfiguration("OCTOCON_PERSISTENCE", "inmemory")
-            .WithConfiguration("OCTOCON_AUTH_CHALLENGE_ENABLED", "false");
+        await using var factory = new InterfoldWebApplicationFactory("inmemory");
 
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
         {
