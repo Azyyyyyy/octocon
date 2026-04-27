@@ -33,7 +33,7 @@ jobs:
             core.exportVariable('ACTIONS_RESULTS_URL', process.env['ACTIONS_RESULTS_URL']);
         
       - name: Test
-        run: dotnet test --verbosity normal --coverage --coverage-output-format xml
+        run: dotnet test --verbosity normal --coverage --coverage-output-format cobertura
 
       - name: Code Coverage Summary Report
         uses: irongut/CodeCoverageSummary@v1.3.0
