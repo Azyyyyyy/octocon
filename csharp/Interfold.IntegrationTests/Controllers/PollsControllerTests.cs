@@ -9,20 +9,19 @@ namespace Interfold.IntegrationTests.Controllers;
 
 public class PollsControllerTests : BaseEndpointTest
 {
-    public static IEnumerable<TestDataRow<string>> PollTypes()
+    public static IEnumerable<string> PollTypes()
     {
-        yield return new("single_choice", DisplayName: "Single Choice");
-        yield return new("vote", DisplayName: "Vote");
-        yield return new("multiple_choice", DisplayName: "Multiple Choice");
-        yield return new("choice", DisplayName: "Choice");
-        yield return new("approval", DisplayName: "Approval");
+        yield return "single_choice";
+        yield return "vote";
+        yield return "multiple_choice";
+        yield return "choice";
+        yield return "approval";
     }
     
     [Test, ApiIntegration]
-    public async Task ErrorResponse_ConflictFormats_IncludeEntityRefAndCode()
+    [CombinedDataSources]
+    public async Task ErrorResponse_ConflictFormats_IncludeEntityRefAndCode([InterfoldFactoryGenerator] InterfoldWebApplicationFactory factory)
     {
-        await using var factory = new InterfoldWebApplicationFactory("inmemory");
-
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
         {
             AllowAutoRedirect = false
@@ -50,10 +49,9 @@ public class PollsControllerTests : BaseEndpointTest
     }
     
     [Test, ApiIntegration]
-    public async Task PollValidation_DescriptionTooLong_Returns422()
+    [CombinedDataSources]
+    public async Task PollValidation_DescriptionTooLong_Returns422([InterfoldFactoryGenerator] InterfoldWebApplicationFactory factory)
     {
-        await using var factory = new InterfoldWebApplicationFactory("inmemory");
-
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
         {
             AllowAutoRedirect = false
@@ -78,11 +76,10 @@ public class PollsControllerTests : BaseEndpointTest
         }
     }
     
-    [Test, ApiIntegration, MethodDataSource(typeof(PollsControllerTests), nameof(PollTypes))]
-    public async Task PollType_AllSupportedTypes_RoundTripCorrectly(string type)
+    [Test, ApiIntegration]
+    [CombinedDataSources]
+    public async Task PollType_AllSupportedTypes_RoundTripCorrectly([InterfoldFactoryGenerator] InterfoldWebApplicationFactory factory, [MethodDataSource(typeof(PollsControllerTests), nameof(PollTypes))] string type)
     {
-        await using var factory = new InterfoldWebApplicationFactory("inmemory");
-
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
         {
             AllowAutoRedirect = false
@@ -125,10 +122,9 @@ public class PollsControllerTests : BaseEndpointTest
     }
 
     [Test, ApiIntegration]
-    public async Task PollUpdate_TimeEndNullOnly_ClearsExistingTimeEnd()
+    [CombinedDataSources]
+    public async Task PollUpdate_TimeEndNullOnly_ClearsExistingTimeEnd([InterfoldFactoryGenerator] InterfoldWebApplicationFactory factory)
     {
-        await using var factory = new InterfoldWebApplicationFactory("inmemory");
-
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
         {
             AllowAutoRedirect = false
@@ -184,10 +180,9 @@ public class PollsControllerTests : BaseEndpointTest
     }
 
     [Test, ApiIntegration]
-    public async Task PollValidation_TitleTooLong_Returns422()
+    [CombinedDataSources]
+    public async Task PollValidation_TitleTooLong_Returns422([InterfoldFactoryGenerator] InterfoldWebApplicationFactory factory)
     {
-        await using var factory = new InterfoldWebApplicationFactory("inmemory");
-
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
         {
             AllowAutoRedirect = false
@@ -212,10 +207,9 @@ public class PollsControllerTests : BaseEndpointTest
     }
     
     [Test, ApiIntegration]
-    public async Task LegacyRoute_SystemsMePolls_Returns404()
+    [CombinedDataSources]
+    public async Task LegacyRoute_SystemsMePolls_Returns404([InterfoldFactoryGenerator] InterfoldWebApplicationFactory factory)
     {
-        await using var factory = new InterfoldWebApplicationFactory("inmemory");
-
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
         {
             AllowAutoRedirect = false
@@ -243,9 +237,10 @@ public class PollsControllerTests : BaseEndpointTest
     }
     
     [Test, ApiIntegration]
-    public async Task Idempotency_PollCreate_ReplayStable()
+    [CombinedDataSources]
+    public async Task Idempotency_PollCreate_ReplayStable([InterfoldFactoryGenerator] InterfoldWebApplicationFactory factory)
     {
-        await RunSoakAsync(async (client, key) =>
+        await RunSoakAsync(factory, async (client, key) =>
         {
             using var req = new HttpRequestMessage(HttpMethod.Post, "/api/polls")
             {

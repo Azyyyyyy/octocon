@@ -126,7 +126,7 @@ public static partial class ServiceCollectionExtensions
         if (!options.CompatibilityMode)
         {
             pipeline = pipeline
-                .AddSingleton<IPostgresConnectionFactory>(_ => new PostgresConnectionFactory(options.PostgresConnectionString, options))
+                .AddSingleton<IPostgresConnectionFactory, PostgresConnectionFactory>()
                 .AddSingleton<IIdempotencyStore, PostgresIdempotencyStore>()
                 .AddSingleton<IAuthTokenRevocationRepository, AuthTokenRevocationRepository>()
                 .AddSingleton<IDatabaseBootstrapHealthChecker>(sp =>

@@ -8,9 +8,9 @@ namespace Interfold.IntegrationTests.Controllers;
 public class HeartbeatControllerTests : BaseEndpointTest
 {
     [Test, ApiIntegration]
-    public async Task Api_Heartbeat_ReturnsContractHeader()
+    [CombinedDataSources]
+    public async Task Api_Heartbeat_ReturnsContractHeader([InterfoldFactoryGenerator] InterfoldWebApplicationFactory factory)
     {
-        await using var factory = new InterfoldWebApplicationFactory("inmemory");
         using var client = factory.CreateClient();
 
         var response = await client.GetAsync("/api/heartbeat");
@@ -24,10 +24,9 @@ public class HeartbeatControllerTests : BaseEndpointTest
     }
     
     [Test, ApiIntegration]
-    public async Task OperationalHealth_GuardedPaths_ListGuardedAsync_Succeeds()
+    [CombinedDataSources]
+    public async Task OperationalHealth_GuardedPaths_ListGuardedAsync_Succeeds([InterfoldFactoryGenerator] InterfoldWebApplicationFactory factory)
     {
-        await using var factory = new InterfoldWebApplicationFactory("inmemory");
-
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
         {
             AllowAutoRedirect = false
@@ -40,9 +39,9 @@ public class HeartbeatControllerTests : BaseEndpointTest
     }
     
     [Test, ApiIntegration]
-    public async Task Idempotency_CorrelationId_EchoedFromRequestHeader()
+    [CombinedDataSources]
+    public async Task Idempotency_CorrelationId_EchoedFromRequestHeader([InterfoldFactoryGenerator] InterfoldWebApplicationFactory factory)
     {
-        await using var factory = new InterfoldWebApplicationFactory("inmemory");
         using var client = factory.CreateClient();
 
         var sentId = Guid.NewGuid().ToString("N");
@@ -60,9 +59,9 @@ public class HeartbeatControllerTests : BaseEndpointTest
     }
     
     [Test, ApiIntegration]
-    public async Task Idempotency_RequestId_PresentOnEveryResponse()
+    [CombinedDataSources]
+    public async Task Idempotency_RequestId_PresentOnEveryResponse([InterfoldFactoryGenerator] InterfoldWebApplicationFactory factory)
     {
-        await using var factory = new InterfoldWebApplicationFactory("inmemory");
         using var client = factory.CreateClient();
 
         for (var i = 0; i < 3; i++)

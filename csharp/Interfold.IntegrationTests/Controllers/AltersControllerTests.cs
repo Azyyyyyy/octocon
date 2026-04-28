@@ -12,7 +12,8 @@ namespace Interfold.IntegrationTests.Controllers;
 public class AltersControllerTests : BaseEndpointTest
 {
     [Test, ApiIntegration]
-    public async Task Api_AlterAvatarMultipart_PersistsAndReflectsOnPublicAlter()
+    [CombinedDataSources]
+    public async Task Api_AlterAvatarMultipart_PersistsAndReflectsOnPublicAlter([InterfoldFactoryGenerator] InterfoldWebApplicationFactory factory)
     {
         var runId = Guid.NewGuid().ToString("N");
         var storageRoot = Path.Combine(Path.GetTempPath(), "octocon-itest", "avatars", runId);
@@ -22,7 +23,7 @@ public class AltersControllerTests : BaseEndpointTest
         {
             Directory.CreateDirectory(storageRoot);
 
-            await using var factory = new InterfoldWebApplicationFactory("inmemory")
+            factory
                 .WithConfiguration("OCTOCON_AVATAR_STORAGE_ROOT", storageRoot)
                 .WithConfiguration("OCTOCON_AVATAR_PUBLIC_BASE", publicBase);
             
@@ -95,12 +96,10 @@ public class AltersControllerTests : BaseEndpointTest
         }
     }
     
-    
     [Test, ApiIntegration]
-    public async Task FieldSecurityLevelByRelationship_AppliesCorrectly()
+    [CombinedDataSources]
+    public async Task FieldSecurityLevelByRelationship_AppliesCorrectly([InterfoldFactoryGenerator] InterfoldWebApplicationFactory factory)
     {
-        await using var factory = new InterfoldWebApplicationFactory("inmemory");
-
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
         {
             AllowAutoRedirect = false
@@ -188,10 +187,9 @@ public class AltersControllerTests : BaseEndpointTest
     }
     
     [Test, ApiIntegration]
-    public async Task CustomFields_FieldSecurityLevelByRelationship_AppliesCorrectly()
+    [CombinedDataSources]
+    public async Task CustomFields_FieldSecurityLevelByRelationship_AppliesCorrectly([InterfoldFactoryGenerator] InterfoldWebApplicationFactory factory)
     {
-        await using var factory = new InterfoldWebApplicationFactory("inmemory");
-
         using var client = factory.CreateClient();
 
         var owner = "settings-guarded-fields-owner";
@@ -272,11 +270,11 @@ public class AltersControllerTests : BaseEndpointTest
             await Assert.That(trustedBody).DoesNotContain("PrivateValue");
         }
     }
-        [Test, ApiIntegration]
-    public async Task AlterJournal_ListWhenEmpty_ReturnsDataAsEmptyArray()
-    {
-        await using var factory = new InterfoldWebApplicationFactory("inmemory");
 
+    [Test, ApiIntegration]
+    [CombinedDataSources]
+    public async Task AlterJournal_ListWhenEmpty_ReturnsDataAsEmptyArray([InterfoldFactoryGenerator] InterfoldWebApplicationFactory factory)
+    {
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
         {
             AllowAutoRedirect = false
@@ -301,10 +299,9 @@ public class AltersControllerTests : BaseEndpointTest
     }
 
     [Test, ApiIntegration]
-    public async Task AlterJournal_NestedCreate_Returns201WithDataAndReplay()
+    [CombinedDataSources]
+    public async Task AlterJournal_NestedCreate_Returns201WithDataAndReplay([InterfoldFactoryGenerator] InterfoldWebApplicationFactory factory)
     {
-        await using var factory = new InterfoldWebApplicationFactory("inmemory");
-
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
         {
             AllowAutoRedirect = false
@@ -379,10 +376,9 @@ public class AltersControllerTests : BaseEndpointTest
     }
 
     [Test, ApiIntegration]
-    public async Task AlterJournal_ShowAfterDelete_Returns404()
+    [CombinedDataSources]
+    public async Task AlterJournal_ShowAfterDelete_Returns404([InterfoldFactoryGenerator] InterfoldWebApplicationFactory factory)
     {
-        await using var factory = new InterfoldWebApplicationFactory("inmemory");
-
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
         {
             AllowAutoRedirect = false
@@ -413,21 +409,12 @@ public class AltersControllerTests : BaseEndpointTest
         await Assert.That(showRes.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
     }
     
-    [Test]
-    public async Task AlterCreate_IdempotentReplay_WorksAgainstLiveAdapters()
+    [Test, ApiIntegration]
+    [CombinedDataSources]
+    public async Task AlterCreate_IdempotentReplay_WorksAgainstLiveAdapters([InterfoldFactoryGenerator] InterfoldWebApplicationFactory factory)
     {
-        if (!(IntegrationTestEnvironment.ShouldRunLiveIntegration && IntegrationTestEnvironment.HasPostgresConnection))
-        {
-            Skip.Test("Live Integration or postgres connection has not been set");
-        }
-
-        await using var factory = new InterfoldWebApplicationFactory("scylla-postgres")
-            .WithConfiguration("OCTOCON_POSTGRES_CONNECTION", IntegrationTestEnvironment.PostgresConnection)
-            .WithConfiguration("OCTOCON_SCYLLA_CONTACT_POINTS", IntegrationTestEnvironment.GetVariable("OCTOCON_TEST_SCYLLA_CONTACT_POINTS", "127.0.0.1"))
-            .WithConfiguration("OCTOCON_SCYLLA_USERNAME", IntegrationTestEnvironment.GetVariable("OCTOCON_TEST_SCYLLA_USERNAME", "cassandra"))
-            .WithConfiguration("OCTOCON_SCYLLA_PASSWORD", IntegrationTestEnvironment.GetVariable("OCTOCON_TEST_SCYLLA_PASSWORD", "cassandra"))
-            .WithConfiguration("OCTOCON_REGION", IntegrationTestEnvironment.GetVariable("OCTOCON_TEST_REGION", "nam"))
-            .WithConfiguration("OCTOCON_TEST_AUTH_ALLOW_PRINCIPAL_HEADER", "true");
+        factory
+            .WithConfiguration("OCTOCON_REGION", IntegrationTestEnvironment.GetVariable("OCTOCON_TEST_REGION", "nam"));
 
         using var client = factory.CreateClient();
 
@@ -441,7 +428,7 @@ public class AltersControllerTests : BaseEndpointTest
         {
             Content = JsonContent.Create(requestContent)
         };
-        firstReq.Headers.Add("X-Interfold-Principal", systemId);
+        AttachPrincipalAuth(firstReq, client, systemId);
         firstReq.Headers.Add("X-Interfold-Idempotency-Key", idempotencyKey);
 
         var firstRes = await client.SendAsync(firstReq);
@@ -464,7 +451,7 @@ public class AltersControllerTests : BaseEndpointTest
         {
             Content = JsonContent.Create(requestContent)
         };
-        secondReq.Headers.Add("X-Interfold-Principal", systemId);
+        AttachPrincipalAuth(secondReq, client, systemId);
         secondReq.Headers.Add("X-Interfold-Idempotency-Key", idempotencyKey);
 
         var secondRes = await client.SendAsync(secondReq);
@@ -484,10 +471,9 @@ public class AltersControllerTests : BaseEndpointTest
     }
     
     [Test, ApiIntegration]
-    public async Task OperationalHealth_GuardedPaths_GetGuardedAsync_Succeeds()
+    [CombinedDataSources]
+    public async Task OperationalHealth_GuardedPaths_GetGuardedAsync_Succeeds([InterfoldFactoryGenerator] InterfoldWebApplicationFactory factory)
     {
-        await using var factory = new InterfoldWebApplicationFactory("inmemory");
-
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
         {
             AllowAutoRedirect = false
@@ -504,9 +490,10 @@ public class AltersControllerTests : BaseEndpointTest
     }
     
     [Test, ApiIntegration]
-    public async Task Idempotency_AlterCreate_ReplayStable()
+    [CombinedDataSources]
+    public async Task Idempotency_AlterCreate_ReplayStable([InterfoldFactoryGenerator] InterfoldWebApplicationFactory factory)
     {
-        await RunSoakAsync(async (client, key) =>
+        await RunSoakAsync(factory, async (client, key) =>
         {
             using var req = new HttpRequestMessage(HttpMethod.Post, "/api/systems/me/alters")
             {

@@ -16,10 +16,9 @@ namespace Interfold.IntegrationTests.Endpoints;
 public class WebSocketTests : BaseEndpointTest
 {
     [Test, ApiIntegration]
-    public async Task Api_UserSocketEndpoint_AllowsWebSocketUpgrade(CancellationToken token)
+    [CombinedDataSources]
+    public async Task Api_UserSocketEndpoint_AllowsWebSocketUpgrade([InterfoldFactoryGenerator] InterfoldWebApplicationFactory factory, CancellationToken token)
     {
-        await using var factory = new InterfoldWebApplicationFactory("inmemory");
-        
         using var server = factory.Server;
         var client = server.CreateWebSocketClient();
         
@@ -52,9 +51,10 @@ public class WebSocketTests : BaseEndpointTest
     }
     
     [Test, ApiIntegration]
-    public async Task Api_UserSocketEndpoint_RejectsUnsupportedProtocolVersion(CancellationToken token)
+    [CombinedDataSources]
+    public async Task Api_UserSocketEndpoint_RejectsUnsupportedProtocolVersion([InterfoldFactoryGenerator] InterfoldWebApplicationFactory factory, CancellationToken token)
     {
-        await using var factory = new InterfoldWebApplicationFactory("inmemory")
+        factory
             .WithConfiguration("OCTOCON_DEEPLINK_ADDRESS", "octocon://app")
             .WithConfiguration("OCTOCON_REGION", "nam")
             .WithConfiguration("OCTOCON_SOCKET_BATCH_BYTES_THRESHOLD", "1");
@@ -88,9 +88,10 @@ public class WebSocketTests : BaseEndpointTest
     }
 
     [Test, ApiIntegration]
-    public async Task Api_UserSocketEndpoint_BatchesForIos_WhenThresholdExceeded(CancellationToken token)
+    [CombinedDataSources]
+    public async Task Api_UserSocketEndpoint_BatchesForIos_WhenThresholdExceeded([InterfoldFactoryGenerator] InterfoldWebApplicationFactory factory, CancellationToken token)
     {
-        await using var factory = new InterfoldWebApplicationFactory("inmemory")
+        factory
             .WithConfiguration("OCTOCON_DEEPLINK_ADDRESS", "octocon://app")
             .WithConfiguration("OCTOCON_REGION", "nam");
 
@@ -130,9 +131,10 @@ public class WebSocketTests : BaseEndpointTest
     }
 
     [Test, ApiIntegration]
-    public async Task Api_UserSocketEndpoint_RateLimitsThirdJoinWithinOneSecond(CancellationToken token)
+    [CombinedDataSources]
+    public async Task Api_UserSocketEndpoint_RateLimitsThirdJoinWithinOneSecond([InterfoldFactoryGenerator] InterfoldWebApplicationFactory factory, CancellationToken token)
     {
-        await using var factory = new InterfoldWebApplicationFactory("inmemory")
+        factory
             .WithConfiguration("OCTOCON_DEEPLINK_ADDRESS", "octocon://app")
             .WithConfiguration("OCTOCON_REGION", "nam");
 
@@ -161,9 +163,10 @@ public class WebSocketTests : BaseEndpointTest
     }
 
     [Test, ApiIntegration]
-    public async Task Api_UserSocketEndpoint_PushesFrontingChangedEvent_AfterFrontStart(CancellationToken token)
+    [CombinedDataSources]
+    public async Task Api_UserSocketEndpoint_PushesFrontingChangedEvent_AfterFrontStart([InterfoldFactoryGenerator] InterfoldWebApplicationFactory factory, CancellationToken token)
     {
-        await using var factory = new InterfoldWebApplicationFactory("inmemory")
+        factory
             .WithConfiguration("OCTOCON_DEEPLINK_ADDRESS", "octocon://app")
             .WithConfiguration("OCTOCON_REGION", "nam");
 
@@ -352,9 +355,10 @@ public class WebSocketTests : BaseEndpointTest
     }
 
     [Test, ApiIntegration]
-    public async Task Api_UserSocketEndpoint_PushesAlterTagAndFieldsEvents_AfterEndpointWrites(CancellationToken token)
+    [CombinedDataSources]
+    public async Task Api_UserSocketEndpoint_PushesAlterTagAndFieldsEvents_AfterEndpointWrites([InterfoldFactoryGenerator] InterfoldWebApplicationFactory factory, CancellationToken token)
     {
-        await using var factory = new InterfoldWebApplicationFactory("inmemory")
+        factory
             .WithConfiguration("OCTOCON_DEEPLINK_ADDRESS", "octocon://app")
             .WithConfiguration("OCTOCON_REGION", "nam");
 
@@ -463,9 +467,10 @@ public class WebSocketTests : BaseEndpointTest
     }
 
     [Test, ApiIntegration]
-    public async Task Api_UserSocketEndpoint_PushesFriendRequestReceived_ToRecipientSystem(CancellationToken token)
+    [CombinedDataSources]
+    public async Task Api_UserSocketEndpoint_PushesFriendRequestReceived_ToRecipientSystem([InterfoldFactoryGenerator] InterfoldWebApplicationFactory factory, CancellationToken token)
     {
-        await using var factory = new InterfoldWebApplicationFactory("inmemory")
+        factory
             .WithConfiguration("OCTOCON_DEEPLINK_ADDRESS", "octocon://app")
             .WithConfiguration("OCTOCON_REGION", "nam");
 
@@ -536,9 +541,10 @@ public class WebSocketTests : BaseEndpointTest
     }
 
     [Test, ApiIntegration]
-    public async Task Api_UserSocketEndpoint_PushesFriendRequestAccepted_ToActorAndRecipient(CancellationToken token)
+    [CombinedDataSources]
+    public async Task Api_UserSocketEndpoint_PushesFriendRequestAccepted_ToActorAndRecipient([InterfoldFactoryGenerator] InterfoldWebApplicationFactory factory, CancellationToken token)
     {
-        await using var factory = new InterfoldWebApplicationFactory("inmemory")
+        factory
             .WithConfiguration("OCTOCON_DEEPLINK_ADDRESS", "octocon://app")
             .WithConfiguration("OCTOCON_REGION", "nam");
 
@@ -641,9 +647,10 @@ public class WebSocketTests : BaseEndpointTest
     }
 
     [Test, ApiIntegration]
-    public async Task Api_UserSocketEndpoint_PushesFriendRequestRejected_ToActorAndRecipient(CancellationToken token)
+    [CombinedDataSources]
+    public async Task Api_UserSocketEndpoint_PushesFriendRequestRejected_ToActorAndRecipient([InterfoldFactoryGenerator] InterfoldWebApplicationFactory factory, CancellationToken token)
     {
-        await using var factory = new InterfoldWebApplicationFactory("inmemory")
+        factory
             .WithConfiguration("OCTOCON_DEEPLINK_ADDRESS", "octocon://app")
             .WithConfiguration("OCTOCON_REGION", "nam");
 
@@ -738,9 +745,10 @@ public class WebSocketTests : BaseEndpointTest
     }
 
     [Test, ApiIntegration]
-    public async Task Api_UserSocketEndpoint_PushesFriendRequestCancelled_ToActorAndRecipient(CancellationToken token)
+    [CombinedDataSources]
+    public async Task Api_UserSocketEndpoint_PushesFriendRequestCancelled_ToActorAndRecipient([InterfoldFactoryGenerator] InterfoldWebApplicationFactory factory, CancellationToken token)
     {
-        await using var factory = new InterfoldWebApplicationFactory("inmemory")
+        factory
             .WithConfiguration("OCTOCON_DEEPLINK_ADDRESS", "octocon://app")
             .WithConfiguration("OCTOCON_REGION", "nam");
 
@@ -830,9 +838,10 @@ public class WebSocketTests : BaseEndpointTest
     }
 
     [Test, ApiIntegration]
-    public async Task Api_UserSocketEndpoint_PushesFriendRemoved_ToActorAndRecipient(CancellationToken token)
+    [CombinedDataSources]
+    public async Task Api_UserSocketEndpoint_PushesFriendRemoved_ToActorAndRecipient([InterfoldFactoryGenerator] InterfoldWebApplicationFactory factory, CancellationToken token)
     {
-        await using var factory = new InterfoldWebApplicationFactory("inmemory")
+        factory
             .WithConfiguration("OCTOCON_DEEPLINK_ADDRESS", "octocon://app")
             .WithConfiguration("OCTOCON_REGION", "nam");
 
@@ -958,9 +967,10 @@ public class WebSocketTests : BaseEndpointTest
     }
 
     [Test, ApiIntegration]
-    public async Task Api_UserSocketEndpoint_PushesFriendTrustedAndUntrusted_ToActor(CancellationToken token)
+    [CombinedDataSources]
+    public async Task Api_UserSocketEndpoint_PushesFriendTrustedAndUntrusted_ToActor([InterfoldFactoryGenerator] InterfoldWebApplicationFactory factory, CancellationToken token)
     {
-        await using var factory = new InterfoldWebApplicationFactory("inmemory")
+        factory
             .WithConfiguration("OCTOCON_DEEPLINK_ADDRESS", "octocon://app")
             .WithConfiguration("OCTOCON_REGION", "nam");
         
@@ -1105,9 +1115,10 @@ public class WebSocketTests : BaseEndpointTest
     }
 
     [Test, ApiIntegration]
-    public async Task Api_UserSocketEndpoint_PushesFriendAdded_OnMutualFriendRequest(CancellationToken token)
+    [CombinedDataSources]
+    public async Task Api_UserSocketEndpoint_PushesFriendAdded_OnMutualFriendRequest([InterfoldFactoryGenerator] InterfoldWebApplicationFactory factory, CancellationToken token)
     {
-        await using var factory = new InterfoldWebApplicationFactory("inmemory")
+        factory
             .WithConfiguration("OCTOCON_DEEPLINK_ADDRESS", "octocon://app")
             .WithConfiguration("OCTOCON_REGION", "nam");
 

@@ -15,33 +15,11 @@ namespace Interfold.IntegrationTests;
 public class BaseEndpointTest
 {
     private const int SoakRepeatCount = 5;
-    
+
     internal static bool ReadBoolField(string json, string fieldName)
     {
         using var doc = JsonDocument.Parse(json);
         return doc.RootElement.GetProperty(fieldName).GetBoolean();
-    }
-    
-    internal static bool ReadReplay(string json)
-    {
-        using var doc = JsonDocument.Parse(json);
-        var root = doc.RootElement;
-
-        foreach (var prop in root.EnumerateObject())
-        {
-            if (!prop.Name.Equals("Replay", StringComparison.OrdinalIgnoreCase))
-                continue;
-
-            if (prop.Value.ValueKind == JsonValueKind.True)
-                return true;
-
-            if (prop.Value.ValueKind == JsonValueKind.False)
-                return false;
-
-            break;
-        }
-
-        throw new InvalidOperationException($"Could not find boolean replay flag in response: {json}");
     }
     
     internal static string ReadStringField(string json, string fieldName)
@@ -235,10 +213,9 @@ public class BaseEndpointTest
         throw new InvalidOperationException($"Field '{key}' not found in: {json}");
     }
     
-    internal static async Task RunSoakAsync(
+    internal static async Task RunSoakAsync(InterfoldWebApplicationFactory factory,
         Func<HttpClient, string, Task<HttpResponseMessage>> requestFactory)
     {
-        await using var factory = new InterfoldWebApplicationFactory("inmemory");
         using var client = factory.CreateClient();
         var token = factory.CreateToken("soak-default-principal");
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);

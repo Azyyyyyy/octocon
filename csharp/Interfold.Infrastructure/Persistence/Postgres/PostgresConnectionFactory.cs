@@ -11,12 +11,10 @@ public interface IPostgresConnectionFactory
 
 public sealed class PostgresConnectionFactory : IPostgresConnectionFactory
 {
-    private readonly string _connectionString;
     private readonly PersistenceConfiguration _options;
 
-    public PostgresConnectionFactory(string connectionString, PersistenceConfiguration options)
+    public PostgresConnectionFactory(PersistenceConfiguration options)
     {
-        _connectionString = connectionString;
         _options = options;
     }
 
@@ -24,7 +22,7 @@ public sealed class PostgresConnectionFactory : IPostgresConnectionFactory
     {
         return await DatabaseTransientRetry.ExecutePostgresAsync(async () =>
         {
-            var connection = new NpgsqlConnection(_connectionString);
+            var connection = new NpgsqlConnection(_options.PostgresConnectionString);
             await connection.OpenAsync(cancellationToken);
             return connection;
         }, _options, cancellationToken);

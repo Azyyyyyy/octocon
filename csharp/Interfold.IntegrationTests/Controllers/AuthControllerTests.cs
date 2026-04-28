@@ -18,10 +18,9 @@ namespace Interfold.IntegrationTests.Controllers;
 public sealed class AuthControllerTests : BaseEndpointTest
 {
     [Test, ApiIntegration]
-    public async Task Api_AuthRequest_FallsBackTo403_WhenChallengeDisabled()
+    [CombinedDataSources]
+    public async Task Api_AuthRequest_FallsBackTo403_WhenChallengeDisabled([InterfoldFactoryGenerator] InterfoldWebApplicationFactory factory)
     {
-        await using var factory = new InterfoldWebApplicationFactory("inmemory");
-        
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
         {
             AllowAutoRedirect = false
@@ -34,9 +33,10 @@ public sealed class AuthControllerTests : BaseEndpointTest
     }
 
     [Test, ApiIntegration]
-    public async Task Api_AuthRequest_IssuesChallengeRedirect_WhenChallengeEnabledAndSchemeConfigured()
+    [CombinedDataSources]
+    public async Task Api_AuthRequest_IssuesChallengeRedirect_WhenChallengeEnabledAndSchemeConfigured([InterfoldFactoryGenerator] InterfoldWebApplicationFactory factory)
     {
-        await using var factory = new InterfoldWebApplicationFactory("inmemory")
+        factory
             .WithConfiguration("OCTOCON_AUTH_CHALLENGE_GOOGLE_SCHEME", "oauth-google")
             .WithConfiguration("OCTOCON_AUTH_CHALLENGE_GOOGLE_ENDPOINT", "https://accounts.example.test/oauth/authorize");
 
@@ -61,11 +61,9 @@ public sealed class AuthControllerTests : BaseEndpointTest
 
     //TODO: DO we need this? Maybe can split it up another way...
     [Test, ApiIntegration]
-    public async Task Api_AuthAndIdempotencyFlow_VerifiesEndToEndBehavior()
+    [CombinedDataSources]
+    public async Task Api_AuthAndIdempotencyFlow_VerifiesEndToEndBehavior([InterfoldFactoryGenerator] InterfoldWebApplicationFactory factory)
     {
-        await using var factory = new InterfoldWebApplicationFactory("inmemory")
-            .WithConfiguration("OCTOCON_TEST_AUTH_ALLOW_PRINCIPAL_HEADER", "true");
-
         using var client = factory.CreateClient();
         var principalId = "sys-api-smoke";
 
@@ -126,10 +124,9 @@ public sealed class AuthControllerTests : BaseEndpointTest
 
 
     [Test, ApiIntegration, Skip("To readd")]
-    public async Task Api_FailsFast_WithoutJwtAuthority_WhenDevHeaderBypassOff()
+    [CombinedDataSources]
+    public async Task Api_FailsFast_WithoutJwtAuthority_WhenDevHeaderBypassOff([InterfoldFactoryGenerator] InterfoldWebApplicationFactory factory)
     {
-        await using var factory = new InterfoldWebApplicationFactory("inmemory");
-
         using var client = factory.CreateClient();
 
         //TODO: Readd
@@ -146,9 +143,10 @@ public sealed class AuthControllerTests : BaseEndpointTest
     }
 
     [Test, ApiIntegration]
-    public async Task Api_OAuthCallback_IssuesJwsCompactSerializationToken()
+    [CombinedDataSources]
+    public async Task Api_OAuthCallback_IssuesJwsCompactSerializationToken([InterfoldFactoryGenerator] InterfoldWebApplicationFactory factory)
     {
-        await using var factory = new InterfoldWebApplicationFactory("inmemory")
+        factory
             .WithConfiguration("OCTOCON_DEEPLINK_ADDRESS", "octocon://app")
             .WithConfiguration("OCTOCON_REGION", "nam");
 

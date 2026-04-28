@@ -8,11 +8,11 @@ namespace Interfold.IntegrationTests.Controllers;
 
 public class JournalsControllerTests : BaseEndpointTest
 {
-   
     [Test, ApiIntegration]
-    public async Task Idempotency_GlobalJournalCreate_ReplayStable()
+    [CombinedDataSources]
+    public async Task Idempotency_GlobalJournalCreate_ReplayStable([InterfoldFactoryGenerator] InterfoldWebApplicationFactory factory)
     {
-        await RunSoakAsync(async (client, key) =>
+        await RunSoakAsync(factory, async (client, key) =>
         {
             using var req = new HttpRequestMessage(HttpMethod.Post, "/api/journals")
             {
@@ -22,6 +22,4 @@ public class JournalsControllerTests : BaseEndpointTest
             return await client.SendAsync(req);
         });
     }
-    
-
 }

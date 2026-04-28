@@ -10,10 +10,9 @@ namespace Interfold.IntegrationTests.Controllers;
 public class AlterJournalsControllerTests : BaseEndpointTest
 {
     [Test, ApiIntegration, Category("Index")]
-    public async Task AlterJournal_ListWhenEmpty_ReturnsDataAsEmptyArray()
+    [CombinedDataSources]
+    public async Task AlterJournal_ListWhenEmpty_ReturnsDataAsEmptyArray([InterfoldFactoryGenerator] InterfoldWebApplicationFactory factory)
     {
-        await using var factory = new InterfoldWebApplicationFactory("inmemory");
-
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions());
 
         var principal = "parity-alter-journal-empty-list";
@@ -35,10 +34,9 @@ public class AlterJournalsControllerTests : BaseEndpointTest
     }
 
     [Test, ApiIntegration]
-    public async Task AlterJournal_NestedCreate_Returns201WithDataAndReplay()
+    [CombinedDataSources]
+    public async Task AlterJournal_NestedCreate_Returns201WithDataAndReplay([InterfoldFactoryGenerator] InterfoldWebApplicationFactory factory)
     {
-        await using var factory = new InterfoldWebApplicationFactory("inmemory");
-
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
         {
             AllowAutoRedirect = false
@@ -114,10 +112,9 @@ public class AlterJournalsControllerTests : BaseEndpointTest
     }
 
     [Test, ApiIntegration]
-    public async Task AlterJournal_ShowAfterDelete_Returns404()
+    [CombinedDataSources]
+    public async Task AlterJournal_ShowAfterDelete_Returns404([InterfoldFactoryGenerator] InterfoldWebApplicationFactory factory)
     {
-        await using var factory = new InterfoldWebApplicationFactory("inmemory");
-
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
         {
             AllowAutoRedirect = false

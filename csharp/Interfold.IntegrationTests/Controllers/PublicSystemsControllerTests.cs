@@ -10,10 +10,9 @@ namespace Interfold.IntegrationTests.Controllers;
 public class PublicSystemsControllerTests : BaseEndpointTest
 {
     [Test, ApiIntegration]
-    public async Task PublicBatch_SelfLookup_Returns403InvalidEndpoint()
+    [CombinedDataSources]
+    public async Task PublicBatch_SelfLookup_Returns403InvalidEndpoint([InterfoldFactoryGenerator] InterfoldWebApplicationFactory factory)
     {
-        await using var factory = new InterfoldWebApplicationFactory("inmemory");
-
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
         {
             AllowAutoRedirect = false
@@ -36,10 +35,9 @@ public class PublicSystemsControllerTests : BaseEndpointTest
     }
 
     [Test, ApiIntegration, Skip("Need to rework")] //Well all of them really...
-    public async Task Visibility_NonFriendFriendTrusted_AppliesToFronting()
+    [CombinedDataSources]
+    public async Task Visibility_NonFriendFriendTrusted_AppliesToFronting([InterfoldFactoryGenerator] InterfoldWebApplicationFactory factory)
     {
-        await using var factory = new InterfoldWebApplicationFactory("inmemory");
-
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
         {
             AllowAutoRedirect = false
@@ -97,10 +95,9 @@ public class PublicSystemsControllerTests : BaseEndpointTest
     }
 
     [Test, ApiIntegration]
-    public async Task PublicAlter_PrivateSecurity_Returns404ForAnonymous()
+    [CombinedDataSources]
+    public async Task PublicAlter_PrivateSecurity_Returns404ForAnonymous([InterfoldFactoryGenerator] InterfoldWebApplicationFactory factory)
     {
-        await using var factory = new InterfoldWebApplicationFactory("inmemory");
-
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
         {
             AllowAutoRedirect = false
@@ -124,10 +121,9 @@ public class PublicSystemsControllerTests : BaseEndpointTest
     }
 
     [Test, ApiIntegration]
-    public async Task Visibility_NonFriendFriendTrusted_AppliesAcrossPublicReads()
+    [CombinedDataSources]
+    public async Task Visibility_NonFriendFriendTrusted_AppliesAcrossPublicReads([InterfoldFactoryGenerator] InterfoldWebApplicationFactory factory)
     {
-        await using var factory = new InterfoldWebApplicationFactory("inmemory");
-
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
         {
             AllowAutoRedirect = false
@@ -179,10 +175,9 @@ public class PublicSystemsControllerTests : BaseEndpointTest
     }
 
     [Test, ApiIntegration]
-    public async Task PublicTag_PrivateSecurity_Returns404ForAnonymous()
+    [CombinedDataSources]
+    public async Task PublicTag_PrivateSecurity_Returns404ForAnonymous([InterfoldFactoryGenerator] InterfoldWebApplicationFactory factory)
     {
-        await using var factory = new InterfoldWebApplicationFactory("inmemory");
-
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
         {
             AllowAutoRedirect = false
@@ -206,10 +201,9 @@ public class PublicSystemsControllerTests : BaseEndpointTest
     }
 
     [Test, ApiIntegration]
-    public async Task Visibility_NonFriendFriendTrusted_AppliesToTags()
+    [CombinedDataSources]
+    public async Task Visibility_NonFriendFriendTrusted_AppliesToTags([InterfoldFactoryGenerator] InterfoldWebApplicationFactory factory)
     {
-        await using var factory = new InterfoldWebApplicationFactory("inmemory");
-
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
         {
             AllowAutoRedirect = false

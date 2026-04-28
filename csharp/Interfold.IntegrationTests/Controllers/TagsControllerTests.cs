@@ -10,9 +10,10 @@ namespace Interfold.IntegrationTests.Controllers;
 public class TagsControllerTests : BaseEndpointTest
 {
     [Test, ApiIntegration]
-    public async Task Idempotency_TagCreate_ReplayStable()
+    [CombinedDataSources]
+    public async Task Idempotency_TagCreate_ReplayStable([InterfoldFactoryGenerator] InterfoldWebApplicationFactory factory)
     {
-        await RunSoakAsync(async (client, key) =>
+        await RunSoakAsync(factory, async (client, key) =>
         {
             using var req = new HttpRequestMessage(HttpMethod.Post, "/api/systems/me/tags")
             {
@@ -23,11 +24,10 @@ public class TagsControllerTests : BaseEndpointTest
         });
     }
     
-    [Test, ApiIntegration]
-    public async Task TagParent_SetAndRemove_Returns204()
+    [Test]
+    [CombinedDataSources]
+    public async Task TagParent_SetAndRemove_Returns204([InterfoldFactoryGenerator] InterfoldWebApplicationFactory factory)
     {
-        await using var factory = new InterfoldWebApplicationFactory("inmemory");
-
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
         {
             AllowAutoRedirect = false

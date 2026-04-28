@@ -18,29 +18,29 @@ namespace Interfold.IntegrationTests;
 /// </summary>
 public sealed class ReplayParityTests : BaseEndpointTest
 {
-    public static IEnumerable<TestDataRow<string>> GetReplayFiles()
+    public static IEnumerable<string> GetReplayFiles()
     {
-        yield return new("alter-lifecycle.trace.json", DisplayName: "Alter Lifecycle");
-        yield return new("tag-lifecycle.trace.json", DisplayName: "Tag Lifecycle");
-        yield return new("fronting-lifecycle.trace.json", DisplayName: "fronting Lifecycle");
-        yield return new("poll-lifecycle.trace.json", DisplayName: "poll Lifecycle");
-        yield return new("settings-lifecycle.trace.json", DisplayName: "settings Lifecycle");
-        yield return new("journal-lifecycle.trace.json", DisplayName: "journal Lifecycle");
-        yield return new("friendship-lifecycle.trace.json", DisplayName: "friendship Lifecycle");
+        yield return "alter-lifecycle.trace.json";
+        yield return "tag-lifecycle.trace.json";
+        yield return "fronting-lifecycle.trace.json";
+        yield return "poll-lifecycle.trace.json";
+        yield return "settings-lifecycle.trace.json";
+        yield return "journal-lifecycle.trace.json";
+        yield return "friendship-lifecycle.trace.json";
     }
     
     [Test, ApiIntegration]
-    [MethodDataSource(typeof(ReplayParityTests), nameof(GetReplayFiles))]
-    public async Task Replay_PassesAllSteps(string fixtureFileName)
+    [CombinedDataSources]
+    public async Task Replay_PassesAllSteps([InterfoldFactoryGenerator] InterfoldWebApplicationFactory factory, [MethodDataSource(typeof(ReplayParityTests), nameof(GetReplayFiles))] string fixtureFileName)
     {
-        await RunTraceAsync(fixtureFileName);
+        await RunTraceAsync(factory, fixtureFileName);
     }
 
     // -----------------------------------------------------------------------
     // Core runner
     // -----------------------------------------------------------------------
 
-    private static async Task RunTraceAsync(string fixtureFileName)
+    private static async Task RunTraceAsync(InterfoldWebApplicationFactory factory,  string fixtureFileName)
     {
         var fixturePath = Path.Combine(AppContext.BaseDirectory, "Fixtures", fixtureFileName);
 
@@ -51,8 +51,6 @@ public sealed class ReplayParityTests : BaseEndpointTest
             await Assert.That(trace.Steps.Count > 0).IsTrue();
         }
 
-        await using var factory = new InterfoldWebApplicationFactory("inmemory");
-        
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
         {
             AllowAutoRedirect = false

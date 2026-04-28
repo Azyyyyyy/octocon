@@ -9,7 +9,8 @@ namespace Interfold.IntegrationTests.Controllers;
 public class SettingsControllerTests : BaseEndpointTest
 {
     [Test, ApiIntegration]
-    public async Task Api_SettingsAvatarMultipart_PersistsAndServesAvatar()
+    [CombinedDataSources]
+    public async Task Api_SettingsAvatarMultipart_PersistsAndServesAvatar([InterfoldFactoryGenerator] InterfoldWebApplicationFactory factory)
     {
         var runId = Guid.NewGuid().ToString("N");
         var storageRoot = Path.Combine(Path.GetTempPath(), "octocon-itest", "avatars", runId);
@@ -19,7 +20,7 @@ public class SettingsControllerTests : BaseEndpointTest
         {
             Directory.CreateDirectory(storageRoot);
 
-            await using var factory = new InterfoldWebApplicationFactory("inmemory")
+            factory
                 .WithConfiguration("OCTOCON_AVATAR_STORAGE_ROOT", storageRoot)
                 .WithConfiguration("OCTOCON_AVATAR_PUBLIC_BASE", publicBase);
             
@@ -52,10 +53,9 @@ public class SettingsControllerTests : BaseEndpointTest
     }
     
     [Test, ApiIntegration]
-    public async Task SettingsField_InvalidType_FallsBackToText_ReturnsCreatedWithId()
+    [CombinedDataSources]
+    public async Task SettingsField_InvalidType_FallsBackToText_ReturnsCreatedWithId([InterfoldFactoryGenerator] InterfoldWebApplicationFactory factory)
     {
-        await using var factory = new InterfoldWebApplicationFactory("inmemory");
-
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
         {
             AllowAutoRedirect = false
@@ -80,10 +80,9 @@ public class SettingsControllerTests : BaseEndpointTest
     }
     
     [Test, ApiIntegration]
-    public async Task SettingsField_MissingType_FallsBackToText_ReturnsCreatedWithId()
+    [CombinedDataSources]
+    public async Task SettingsField_MissingType_FallsBackToText_ReturnsCreatedWithId([InterfoldFactoryGenerator] InterfoldWebApplicationFactory factory)
     {
-        await using var factory = new InterfoldWebApplicationFactory("inmemory");
-
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
         {
             AllowAutoRedirect = false
@@ -108,9 +107,10 @@ public class SettingsControllerTests : BaseEndpointTest
     }
     
     [Test, ApiIntegration]
-    public async Task Idempotency_SettingsUsernameUpdate_ReplayStable()
+    [CombinedDataSources]
+    public async Task Idempotency_SettingsUsernameUpdate_ReplayStable([InterfoldFactoryGenerator] InterfoldWebApplicationFactory factory)
     {
-        await RunSoakAsync(async (client, key) =>
+        await RunSoakAsync(factory, async (client, key) =>
         {
             using var req = new HttpRequestMessage(HttpMethod.Post, "/api/settings/username")
             {
@@ -122,10 +122,9 @@ public class SettingsControllerTests : BaseEndpointTest
     }
     
     [Test, ApiIntegration]
-    public async Task SettingsField_Create_ReturnsCreatedFieldId()
+    [CombinedDataSources]
+    public async Task SettingsField_Create_ReturnsCreatedFieldId([InterfoldFactoryGenerator] InterfoldWebApplicationFactory factory)
     {
-        await using var factory = new InterfoldWebApplicationFactory("inmemory");
-
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
         {
             AllowAutoRedirect = false
