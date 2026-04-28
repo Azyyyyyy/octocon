@@ -2,13 +2,9 @@ using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
 using Interfold.Contracts;
-using Interfold.Infrastructure;
-using Interfold.Infrastructure.Configuration;
 using Interfold.IntegrationTests.Attributes;
 using Interfold.IntegrationTests.TestServices;
 using Microsoft.AspNetCore.TestHost;
-using Microsoft.Extensions.Configuration;
-using TUnit.Core.Services;
 
 namespace Interfold.IntegrationTests.Endpoints;
 

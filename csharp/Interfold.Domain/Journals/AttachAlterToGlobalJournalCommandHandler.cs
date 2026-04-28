@@ -6,25 +6,20 @@ namespace Interfold.Domain.Journals;
 
 public sealed class AttachAlterToGlobalJournalCommandHandler : ICommandHandler<AttachAlterToGlobalJournalCommand, GlobalJournalCommandResult>
 {
-    private const string AggregateType = "journals";
-
     private readonly IJournalRepository _journalRepository;
     private readonly IAlterRepository _alterRepository;
     private readonly IIdempotencyStore _idempotencyStore;
-    private readonly IAggregateVersionStore _versionStore;
     private readonly IClusterEventBus _eventBus;
 
     public AttachAlterToGlobalJournalCommandHandler(
         IJournalRepository journalRepository,
         IAlterRepository alterRepository,
         IIdempotencyStore idempotencyStore,
-        IAggregateVersionStore versionStore,
         IClusterEventBus eventBus)
     {
         _journalRepository = journalRepository;
         _alterRepository = alterRepository;
         _idempotencyStore = idempotencyStore;
-        _versionStore = versionStore;
         _eventBus = eventBus;
     }
 
@@ -59,11 +54,6 @@ public sealed class AttachAlterToGlobalJournalCommandHandler : ICommandHandler<A
         if (!exists)
             return RejectInvariant(command, "journal:not_found");
 
-        var versionAdvanced = await _versionStore.TryAdvanceVersionAsync(
-            AggregateType, command.PrincipalId, command.ExpectedVersion, cancellationToken);
-        if (!versionAdvanced)
-            return await RejectStaleVersion(command, cancellationToken);
-
         var attached = await _journalRepository.AttachGlobalAlterAsync(
             command.PrincipalId, command.Payload.EntryId, command.Payload.AlterId, cancellationToken);
         if (!attached)
@@ -89,19 +79,10 @@ public sealed class AttachAlterToGlobalJournalCommandHandler : ICommandHandler<A
     private static CommandExecutionResult<GlobalJournalCommandResult> RejectDuplicate(
         CommandEnvelope<AttachAlterToGlobalJournalCommand> command, string entityRef) =>
         CommandExecutionResult<GlobalJournalCommandResult>.Rejected(
-            new ConflictResult(ConflictCode.ConflictDuplicate, command.OperationId, entityRef, null, "no_retry", null));
+            new ConflictResult(ConflictCode.ConflictDuplicate, command.OperationId, entityRef, "no_retry"));
 
     private static CommandExecutionResult<GlobalJournalCommandResult> RejectInvariant(
         CommandEnvelope<AttachAlterToGlobalJournalCommand> command, string entityRef) =>
         CommandExecutionResult<GlobalJournalCommandResult>.Rejected(
-            new ConflictResult(ConflictCode.ConflictInvariant, command.OperationId, entityRef, null, "manual_merge_required", null));
-
-    private async Task<CommandExecutionResult<GlobalJournalCommandResult>> RejectStaleVersion(
-        CommandEnvelope<AttachAlterToGlobalJournalCommand> command, CancellationToken cancellationToken)
-    {
-        var current = await _versionStore.GetVersionAsync(AggregateType, command.PrincipalId, cancellationToken);
-        return CommandExecutionResult<GlobalJournalCommandResult>.Rejected(
-            new ConflictResult(ConflictCode.ConflictStaleVersion, command.OperationId,
-                $"{AggregateType}:{command.PrincipalId}", current, "refresh_and_retry", null));
-    }
+            new ConflictResult(ConflictCode.ConflictInvariant, command.OperationId, entityRef, "manual_merge_required"));
 }

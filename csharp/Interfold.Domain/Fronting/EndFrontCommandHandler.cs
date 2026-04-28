@@ -5,23 +5,18 @@ namespace Interfold.Domain.Fronting;
 
 public sealed class EndFrontCommandHandler : ICommandHandler<EndFrontCommand, FrontCommandResult>
 {
-    private const string AggregateType = "fronting";
-
     private readonly IFrontingRepository _frontingRepository;
     private readonly IIdempotencyStore _idempotencyStore;
-    private readonly IAggregateVersionStore _versionStore;
     private readonly IClusterEventBus _eventBus;
 
     public EndFrontCommandHandler(
         IFrontingRepository frontingRepository,
         IIdempotencyStore idempotencyStore,
-        IAggregateVersionStore versionStore,
         IClusterEventBus eventBus
     )
     {
         _frontingRepository = frontingRepository;
         _idempotencyStore = idempotencyStore;
-        _versionStore = versionStore;
         _eventBus = eventBus;
     }
 
@@ -63,18 +58,6 @@ public sealed class EndFrontCommandHandler : ICommandHandler<EndFrontCommand, Fr
         if (!fronting)
         {
             return RejectInvariant(command, "fronting:not_fronting");
-        }
-
-        var versionAdvanced = await _versionStore.TryAdvanceVersionAsync(
-            AggregateType,
-            command.PrincipalId,
-            command.ExpectedVersion,
-            cancellationToken
-        );
-
-        if (!versionAdvanced)
-        {
-            return await RejectStaleVersion(command, cancellationToken);
         }
 
         var activeFronts = await _frontingRepository.ListActiveAsync(command.PrincipalId, cancellationToken);
@@ -122,9 +105,7 @@ public sealed class EndFrontCommandHandler : ICommandHandler<EndFrontCommand, Fr
                 ConflictCode.ConflictDuplicate,
                 command.OperationId,
                 entityRef,
-                null,
-                "no_retry",
-                null
+                "no_retry"
             )
         );
 
@@ -137,27 +118,7 @@ public sealed class EndFrontCommandHandler : ICommandHandler<EndFrontCommand, Fr
                 ConflictCode.ConflictInvariant,
                 command.OperationId,
                 entityRef,
-                null,
-                "manual_merge_required",
-                null
+                "manual_merge_required"
             )
         );
-
-    private async Task<CommandExecutionResult<FrontCommandResult>> RejectStaleVersion(
-        CommandEnvelope<EndFrontCommand> command,
-        CancellationToken cancellationToken
-    )
-    {
-        var current = await _versionStore.GetVersionAsync(AggregateType, command.PrincipalId, cancellationToken);
-        return CommandExecutionResult<FrontCommandResult>.Rejected(
-            new ConflictResult(
-                ConflictCode.ConflictStaleVersion,
-                command.OperationId,
-                $"{AggregateType}:{command.PrincipalId}",
-                current,
-                "refresh_and_retry",
-                null
-            )
-        );
-    }
 }

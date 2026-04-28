@@ -5,22 +5,17 @@ namespace Interfold.Domain.Polls;
 
 public sealed class CreatePollCommandHandler : ICommandHandler<CreatePollCommand, PollCommandResult>
 {
-    private const string AggregateType = "polls";
-
     private readonly IPollRepository _pollRepository;
     private readonly IIdempotencyStore _idempotencyStore;
-    private readonly IAggregateVersionStore _versionStore;
     private readonly IClusterEventBus _eventBus;
 
     public CreatePollCommandHandler(
         IPollRepository pollRepository,
         IIdempotencyStore idempotencyStore,
-        IAggregateVersionStore versionStore,
         IClusterEventBus eventBus)
     {
         _pollRepository = pollRepository;
         _idempotencyStore = idempotencyStore;
-        _versionStore = versionStore;
         _eventBus = eventBus;
     }
 
@@ -58,11 +53,6 @@ public sealed class CreatePollCommandHandler : ICommandHandler<CreatePollCommand
                 return CommandExecutionResult<PollCommandResult>.Success(replay with { Replay = true });
         }
 
-        var versionAdvanced = await _versionStore.TryAdvanceVersionAsync(
-            AggregateType, command.PrincipalId, command.ExpectedVersion, cancellationToken);
-        if (!versionAdvanced)
-            return await RejectStaleVersion(command, cancellationToken);
-
         var pollId = await _pollRepository.CreateAsync(command.PrincipalId, command.Payload, cancellationToken);
         if (pollId is null)
             return RejectInvariant(command, "poll:create_failed");
@@ -81,19 +71,10 @@ public sealed class CreatePollCommandHandler : ICommandHandler<CreatePollCommand
     private static CommandExecutionResult<PollCommandResult> RejectDuplicate(
         CommandEnvelope<CreatePollCommand> command, string entityRef) =>
         CommandExecutionResult<PollCommandResult>.Rejected(
-            new ConflictResult(ConflictCode.ConflictDuplicate, command.OperationId, entityRef, null, "no_retry", null));
+            new ConflictResult(ConflictCode.ConflictDuplicate, command.OperationId, entityRef, "no_retry"));
 
     private static CommandExecutionResult<PollCommandResult> RejectInvariant(
         CommandEnvelope<CreatePollCommand> command, string entityRef) =>
         CommandExecutionResult<PollCommandResult>.Rejected(
-            new ConflictResult(ConflictCode.ConflictInvariant, command.OperationId, entityRef, null, "manual_merge_required", null));
-
-    private async Task<CommandExecutionResult<PollCommandResult>> RejectStaleVersion(
-        CommandEnvelope<CreatePollCommand> command, CancellationToken cancellationToken)
-    {
-        var current = await _versionStore.GetVersionAsync(AggregateType, command.PrincipalId, cancellationToken);
-        return CommandExecutionResult<PollCommandResult>.Rejected(
-            new ConflictResult(ConflictCode.ConflictStaleVersion, command.OperationId,
-                $"{AggregateType}:{command.PrincipalId}", current, "refresh_and_retry", null));
-    }
+            new ConflictResult(ConflictCode.ConflictInvariant, command.OperationId, entityRef, "manual_merge_required"));
 }

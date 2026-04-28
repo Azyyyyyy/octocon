@@ -1,9 +1,9 @@
-﻿using Interfold.Api.Controllers;
+﻿using System.Security.Claims;
+using Interfold.Api.Controllers;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc.Controllers;
-using System.Security.Claims;
 
-namespace Interfold.Api;
+namespace Interfold.Api.Middleware;
 
 /// <summary>
 /// Resolves and validates principal IDs for Interfold API controllers.

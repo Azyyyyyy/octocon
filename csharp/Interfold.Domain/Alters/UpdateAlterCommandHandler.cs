@@ -5,23 +5,18 @@ namespace Interfold.Domain.Alters;
 
 public sealed class UpdateAlterCommandHandler : ICommandHandler<UpdateAlterCommand, AlterCommandResult>
 {
-    private const string AggregateType = "alters";
-
     private readonly IAlterRepository _alterRepository;
     private readonly IIdempotencyStore _idempotencyStore;
-    private readonly IAggregateVersionStore _versionStore;
     private readonly IClusterEventBus _eventBus;
 
     public UpdateAlterCommandHandler(
         IAlterRepository alterRepository,
         IIdempotencyStore idempotencyStore,
-        IAggregateVersionStore versionStore,
         IClusterEventBus eventBus
     )
     {
         _alterRepository = alterRepository;
         _idempotencyStore = idempotencyStore;
-        _versionStore = versionStore;
         _eventBus = eventBus;
     }
 
@@ -85,18 +80,6 @@ public sealed class UpdateAlterCommandHandler : ICommandHandler<UpdateAlterComma
             }
         }
 
-        var versionAdvanced = await _versionStore.TryAdvanceVersionAsync(
-            AggregateType,
-            command.PrincipalId,
-            command.ExpectedVersion,
-            cancellationToken
-        );
-
-        if (!versionAdvanced)
-        {
-            return await RejectStaleVersion(command, cancellationToken);
-        }
-
         var updated = await _alterRepository.UpdateAsync(command.PrincipalId, command.Payload, cancellationToken);
         if (!updated)
         {
@@ -146,9 +129,7 @@ public sealed class UpdateAlterCommandHandler : ICommandHandler<UpdateAlterComma
                 ConflictCode.ConflictDuplicate,
                 command.OperationId,
                 entityRef,
-                null,
-                "no_retry",
-                null
+                "no_retry"
             )
         );
 
@@ -161,27 +142,7 @@ public sealed class UpdateAlterCommandHandler : ICommandHandler<UpdateAlterComma
                 ConflictCode.ConflictInvariant,
                 command.OperationId,
                 entityRef,
-                null,
-                "manual_merge_required",
-                null
+                "manual_merge_required"
             )
         );
-
-    private async Task<CommandExecutionResult<AlterCommandResult>> RejectStaleVersion(
-        CommandEnvelope<UpdateAlterCommand> command,
-        CancellationToken cancellationToken
-    )
-    {
-        var current = await _versionStore.GetVersionAsync(AggregateType, command.PrincipalId, cancellationToken);
-        return CommandExecutionResult<AlterCommandResult>.Rejected(
-            new ConflictResult(
-                ConflictCode.ConflictStaleVersion,
-                command.OperationId,
-                $"{AggregateType}:{command.PrincipalId}",
-                current,
-                "refresh_and_retry",
-                null
-            )
-        );
-    }
 }

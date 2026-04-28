@@ -7,8 +7,6 @@ using Interfold.Domain.Accounts;
 using Interfold.Domain.Auth;
 using Interfold.Api.Services;
 using Interfold.Infrastructure.Configuration;
-using System.Security.Cryptography;
-using System.Text;
 using Interfold.Infrastructure;
 
 namespace Interfold.Api.Controllers;

@@ -1,7 +1,6 @@
 namespace Interfold.Domain.Journals;
 
 using System;
-using System.Text.Json.Serialization;
 
 public sealed record GlobalJournalReadModel(
     string Id,

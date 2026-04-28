@@ -5,22 +5,17 @@ namespace Interfold.Domain.Journals;
 
 public sealed class DeleteGlobalJournalEntryCommandHandler : ICommandHandler<DeleteGlobalJournalEntryCommand, GlobalJournalCommandResult>
 {
-    private const string AggregateType = "journals";
-
     private readonly IJournalRepository _journalRepository;
     private readonly IIdempotencyStore _idempotencyStore;
-    private readonly IAggregateVersionStore _versionStore;
     private readonly IClusterEventBus _eventBus;
 
     public DeleteGlobalJournalEntryCommandHandler(
         IJournalRepository journalRepository,
         IIdempotencyStore idempotencyStore,
-        IAggregateVersionStore versionStore,
         IClusterEventBus eventBus)
     {
         _journalRepository = journalRepository;
         _idempotencyStore = idempotencyStore;
-        _versionStore = versionStore;
         _eventBus = eventBus;
     }
 
@@ -47,12 +42,7 @@ public sealed class DeleteGlobalJournalEntryCommandHandler : ICommandHandler<Del
         var exists = await _journalRepository.ExistsGlobalAsync(command.PrincipalId, command.Payload.EntryId, cancellationToken);
         if (!exists)
             return RejectInvariant(command, "journal:not_found");
-
-        var versionAdvanced = await _versionStore.TryAdvanceVersionAsync(
-            AggregateType, command.PrincipalId, command.ExpectedVersion, cancellationToken);
-        if (!versionAdvanced)
-            return await RejectStaleVersion(command, cancellationToken);
-
+        
         var deleted = await _journalRepository.DeleteGlobalAsync(command.PrincipalId, command.Payload.EntryId, cancellationToken);
         if (!deleted)
             return RejectInvariant(command, "journal:delete_failed");
@@ -77,19 +67,10 @@ public sealed class DeleteGlobalJournalEntryCommandHandler : ICommandHandler<Del
     private static CommandExecutionResult<GlobalJournalCommandResult> RejectDuplicate(
         CommandEnvelope<DeleteGlobalJournalEntryCommand> command, string entityRef) =>
         CommandExecutionResult<GlobalJournalCommandResult>.Rejected(
-            new ConflictResult(ConflictCode.ConflictDuplicate, command.OperationId, entityRef, null, "no_retry", null));
+            new ConflictResult(ConflictCode.ConflictDuplicate, command.OperationId, entityRef, "no_retry"));
 
     private static CommandExecutionResult<GlobalJournalCommandResult> RejectInvariant(
         CommandEnvelope<DeleteGlobalJournalEntryCommand> command, string entityRef) =>
         CommandExecutionResult<GlobalJournalCommandResult>.Rejected(
-            new ConflictResult(ConflictCode.ConflictInvariant, command.OperationId, entityRef, null, "manual_merge_required", null));
-
-    private async Task<CommandExecutionResult<GlobalJournalCommandResult>> RejectStaleVersion(
-        CommandEnvelope<DeleteGlobalJournalEntryCommand> command, CancellationToken cancellationToken)
-    {
-        var current = await _versionStore.GetVersionAsync(AggregateType, command.PrincipalId, cancellationToken);
-        return CommandExecutionResult<GlobalJournalCommandResult>.Rejected(
-            new ConflictResult(ConflictCode.ConflictStaleVersion, command.OperationId,
-                $"{AggregateType}:{command.PrincipalId}", current, "refresh_and_retry", null));
-    }
+            new ConflictResult(ConflictCode.ConflictInvariant, command.OperationId, entityRef, "manual_merge_required"));
 }

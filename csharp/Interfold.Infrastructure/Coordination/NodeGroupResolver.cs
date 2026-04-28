@@ -1,7 +1,5 @@
-using Cassandra;
 using Interfold.Domain.Abstractions;
 using Interfold.Infrastructure.Configuration;
-using Microsoft.Extensions.Configuration;
 
 namespace Interfold.Infrastructure.Coordination;
 

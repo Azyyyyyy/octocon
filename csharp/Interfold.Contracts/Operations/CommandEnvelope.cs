@@ -1,3 +1,5 @@
+using System.Net;
+
 namespace Interfold.Contracts.Operations;
 
 public sealed record CommandEnvelope<TPayload>(
@@ -7,5 +9,6 @@ public sealed record CommandEnvelope<TPayload>(
     string IdempotencyKey,
     long? ExpectedVersion,
     DateTimeOffset? OccurredAt,
-    TPayload Payload
+    TPayload Payload,
+    HttpStatusCode? SuccessStatusCode = null
 );

@@ -5,23 +5,18 @@ namespace Interfold.Domain.Accounts;
 
 public sealed class UpdateUsernameCommandHandler : ICommandHandler<UpdateUsernameCommand, AccountCommandResult>
 {
-    private const string AggregateType = "accounts";
-
     private readonly IAccountRepository _accountRepository;
     private readonly IIdempotencyStore _idempotencyStore;
-    private readonly IAggregateVersionStore _versionStore;
     private readonly IClusterEventBus _eventBus;
 
     public UpdateUsernameCommandHandler(
         IAccountRepository accountRepository,
         IIdempotencyStore idempotencyStore,
-        IAggregateVersionStore versionStore,
         IClusterEventBus eventBus
     )
     {
         _accountRepository = accountRepository;
         _idempotencyStore = idempotencyStore;
-        _versionStore = versionStore;
         _eventBus = eventBus;
     }
 
@@ -64,18 +59,6 @@ public sealed class UpdateUsernameCommandHandler : ICommandHandler<UpdateUsernam
             }
         }
 
-        var versionAdvanced = await _versionStore.TryAdvanceVersionAsync(
-            AggregateType,
-            command.PrincipalId,
-            command.ExpectedVersion,
-            cancellationToken
-        );
-
-        if (!versionAdvanced)
-        {
-            return await RejectStaleVersion(command, cancellationToken);
-        }
-
         var persisted = await _accountRepository.UpdateUsernameAsync(
             command.PrincipalId,
             command.Payload.Username,
@@ -113,9 +96,7 @@ public sealed class UpdateUsernameCommandHandler : ICommandHandler<UpdateUsernam
                 ConflictCode.ConflictDuplicate,
                 command.OperationId,
                 entityRef,
-                null,
-                "no_retry",
-                null
+                "no_retry"
             )
         );
 
@@ -128,27 +109,7 @@ public sealed class UpdateUsernameCommandHandler : ICommandHandler<UpdateUsernam
                 ConflictCode.ConflictInvariant,
                 command.OperationId,
                 entityRef,
-                null,
-                "manual_merge_required",
-                null
+                "manual_merge_required"
             )
         );
-
-    private async Task<CommandExecutionResult<AccountCommandResult>> RejectStaleVersion(
-        CommandEnvelope<UpdateUsernameCommand> command,
-        CancellationToken cancellationToken
-    )
-    {
-        var current = await _versionStore.GetVersionAsync(AggregateType, command.PrincipalId, cancellationToken);
-        return CommandExecutionResult<AccountCommandResult>.Rejected(
-            new ConflictResult(
-                ConflictCode.ConflictStaleVersion,
-                command.OperationId,
-                $"{AggregateType}:{command.PrincipalId}",
-                current,
-                "refresh_and_retry",
-                null
-            )
-        );
-    }
 }

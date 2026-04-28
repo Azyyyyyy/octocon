@@ -5,22 +5,17 @@ namespace Interfold.Domain.Friendships;
 
 public sealed class CancelFriendRequestCommandHandler : ICommandHandler<CancelFriendRequestCommand, FriendshipCommandResult>
 {
-    private const string AggregateType = "friendships";
-
     private readonly IFriendshipRepository _repository;
     private readonly IIdempotencyStore _idempotencyStore;
-    private readonly IAggregateVersionStore _versionStore;
     private readonly IClusterEventBus _eventBus;
 
     public CancelFriendRequestCommandHandler(
         IFriendshipRepository repository,
         IIdempotencyStore idempotencyStore,
-        IAggregateVersionStore versionStore,
         IClusterEventBus eventBus)
     {
         _repository = repository;
         _idempotencyStore = idempotencyStore;
-        _versionStore = versionStore;
         _eventBus = eventBus;
     }
 
@@ -47,15 +42,7 @@ public sealed class CancelFriendRequestCommandHandler : ICommandHandler<CancelFr
                 return CommandExecutionResult<FriendshipCommandResult>.Success(replay with { Replay = true });
             }
         }
-
-        var versionAdvanced = await _versionStore.TryAdvanceVersionAsync(
-            AggregateType, command.PrincipalId, command.ExpectedVersion, cancellationToken);
-
-        if (!versionAdvanced)
-        {
-            return await RejectStaleVersion(command, cancellationToken);
-        }
-
+        
         var canonicalTargetSystemId = FriendshipIdNormalization.CanonicalizeForPrincipal(
             command.PrincipalId,
             command.Payload.TargetSystemId);
@@ -116,26 +103,11 @@ public sealed class CancelFriendRequestCommandHandler : ICommandHandler<CancelFr
         CommandEnvelope<CancelFriendRequestCommand> command,
         string entityRef)
         => CommandExecutionResult<FriendshipCommandResult>.Rejected(
-            new ConflictResult(ConflictCode.ConflictDuplicate, command.OperationId, entityRef, null, "no_retry", null));
+            new ConflictResult(ConflictCode.ConflictDuplicate, command.OperationId, entityRef, "no_retry"));
 
     private static CommandExecutionResult<FriendshipCommandResult> RejectInvariant(
         CommandEnvelope<CancelFriendRequestCommand> command,
         string entityRef)
         => CommandExecutionResult<FriendshipCommandResult>.Rejected(
-            new ConflictResult(ConflictCode.ConflictInvariant, command.OperationId, entityRef, null, "manual_merge_required", null));
-
-    private async Task<CommandExecutionResult<FriendshipCommandResult>> RejectStaleVersion(
-        CommandEnvelope<CancelFriendRequestCommand> command,
-        CancellationToken cancellationToken)
-    {
-        var current = await _versionStore.GetVersionAsync(AggregateType, command.PrincipalId, cancellationToken);
-        return CommandExecutionResult<FriendshipCommandResult>.Rejected(
-            new ConflictResult(
-                ConflictCode.ConflictStaleVersion,
-                command.OperationId,
-                $"{AggregateType}:{command.PrincipalId}",
-                current,
-                "refresh_and_retry",
-                null));
-    }
+            new ConflictResult(ConflictCode.ConflictInvariant, command.OperationId, entityRef, "manual_merge_required"));
 }

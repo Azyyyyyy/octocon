@@ -1,4 +1,4 @@
-namespace Interfold.Api;
+namespace Interfold.Api.Helpers;
 
 public static class Base64Extensions
 {

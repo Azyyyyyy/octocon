@@ -7,22 +7,17 @@ namespace Interfold.Domain.Settings.Handlers;
 
 public sealed class SetupEncryptionCommandHandler : ICommandHandler<SetupEncryptionCommand, EncryptionCommandResult>
 {
-    private const string AggregateType = "settings";
-
     private readonly IEncryptionStateRepository _repository;
     private readonly IIdempotencyStore _idempotencyStore;
-    private readonly IAggregateVersionStore _versionStore;
     private readonly IClusterEventBus _eventBus;
 
     public SetupEncryptionCommandHandler(
         IEncryptionStateRepository repository,
         IIdempotencyStore idempotencyStore,
-        IAggregateVersionStore versionStore,
         IClusterEventBus eventBus)
     {
         _repository = repository;
         _idempotencyStore = idempotencyStore;
-        _versionStore = versionStore;
         _eventBus = eventBus;
     }
 
@@ -51,16 +46,7 @@ public sealed class SetupEncryptionCommandHandler : ICommandHandler<SetupEncrypt
             if (replay is not null)
                 return CommandExecutionResult<EncryptionCommandResult>.Success(replay with { Replay = true });
         }
-
-        var versionAdvanced = await _versionStore.TryAdvanceVersionAsync(
-            AggregateType,
-            command.PrincipalId,
-            command.ExpectedVersion,
-            cancellationToken);
-
-        if (!versionAdvanced)
-            return await RejectStaleVersion(command, cancellationToken);
-
+        
         var key = DeriveKey(command.PrincipalId, command.Payload.RecoveryCode);
         var checksum = DeriveChecksum(key);
 
@@ -100,26 +86,11 @@ public sealed class SetupEncryptionCommandHandler : ICommandHandler<SetupEncrypt
         CommandEnvelope<SetupEncryptionCommand> command,
         string entityRef) =>
         CommandExecutionResult<EncryptionCommandResult>.Rejected(
-            new ConflictResult(ConflictCode.ConflictDuplicate, command.OperationId, entityRef, null, "no_retry", null));
+            new ConflictResult(ConflictCode.ConflictDuplicate, command.OperationId, entityRef, "no_retry"));
 
     private static CommandExecutionResult<EncryptionCommandResult> RejectInvariant(
         CommandEnvelope<SetupEncryptionCommand> command,
         string entityRef) =>
         CommandExecutionResult<EncryptionCommandResult>.Rejected(
-            new ConflictResult(ConflictCode.ConflictInvariant, command.OperationId, entityRef, null, "manual_merge_required", null));
-
-    private async Task<CommandExecutionResult<EncryptionCommandResult>> RejectStaleVersion(
-        CommandEnvelope<SetupEncryptionCommand> command,
-        CancellationToken cancellationToken)
-    {
-        var current = await _versionStore.GetVersionAsync(AggregateType, command.PrincipalId, cancellationToken);
-        return CommandExecutionResult<EncryptionCommandResult>.Rejected(
-            new ConflictResult(
-                ConflictCode.ConflictStaleVersion,
-                command.OperationId,
-                $"{AggregateType}:{command.PrincipalId}",
-                current,
-                "refresh_and_retry",
-                null));
-    }
+            new ConflictResult(ConflictCode.ConflictInvariant, command.OperationId, entityRef, "manual_merge_required"));
 }

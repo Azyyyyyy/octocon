@@ -5,20 +5,15 @@ namespace Interfold.Domain.Settings.Handlers;
 
 public sealed class RemovePushTokenCommandHandler : ICommandHandler<RemovePushTokenCommand, SettingsCommandResult>
 {
-    private const string AggregateType = "settings";
-
     private readonly INotificationTokenRepository _repository;
     private readonly IIdempotencyStore _idempotencyStore;
-    private readonly IAggregateVersionStore _versionStore;
 
     public RemovePushTokenCommandHandler(
         INotificationTokenRepository repository,
-        IIdempotencyStore idempotencyStore,
-        IAggregateVersionStore versionStore)
+        IIdempotencyStore idempotencyStore)
     {
         _repository = repository;
         _idempotencyStore = idempotencyStore;
-        _versionStore = versionStore;
     }
 
     public async Task<CommandExecutionResult<SettingsCommandResult>> HandleAsync(
@@ -47,15 +42,6 @@ public sealed class RemovePushTokenCommandHandler : ICommandHandler<RemovePushTo
                 return CommandExecutionResult<SettingsCommandResult>.Success(replay with { Replay = true });
         }
 
-        var versionAdvanced = await _versionStore.TryAdvanceVersionAsync(
-            AggregateType,
-            command.PrincipalId,
-            command.ExpectedVersion,
-            cancellationToken);
-
-        if (!versionAdvanced)
-            return await RejectStaleVersion(command, cancellationToken);
-
         // Removal is treated as idempotent for retry safety.
         await _repository.RemoveAsync(command.Payload.Token.Trim(), cancellationToken);
 
@@ -78,26 +64,11 @@ public sealed class RemovePushTokenCommandHandler : ICommandHandler<RemovePushTo
         CommandEnvelope<RemovePushTokenCommand> command,
         string entityRef) =>
         CommandExecutionResult<SettingsCommandResult>.Rejected(
-            new ConflictResult(ConflictCode.ConflictDuplicate, command.OperationId, entityRef, null, "no_retry", null));
+            new ConflictResult(ConflictCode.ConflictDuplicate, command.OperationId, entityRef, "no_retry"));
 
     private static CommandExecutionResult<SettingsCommandResult> RejectInvariant(
         CommandEnvelope<RemovePushTokenCommand> command,
         string entityRef) =>
         CommandExecutionResult<SettingsCommandResult>.Rejected(
-            new ConflictResult(ConflictCode.ConflictInvariant, command.OperationId, entityRef, null, "manual_merge_required", null));
-
-    private async Task<CommandExecutionResult<SettingsCommandResult>> RejectStaleVersion(
-        CommandEnvelope<RemovePushTokenCommand> command,
-        CancellationToken cancellationToken)
-    {
-        var current = await _versionStore.GetVersionAsync(AggregateType, command.PrincipalId, cancellationToken);
-        return CommandExecutionResult<SettingsCommandResult>.Rejected(
-            new ConflictResult(
-                ConflictCode.ConflictStaleVersion,
-                command.OperationId,
-                $"{AggregateType}:{command.PrincipalId}",
-                current,
-                "refresh_and_retry",
-                null));
-    }
+            new ConflictResult(ConflictCode.ConflictInvariant, command.OperationId, entityRef, "manual_merge_required"));
 }

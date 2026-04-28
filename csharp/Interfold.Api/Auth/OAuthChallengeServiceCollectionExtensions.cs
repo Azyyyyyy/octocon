@@ -1,5 +1,3 @@
-using Microsoft.AspNetCore.Authentication;
-using Microsoft.Extensions.DependencyInjection;
 using Interfold.Infrastructure.Configuration;
 
 namespace Interfold.Api.Auth;

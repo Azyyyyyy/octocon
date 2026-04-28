@@ -1,10 +1,12 @@
 using System.Diagnostics;
-using System.Text.Json;
+using Interfold.Api.Helpers;
+using Interfold.Api.Middleware;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Interfold.Contracts.Operations;
 using Interfold.Domain.Abstractions;
 using Interfold.Contracts;
+using Interfold.Domain.Alters;
 
 namespace Interfold.Api.Controllers;
 
@@ -27,12 +29,29 @@ public abstract class InterfoldControllerBase : ControllerBase
         }
     }
 
-    protected static void CheckAlterId(int alterId)
+    protected async ValueTask CheckAlterId(int alterId, string? principal = null, CancellationToken? ct = null)
     {
-        if (alterId > 0)
-            return;
+        if (alterId <= 0)
+        {
+            throw new InterfoldException("Invalid alter ID.", "invalid_alter_id");
+        }
 
-        throw new InterfoldException("Invalid alter ID.", "invalid_alter_id");
+        if (string.IsNullOrWhiteSpace(principal))
+        {
+            return;
+        }
+
+        if (!ct.HasValue)
+        {
+            throw new InterfoldException("CT is required on alter check", "alter_check_server_issue");
+        }
+
+        var alterRepository = this.HttpContext.RequestServices.GetRequiredService<IAlterRepository>();
+        var alterExists = await alterRepository.ExistsAsync(principal, alterId, ct.Value);
+        if (!alterExists)
+        {
+            throw new InterfoldException("Alter not found", "alter_not_found");
+        }
     }
 
     protected string GetIdempotencyKey(string? bodyKey)
@@ -104,7 +123,6 @@ public abstract class InterfoldControllerBase : ControllerBase
 
         return result.Conflict!.Code switch
         {
-            ConflictCode.ConflictStaleVersion => Conflict(result.Conflict),
             ConflictCode.ConflictDuplicate    => Conflict(result.Conflict),
             ConflictCode.ConflictInvariant    => UnprocessableEntity(result.Conflict),
             _                                 => StatusCode(500, new { Code = "unknown_error" })

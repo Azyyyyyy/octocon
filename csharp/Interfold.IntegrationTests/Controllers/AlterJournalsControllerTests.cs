@@ -46,10 +46,8 @@ public class AlterJournalsControllerTests : BaseEndpointTest
         var alterId = await CreateAlterAsync(client, principal, "JournalHolder");
 
         // POST /api/systems/me/alters/:id/journals  →  201 + {data, replay}
-        using var createReq = new HttpRequestMessage(HttpMethod.Post, $"/api/systems/me/alters/{alterId}/journals")
-        {
-            Content = JsonContent.Create(new { title = "NestedParityJournal" })
-        };
+        using var createReq = new HttpRequestMessage(HttpMethod.Post, $"/api/systems/me/alters/{alterId}/journals");
+        createReq.Content = JsonContent.Create(new { title = "NestedParityJournal" });
         AttachPrincipalAuth(createReq, client, principal);
         var createRes = await client.SendAsync(createReq);
         var createBody = await createRes.Content.ReadAsStringAsync();
@@ -94,10 +92,8 @@ public class AlterJournalsControllerTests : BaseEndpointTest
         }
 
         // PATCH /api/systems/me/alters/journals/:journalId  →  204
-        using var patchReq = new HttpRequestMessage(HttpMethod.Patch, $"/api/systems/me/alters/journals/{entryId}")
-        {
-            Content = JsonContent.Create(new { title = "UpdatedParityJournal" })
-        };
+        using var patchReq = new HttpRequestMessage(HttpMethod.Patch, $"/api/systems/me/alters/journals/{entryId}");
+        patchReq.Content = JsonContent.Create(new { title = "UpdatedParityJournal" });
         AttachPrincipalAuth(patchReq, client, principal);
         var patchRes = await client.SendAsync(patchReq);
 
@@ -123,10 +119,8 @@ public class AlterJournalsControllerTests : BaseEndpointTest
         var principal = "parity-alter-journal-delete-404";
         var alterId = await CreateAlterAsync(client, principal, "DeleteHolder");
 
-        using var createReq = new HttpRequestMessage(HttpMethod.Post, $"/api/systems/me/alters/{alterId}/journals")
-        {
-            Content = JsonContent.Create(new { title = "JournalToDelete" })
-        };
+        using var createReq = new HttpRequestMessage(HttpMethod.Post, $"/api/systems/me/alters/{alterId}/journals");
+        createReq.Content = JsonContent.Create(new { title = "JournalToDelete" });
         AttachPrincipalAuth(createReq, client, principal);
         var createRes = await client.SendAsync(createReq);
         var createBody = await createRes.Content.ReadAsStringAsync();

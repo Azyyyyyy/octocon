@@ -89,7 +89,6 @@ public static partial class ServiceCollectionExtensions
                 .AddSingleton<IFriendshipRepository, InMemoryFriendshipRepository>()
                 .AddSingleton<ITagRepository, InMemoryTagRepository>()
                 .AddSingleton<IJournalRepository, InMemoryJournalRepository>()
-                .AddSingleton<IAggregateVersionStore, InMemoryRegionalAggregateVersionStore>()
                 .AddSingleton<IIdempotencyStore, InMemoryIdempotencyStore>()
                 .AddSingleton<IAuthTokenRevocationRepository, InMemoryAuthTokenRevocationRepository>()
                 .AddSingleton<IDatabaseBootstrapHealthChecker>(sp => 
@@ -120,8 +119,7 @@ public static partial class ServiceCollectionExtensions
                 .AddSingleton<IFriendshipRepository, ScyllaFriendshipRepository>()
                 .AddSingleton<ITagRepository, ScyllaTagRepository>()
                 .AddSingleton<IJournalRepository, ScyllaJournalRepository>()
-                .AddSingleton<IPollRepository, ScyllaPollRepository>()
-                .AddSingleton<IAggregateVersionStore, ScyllaAggregateVersionStore>();
+                .AddSingleton<IPollRepository, ScyllaPollRepository>();
 
         if (!options.CompatibilityMode)
         {

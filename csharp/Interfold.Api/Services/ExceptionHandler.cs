@@ -1,3 +1,4 @@
+using Interfold.Api.Models;
 using Interfold.Contracts;
 using Microsoft.AspNetCore.Diagnostics;
 
@@ -8,24 +9,24 @@ public class ExceptionHandler : IExceptionHandler
     public ValueTask<bool> TryHandleAsync(HttpContext httpContext, Exception exception, CancellationToken cancellationToken)
     {
         // Log the exception and return a generic error response.
-        httpContext.Response.StatusCode = StatusCodes.Status500InternalServerError;
         httpContext.Response.ContentType = "application/json";
         httpContext.Response.WriteAsJsonAsync(CreateError(httpContext, exception), cancellationToken);
         return new ValueTask<bool>(true);
     }
 
-    public object CreateError(HttpContext httpContext, Exception exception)
+    private ErrorResponse CreateError(HttpContext httpContext, Exception exception)
     {
-        if (exception is BadHttpRequestException badRequestException)
-        {
-            return new { error = badRequestException.Message, code = "bad_request" };
-        }
-
         if (exception is InterfoldException interfoldException)
         {
-            return new { error = interfoldException.Message, code = interfoldException.Code };
+            httpContext.Response.StatusCode = (int?)interfoldException.HttpStatusCode ?? StatusCodes.Status500InternalServerError;
+            return new ErrorResponse(interfoldException.Message, interfoldException.Code);
         }
-
-        return new { error = $"Unhandled exception: {exception}", code = "unknown_error" };
+        
+        httpContext.Response.StatusCode = StatusCodes.Status500InternalServerError;
+        return exception switch
+        {
+            BadHttpRequestException badRequestException => new ErrorResponse(badRequestException.Message, "bad_request"),
+            _ => new ErrorResponse($"Unhandled exception: {exception}", "unknown_error")
+        };
     }
 }

@@ -5,22 +5,17 @@ namespace Interfold.Domain.Fronting;
 
 public sealed class BulkUpdateFrontCommandHandler : ICommandHandler<BulkUpdateFrontCommand, FrontCommandResult>
 {
-    private const string AggregateType = "fronting";
-
     private readonly IFrontingRepository _frontingRepository;
     private readonly IIdempotencyStore _idempotencyStore;
-    private readonly IAggregateVersionStore _versionStore;
     private readonly IClusterEventBus _eventBus;
 
     public BulkUpdateFrontCommandHandler(
         IFrontingRepository frontingRepository,
         IIdempotencyStore idempotencyStore,
-        IAggregateVersionStore versionStore,
         IClusterEventBus eventBus)
     {
         _frontingRepository = frontingRepository;
         _idempotencyStore = idempotencyStore;
-        _versionStore = versionStore;
         _eventBus = eventBus;
     }
 
@@ -53,15 +48,6 @@ public sealed class BulkUpdateFrontCommandHandler : ICommandHandler<BulkUpdateFr
             if (replay is not null)
                 return CommandExecutionResult<FrontCommandResult>.Success(replay with { Replay = true });
         }
-
-        var versionAdvanced = await _versionStore.TryAdvanceVersionAsync(
-            AggregateType,
-            command.PrincipalId,
-            command.ExpectedVersion,
-            cancellationToken);
-
-        if (!versionAdvanced)
-            return await RejectStaleVersion(command, cancellationToken);
 
         foreach (var alterId in command.Payload.End)
         {
@@ -99,42 +85,28 @@ public sealed class BulkUpdateFrontCommandHandler : ICommandHandler<BulkUpdateFr
         CommandEnvelope<BulkUpdateFrontCommand> command,
         string entityRef) =>
         CommandExecutionResult<FrontCommandResult>.Rejected(
-            new ConflictResult(ConflictCode.ConflictDuplicate, command.OperationId, entityRef, null, "no_retry", null));
+            new ConflictResult(ConflictCode.ConflictDuplicate, command.OperationId, entityRef, "no_retry"));
 
     private static CommandExecutionResult<FrontCommandResult> RejectInvariant(
         CommandEnvelope<BulkUpdateFrontCommand> command,
         string entityRef) =>
         CommandExecutionResult<FrontCommandResult>.Rejected(
-            new ConflictResult(ConflictCode.ConflictInvariant, command.OperationId, entityRef, null, "manual_merge_required", null));
-
-    private async Task<CommandExecutionResult<FrontCommandResult>> RejectStaleVersion(
-        CommandEnvelope<BulkUpdateFrontCommand> command,
-        CancellationToken cancellationToken)
-    {
-        var current = await _versionStore.GetVersionAsync(AggregateType, command.PrincipalId, cancellationToken);
-        return CommandExecutionResult<FrontCommandResult>.Rejected(
-            new ConflictResult(ConflictCode.ConflictStaleVersion, command.OperationId, $"{AggregateType}:{command.PrincipalId}", current, "refresh_and_retry", null));
-    }
+            new ConflictResult(ConflictCode.ConflictInvariant, command.OperationId, entityRef, "manual_merge_required"));
 }
 
 public sealed class SetFrontCommandHandler : ICommandHandler<SetFrontCommand, FrontCommandResult>
 {
-    private const string AggregateType = "fronting";
-
     private readonly IFrontingRepository _frontingRepository;
     private readonly IIdempotencyStore _idempotencyStore;
-    private readonly IAggregateVersionStore _versionStore;
     private readonly IClusterEventBus _eventBus;
 
     public SetFrontCommandHandler(
         IFrontingRepository frontingRepository,
         IIdempotencyStore idempotencyStore,
-        IAggregateVersionStore versionStore,
         IClusterEventBus eventBus)
     {
         _frontingRepository = frontingRepository;
         _idempotencyStore = idempotencyStore;
-        _versionStore = versionStore;
         _eventBus = eventBus;
     }
 
@@ -170,15 +142,6 @@ public sealed class SetFrontCommandHandler : ICommandHandler<SetFrontCommand, Fr
         var alreadyFronting = await _frontingRepository.IsFrontingAsync(command.PrincipalId, command.Payload.AlterId, cancellationToken);
         if (alreadyFronting)
             return RejectInvariant(command, "fronting:already_fronting");
-
-        var versionAdvanced = await _versionStore.TryAdvanceVersionAsync(
-            AggregateType,
-            command.PrincipalId,
-            command.ExpectedVersion,
-            cancellationToken);
-
-        if (!versionAdvanced)
-            return await RejectStaleVersion(command, cancellationToken);
 
         var active = await _frontingRepository.ListActiveAsync(command.PrincipalId, cancellationToken);
         foreach (var front in active)
@@ -219,42 +182,28 @@ public sealed class SetFrontCommandHandler : ICommandHandler<SetFrontCommand, Fr
         CommandEnvelope<SetFrontCommand> command,
         string entityRef) =>
         CommandExecutionResult<FrontCommandResult>.Rejected(
-            new ConflictResult(ConflictCode.ConflictDuplicate, command.OperationId, entityRef, null, "no_retry", null));
+            new ConflictResult(ConflictCode.ConflictDuplicate, command.OperationId, entityRef, "no_retry"));
 
     private static CommandExecutionResult<FrontCommandResult> RejectInvariant(
         CommandEnvelope<SetFrontCommand> command,
         string entityRef) =>
         CommandExecutionResult<FrontCommandResult>.Rejected(
-            new ConflictResult(ConflictCode.ConflictInvariant, command.OperationId, entityRef, null, "manual_merge_required", null));
-
-    private async Task<CommandExecutionResult<FrontCommandResult>> RejectStaleVersion(
-        CommandEnvelope<SetFrontCommand> command,
-        CancellationToken cancellationToken)
-    {
-        var current = await _versionStore.GetVersionAsync(AggregateType, command.PrincipalId, cancellationToken);
-        return CommandExecutionResult<FrontCommandResult>.Rejected(
-            new ConflictResult(ConflictCode.ConflictStaleVersion, command.OperationId, $"{AggregateType}:{command.PrincipalId}", current, "refresh_and_retry", null));
-    }
+            new ConflictResult(ConflictCode.ConflictInvariant, command.OperationId, entityRef, "manual_merge_required"));
 }
 
 public sealed class DeleteFrontByIdCommandHandler : ICommandHandler<DeleteFrontByIdCommand, FrontCommandResult>
 {
-    private const string AggregateType = "fronting";
-
     private readonly IFrontingRepository _frontingRepository;
     private readonly IIdempotencyStore _idempotencyStore;
-    private readonly IAggregateVersionStore _versionStore;
     private readonly IClusterEventBus _eventBus;
 
     public DeleteFrontByIdCommandHandler(
         IFrontingRepository frontingRepository,
         IIdempotencyStore idempotencyStore,
-        IAggregateVersionStore versionStore,
         IClusterEventBus eventBus)
     {
         _frontingRepository = frontingRepository;
         _idempotencyStore = idempotencyStore;
-        _versionStore = versionStore;
         _eventBus = eventBus;
     }
 
@@ -293,15 +242,6 @@ public sealed class DeleteFrontByIdCommandHandler : ICommandHandler<DeleteFrontB
                 return RejectInvariant(command, "fronting:no_front");
         }
 
-        var versionAdvanced = await _versionStore.TryAdvanceVersionAsync(
-            AggregateType,
-            command.PrincipalId,
-            command.ExpectedVersion,
-            cancellationToken);
-
-        if (!versionAdvanced)
-            return await RejectStaleVersion(command, cancellationToken);
-
         if (existing is not null)
         {
             var deleted = await _frontingRepository.EndByFrontIdAsync(command.PrincipalId, command.Payload.FrontId, cancellationToken);
@@ -337,42 +277,28 @@ public sealed class DeleteFrontByIdCommandHandler : ICommandHandler<DeleteFrontB
         CommandEnvelope<DeleteFrontByIdCommand> command,
         string entityRef) =>
         CommandExecutionResult<FrontCommandResult>.Rejected(
-            new ConflictResult(ConflictCode.ConflictDuplicate, command.OperationId, entityRef, null, "no_retry", null));
+            new ConflictResult(ConflictCode.ConflictDuplicate, command.OperationId, entityRef, "no_retry"));
 
     private static CommandExecutionResult<FrontCommandResult> RejectInvariant(
         CommandEnvelope<DeleteFrontByIdCommand> command,
         string entityRef) =>
         CommandExecutionResult<FrontCommandResult>.Rejected(
-            new ConflictResult(ConflictCode.ConflictInvariant, command.OperationId, entityRef, null, "manual_merge_required", null));
-
-    private async Task<CommandExecutionResult<FrontCommandResult>> RejectStaleVersion(
-        CommandEnvelope<DeleteFrontByIdCommand> command,
-        CancellationToken cancellationToken)
-    {
-        var current = await _versionStore.GetVersionAsync(AggregateType, command.PrincipalId, cancellationToken);
-        return CommandExecutionResult<FrontCommandResult>.Rejected(
-            new ConflictResult(ConflictCode.ConflictStaleVersion, command.OperationId, $"{AggregateType}:{command.PrincipalId}", current, "refresh_and_retry", null));
-    }
+            new ConflictResult(ConflictCode.ConflictInvariant, command.OperationId, entityRef, "manual_merge_required"));
 }
 
 public sealed class UpdateFrontCommentCommandHandler : ICommandHandler<UpdateFrontCommentCommand, FrontCommandResult>
 {
-    private const string AggregateType = "fronting";
-
     private readonly IFrontingRepository _frontingRepository;
     private readonly IIdempotencyStore _idempotencyStore;
-    private readonly IAggregateVersionStore _versionStore;
     private readonly IClusterEventBus _eventBus;
 
     public UpdateFrontCommentCommandHandler(
         IFrontingRepository frontingRepository,
         IIdempotencyStore idempotencyStore,
-        IAggregateVersionStore versionStore,
         IClusterEventBus eventBus)
     {
         _frontingRepository = frontingRepository;
         _idempotencyStore = idempotencyStore;
-        _versionStore = versionStore;
         _eventBus = eventBus;
     }
 
@@ -409,15 +335,6 @@ public sealed class UpdateFrontCommentCommandHandler : ICommandHandler<UpdateFro
         if (existing is null)
             return RejectInvariant(command, "fronting:no_front");
 
-        var versionAdvanced = await _versionStore.TryAdvanceVersionAsync(
-            AggregateType,
-            command.PrincipalId,
-            command.ExpectedVersion,
-            cancellationToken);
-
-        if (!versionAdvanced)
-            return await RejectStaleVersion(command, cancellationToken);
-
         var updated = await _frontingRepository.UpdateCommentByFrontIdAsync(
             command.PrincipalId,
             command.Payload.FrontId,
@@ -451,20 +368,11 @@ public sealed class UpdateFrontCommentCommandHandler : ICommandHandler<UpdateFro
         CommandEnvelope<UpdateFrontCommentCommand> command,
         string entityRef) =>
         CommandExecutionResult<FrontCommandResult>.Rejected(
-            new ConflictResult(ConflictCode.ConflictDuplicate, command.OperationId, entityRef, null, "no_retry", null));
+            new ConflictResult(ConflictCode.ConflictDuplicate, command.OperationId, entityRef, "no_retry"));
 
     private static CommandExecutionResult<FrontCommandResult> RejectInvariant(
         CommandEnvelope<UpdateFrontCommentCommand> command,
         string entityRef) =>
         CommandExecutionResult<FrontCommandResult>.Rejected(
-            new ConflictResult(ConflictCode.ConflictInvariant, command.OperationId, entityRef, null, "manual_merge_required", null));
-
-    private async Task<CommandExecutionResult<FrontCommandResult>> RejectStaleVersion(
-        CommandEnvelope<UpdateFrontCommentCommand> command,
-        CancellationToken cancellationToken)
-    {
-        var current = await _versionStore.GetVersionAsync(AggregateType, command.PrincipalId, cancellationToken);
-        return CommandExecutionResult<FrontCommandResult>.Rejected(
-            new ConflictResult(ConflictCode.ConflictStaleVersion, command.OperationId, $"{AggregateType}:{command.PrincipalId}", current, "refresh_and_retry", null));
-    }
+            new ConflictResult(ConflictCode.ConflictInvariant, command.OperationId, entityRef, "manual_merge_required"));
 }

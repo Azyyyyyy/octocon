@@ -5,22 +5,17 @@ namespace Interfold.Domain.Alters;
 
 public sealed class DeleteAlterCommandHandler : ICommandHandler<DeleteAlterCommand, AlterCommandResult>
 {
-    private const string AggregateType = "alters";
-
     private readonly IAlterRepository _alterRepository;
     private readonly IIdempotencyStore _idempotencyStore;
-    private readonly IAggregateVersionStore _versionStore;
     private readonly IClusterEventBus _eventBus;
 
     public DeleteAlterCommandHandler(
         IAlterRepository alterRepository,
         IIdempotencyStore idempotencyStore,
-        IAggregateVersionStore versionStore,
         IClusterEventBus eventBus)
     {
         _alterRepository = alterRepository;
         _idempotencyStore = idempotencyStore;
-        _versionStore = versionStore;
         _eventBus = eventBus;
     }
 
@@ -54,17 +49,7 @@ public sealed class DeleteAlterCommandHandler : ICommandHandler<DeleteAlterComma
         var exists = await _alterRepository.ExistsAsync(command.PrincipalId, command.Payload.AlterId, cancellationToken);
         if (!exists)
             return RejectInvariant(command, "alter:not_found");
-
-        var versionAdvanced = await _versionStore.TryAdvanceVersionAsync(
-            AggregateType,
-            command.PrincipalId,
-            command.ExpectedVersion,
-            cancellationToken
-        );
-
-        if (!versionAdvanced)
-            return await RejectStaleVersion(command, cancellationToken);
-
+        
         var deleted = await _alterRepository.DeleteAsync(command.PrincipalId, command.Payload.AlterId, cancellationToken);
         if (!deleted)
             return RejectInvariant(command, "alter:delete_failed");
@@ -100,9 +85,7 @@ public sealed class DeleteAlterCommandHandler : ICommandHandler<DeleteAlterComma
                 ConflictCode.ConflictDuplicate,
                 command.OperationId,
                 entityRef,
-                null,
-                "no_retry",
-                null
+                "no_retry"
             )
         );
 
@@ -115,27 +98,7 @@ public sealed class DeleteAlterCommandHandler : ICommandHandler<DeleteAlterComma
                 ConflictCode.ConflictInvariant,
                 command.OperationId,
                 entityRef,
-                null,
-                "manual_merge_required",
-                null
+                "manual_merge_required"
             )
         );
-
-    private async Task<CommandExecutionResult<AlterCommandResult>> RejectStaleVersion(
-        CommandEnvelope<DeleteAlterCommand> command,
-        CancellationToken cancellationToken
-    )
-    {
-        var current = await _versionStore.GetVersionAsync(AggregateType, command.PrincipalId, cancellationToken);
-        return CommandExecutionResult<AlterCommandResult>.Rejected(
-            new ConflictResult(
-                ConflictCode.ConflictStaleVersion,
-                command.OperationId,
-                $"{AggregateType}:{command.PrincipalId}",
-                current,
-                "refresh_and_retry",
-                null
-            )
-        );
-    }
 }

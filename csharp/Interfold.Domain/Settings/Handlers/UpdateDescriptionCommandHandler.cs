@@ -6,22 +6,17 @@ namespace Interfold.Domain.Settings.Handlers;
 
 public sealed class UpdateDescriptionCommandHandler : ICommandHandler<UpdateDescriptionCommand, SettingsCommandResult>
 {
-    private const string AggregateType = "settings";
-
     private readonly IAccountRepository _accountRepository;
     private readonly IIdempotencyStore _idempotencyStore;
-    private readonly IAggregateVersionStore _versionStore;
     private readonly IClusterEventBus _eventBus;
 
     public UpdateDescriptionCommandHandler(
         IAccountRepository accountRepository,
         IIdempotencyStore idempotencyStore,
-        IAggregateVersionStore versionStore,
         IClusterEventBus eventBus)
     {
         _accountRepository = accountRepository;
         _idempotencyStore = idempotencyStore;
-        _versionStore = versionStore;
         _eventBus = eventBus;
     }
 
@@ -51,15 +46,6 @@ public sealed class UpdateDescriptionCommandHandler : ICommandHandler<UpdateDesc
                 return CommandExecutionResult<SettingsCommandResult>.Success(replay with { Replay = true });
         }
 
-        var versionAdvanced = await _versionStore.TryAdvanceVersionAsync(
-            AggregateType,
-            command.PrincipalId,
-            command.ExpectedVersion,
-            cancellationToken);
-
-        if (!versionAdvanced)
-            return await RejectStaleVersion(command, cancellationToken);
-
         var persisted = await _accountRepository.UpdateDescriptionAsync(
             command.PrincipalId,
             command.Payload.Description,
@@ -88,26 +74,11 @@ public sealed class UpdateDescriptionCommandHandler : ICommandHandler<UpdateDesc
         CommandEnvelope<UpdateDescriptionCommand> command,
         string entityRef) =>
         CommandExecutionResult<SettingsCommandResult>.Rejected(
-            new ConflictResult(ConflictCode.ConflictDuplicate, command.OperationId, entityRef, null, "no_retry", null));
+            new ConflictResult(ConflictCode.ConflictDuplicate, command.OperationId, entityRef, "no_retry"));
 
     private static CommandExecutionResult<SettingsCommandResult> RejectInvariant(
         CommandEnvelope<UpdateDescriptionCommand> command,
         string entityRef) =>
         CommandExecutionResult<SettingsCommandResult>.Rejected(
-            new ConflictResult(ConflictCode.ConflictInvariant, command.OperationId, entityRef, null, "manual_merge_required", null));
-
-    private async Task<CommandExecutionResult<SettingsCommandResult>> RejectStaleVersion(
-        CommandEnvelope<UpdateDescriptionCommand> command,
-        CancellationToken cancellationToken)
-    {
-        var current = await _versionStore.GetVersionAsync(AggregateType, command.PrincipalId, cancellationToken);
-        return CommandExecutionResult<SettingsCommandResult>.Rejected(
-            new ConflictResult(
-                ConflictCode.ConflictStaleVersion,
-                command.OperationId,
-                $"{AggregateType}:{command.PrincipalId}",
-                current,
-                "refresh_and_retry",
-                null));
-    }
+            new ConflictResult(ConflictCode.ConflictInvariant, command.OperationId, entityRef, "manual_merge_required"));
 }

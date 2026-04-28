@@ -1,4 +1,4 @@
-namespace Interfold.Api;
+namespace Interfold.Api.Helpers;
 
 internal static class AvatarUrlQualifier
 {

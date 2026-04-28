@@ -5,15 +5,12 @@ namespace Interfold.Domain.Settings.Handlers;
 
 public sealed class ImportPkCommandHandler : ICommandHandler<ImportPkCommand, SettingsCommandResult>
 {
-    private const string AggregateType = "settings";
     private readonly IIdempotencyStore _idempotencyStore;
-    private readonly IAggregateVersionStore _versionStore;
     private readonly IClusterEventBus _eventBus;
 
-    public ImportPkCommandHandler(IIdempotencyStore idempotencyStore, IAggregateVersionStore versionStore, IClusterEventBus eventBus)
+    public ImportPkCommandHandler(IIdempotencyStore idempotencyStore, IClusterEventBus eventBus)
     {
         _idempotencyStore = idempotencyStore;
-        _versionStore = versionStore;
         _eventBus = eventBus;
     }
 
@@ -22,7 +19,7 @@ public sealed class ImportPkCommandHandler : ICommandHandler<ImportPkCommand, Se
         if (string.IsNullOrWhiteSpace(command.Payload.Token))
         {
             return Task.FromResult(CommandExecutionResult<SettingsCommandResult>.Rejected(
-                new ConflictResult(ConflictCode.ConflictInvariant, command.OperationId, "settings:import_pk_invalid", null, "manual_merge_required", null)));
+                new ConflictResult(ConflictCode.ConflictInvariant, command.OperationId, "settings:import_pk_invalid", "manual_merge_required")));
         }
 
         return ExecuteAndPublishAsync(command, cancellationToken);
@@ -35,15 +32,13 @@ public sealed class ImportPkCommandHandler : ICommandHandler<ImportPkCommand, Se
         //TODO: Implement        
         var result = await SettingsCommandHelper.ExecuteAsync(
             command,
-            AggregateType,
             "pk_imported",
             "settings:import:pk",
             _idempotencyStore,
-            _versionStore,
             _ => Task.FromResult(true),
             cancellationToken);
 
-        if (result.Accepted && result.Result is { Replay: false })
+        if (result is { Accepted: true, Result.Replay: false })
         {
             await _eventBus.PublishAsync(new SettingsProfileUpdatedEvent(command.PrincipalId, false), cancellationToken);
         }
@@ -54,15 +49,12 @@ public sealed class ImportPkCommandHandler : ICommandHandler<ImportPkCommand, Se
 
 public sealed class ImportSpCommandHandler : ICommandHandler<ImportSpCommand, SettingsCommandResult>
 {
-    private const string AggregateType = "settings";
     private readonly IIdempotencyStore _idempotencyStore;
-    private readonly IAggregateVersionStore _versionStore;
     private readonly IClusterEventBus _eventBus;
 
-    public ImportSpCommandHandler(IIdempotencyStore idempotencyStore, IAggregateVersionStore versionStore, IClusterEventBus eventBus)
+    public ImportSpCommandHandler(IIdempotencyStore idempotencyStore, IClusterEventBus eventBus)
     {
         _idempotencyStore = idempotencyStore;
-        _versionStore = versionStore;
         _eventBus = eventBus;
     }
 
@@ -71,7 +63,7 @@ public sealed class ImportSpCommandHandler : ICommandHandler<ImportSpCommand, Se
         if (string.IsNullOrWhiteSpace(command.Payload.Token))
         {
             return Task.FromResult(CommandExecutionResult<SettingsCommandResult>.Rejected(
-                new ConflictResult(ConflictCode.ConflictInvariant, command.OperationId, "settings:import_sp_invalid", null, "manual_merge_required", null)));
+                new ConflictResult(ConflictCode.ConflictInvariant, command.OperationId, "settings:import_sp_invalid", "manual_merge_required")));
         }
 
         return ExecuteAndPublishAsync(command, cancellationToken);
@@ -84,15 +76,13 @@ public sealed class ImportSpCommandHandler : ICommandHandler<ImportSpCommand, Se
         //TODO: Implement        
         var result = await SettingsCommandHelper.ExecuteAsync(
             command,
-            AggregateType,
             "sp_imported",
             "settings:import:sp",
             _idempotencyStore,
-            _versionStore,
             _ => Task.FromResult(true),
             cancellationToken);
 
-        if (result.Accepted && result.Result is { Replay: false })
+        if (result is { Accepted: true, Result.Replay: false })
         {
             await _eventBus.PublishAsync(new SettingsProfileUpdatedEvent(command.PrincipalId, false), cancellationToken);
         }

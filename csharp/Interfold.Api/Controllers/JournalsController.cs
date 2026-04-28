@@ -131,7 +131,7 @@ public sealed class JournalsController : InterfoldControllerBase
     public async Task<IActionResult> AttachAlter(string id, [FromBody] JournalAlterRequest req, CancellationToken ct)
     {
         var alterId = req.AlterId ?? 0;
-        CheckAlterId(alterId);
+        await CheckAlterId(alterId);
 
         var envelope = new CommandEnvelope<AttachAlterToGlobalJournalCommand>(
             OperationIds.JournalGlobalAttachAlter,
@@ -151,7 +151,7 @@ public sealed class JournalsController : InterfoldControllerBase
     public async Task<IActionResult> DetachAlter(string id, [FromBody] JournalAlterRequest req, CancellationToken ct)
     {
         var alterId = req.AlterId ?? 0;
-        CheckAlterId(alterId);
+        await CheckAlterId(alterId);
 
         var envelope = new CommandEnvelope<DetachAlterFromGlobalJournalCommand>(
             OperationIds.JournalGlobalDetachAlter,

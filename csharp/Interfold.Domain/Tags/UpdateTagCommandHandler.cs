@@ -5,22 +5,17 @@ namespace Interfold.Domain.Tags;
 
 public sealed class UpdateTagCommandHandler : ICommandHandler<UpdateTagCommand, TagCommandResult>
 {
-    private const string AggregateType = "tags";
-
     private readonly ITagRepository _tagRepository;
     private readonly IIdempotencyStore _idempotencyStore;
-    private readonly IAggregateVersionStore _versionStore;
     private readonly IClusterEventBus _eventBus;
 
     public UpdateTagCommandHandler(
         ITagRepository tagRepository,
         IIdempotencyStore idempotencyStore,
-        IAggregateVersionStore versionStore,
         IClusterEventBus eventBus)
     {
         _tagRepository = tagRepository;
         _idempotencyStore = idempotencyStore;
-        _versionStore = versionStore;
         _eventBus = eventBus;
     }
 
@@ -52,11 +47,6 @@ public sealed class UpdateTagCommandHandler : ICommandHandler<UpdateTagCommand, 
                 return CommandExecutionResult<TagCommandResult>.Success(replay with { Replay = true });
         }
 
-        var versionAdvanced = await _versionStore.TryAdvanceVersionAsync(
-            AggregateType, command.PrincipalId, command.ExpectedVersion, cancellationToken);
-
-        if (!versionAdvanced) return await RejectStaleVersion(command, cancellationToken);
-
         var found = await _tagRepository.UpdateAsync(command.PrincipalId, payload, cancellationToken);
         if (!found) return RejectInvariant(command, "tag:not_found");
 
@@ -77,19 +67,10 @@ public sealed class UpdateTagCommandHandler : ICommandHandler<UpdateTagCommand, 
     private static CommandExecutionResult<TagCommandResult> RejectDuplicate(
         CommandEnvelope<UpdateTagCommand> command, string entityRef) =>
         CommandExecutionResult<TagCommandResult>.Rejected(
-            new ConflictResult(ConflictCode.ConflictDuplicate, command.OperationId, entityRef, null, "no_retry", null));
+            new ConflictResult(ConflictCode.ConflictDuplicate, command.OperationId, entityRef, "no_retry"));
 
     private static CommandExecutionResult<TagCommandResult> RejectInvariant(
         CommandEnvelope<UpdateTagCommand> command, string entityRef) =>
         CommandExecutionResult<TagCommandResult>.Rejected(
-            new ConflictResult(ConflictCode.ConflictInvariant, command.OperationId, entityRef, null, "manual_merge_required", null));
-
-    private async Task<CommandExecutionResult<TagCommandResult>> RejectStaleVersion(
-        CommandEnvelope<UpdateTagCommand> command, CancellationToken cancellationToken)
-    {
-        var current = await _versionStore.GetVersionAsync(AggregateType, command.PrincipalId, cancellationToken);
-        return CommandExecutionResult<TagCommandResult>.Rejected(
-            new ConflictResult(ConflictCode.ConflictStaleVersion, command.OperationId,
-                $"{AggregateType}:{command.PrincipalId}", current, "refresh_and_retry", null));
-    }
+            new ConflictResult(ConflictCode.ConflictInvariant, command.OperationId, entityRef, "manual_merge_required"));
 }

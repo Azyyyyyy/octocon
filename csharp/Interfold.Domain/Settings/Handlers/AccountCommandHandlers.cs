@@ -6,24 +6,23 @@ using Interfold.Domain.Fronting;
 using Interfold.Domain.Journals;
 using Interfold.Domain.Polls;
 using Interfold.Domain.Tags;
-using Interfold.Domain.Settings;
 using Interfold.Domain.Friendships;
 
 namespace Interfold.Domain.Settings.Handlers;
 
 public sealed class UnlinkDiscordCommandHandler : ICommandHandler<UnlinkDiscordCommand, SettingsCommandResult>
 {
-    private const string AggregateType = "settings";
     private readonly IAccountRepository _accountRepository;
     private readonly IIdempotencyStore _idempotencyStore;
-    private readonly IAggregateVersionStore _versionStore;
     private readonly IClusterEventBus _eventBus;
 
-    public UnlinkDiscordCommandHandler(IAccountRepository accountRepository, IIdempotencyStore idempotencyStore, IAggregateVersionStore versionStore, IClusterEventBus eventBus)
+    public UnlinkDiscordCommandHandler(
+        IAccountRepository accountRepository, 
+        IIdempotencyStore idempotencyStore, 
+        IClusterEventBus eventBus)
     {
         _accountRepository = accountRepository;
         _idempotencyStore = idempotencyStore;
-        _versionStore = versionStore;
         _eventBus = eventBus;
     }
 
@@ -31,14 +30,12 @@ public sealed class UnlinkDiscordCommandHandler : ICommandHandler<UnlinkDiscordC
     {
         var result = await SettingsCommandHelper.ExecuteAsync(
             command,
-            AggregateType,
             "discord_unlinked",
             "settings:unlink:discord",
             _idempotencyStore,
-            _versionStore,
             ct => _accountRepository.UnlinkDiscordAsync(command.PrincipalId, ct),
             cancellationToken);
-        if (result.Accepted && result.Result is { Replay: false })
+        if (result is { Accepted: true, Result.Replay: false })
         {
             await _eventBus.PublishAsync(new SettingsDiscordAccountUnlinkedSignalEvent(command.PrincipalId), cancellationToken);
         }
@@ -49,43 +46,35 @@ public sealed class UnlinkDiscordCommandHandler : ICommandHandler<UnlinkDiscordC
 
 public sealed class UnlinkEmailCommandHandler : ICommandHandler<UnlinkEmailCommand, SettingsCommandResult>
 {
-    private const string AggregateType = "settings";
     private readonly IAccountRepository _accountRepository;
     private readonly IIdempotencyStore _idempotencyStore;
-    private readonly IAggregateVersionStore _versionStore;
 
-    public UnlinkEmailCommandHandler(IAccountRepository accountRepository, IIdempotencyStore idempotencyStore, IAggregateVersionStore versionStore)
+    public UnlinkEmailCommandHandler(IAccountRepository accountRepository, IIdempotencyStore idempotencyStore)
     {
         _accountRepository = accountRepository;
         _idempotencyStore = idempotencyStore;
-        _versionStore = versionStore;
     }
 
     public Task<CommandExecutionResult<SettingsCommandResult>> HandleAsync(CommandEnvelope<UnlinkEmailCommand> command, CancellationToken cancellationToken = default)
         => SettingsCommandHelper.ExecuteAsync(
             command,
-            AggregateType,
             "email_unlinked",
             "settings:unlink:email",
             _idempotencyStore,
-            _versionStore,
             ct => _accountRepository.UnlinkEmailAsync(command.PrincipalId, ct),
             cancellationToken);
 }
 
 public sealed class UnlinkAppleCommandHandler : ICommandHandler<UnlinkAppleCommand, SettingsCommandResult>
 {
-    private const string AggregateType = "settings";
     private readonly IAccountRepository _accountRepository;
     private readonly IIdempotencyStore _idempotencyStore;
-    private readonly IAggregateVersionStore _versionStore;
     private readonly IClusterEventBus _eventBus;
 
-    public UnlinkAppleCommandHandler(IAccountRepository accountRepository, IIdempotencyStore idempotencyStore, IAggregateVersionStore versionStore, IClusterEventBus eventBus)
+    public UnlinkAppleCommandHandler(IAccountRepository accountRepository, IIdempotencyStore idempotencyStore, IClusterEventBus eventBus)
     {
         _accountRepository = accountRepository;
         _idempotencyStore = idempotencyStore;
-        _versionStore = versionStore;
         _eventBus = eventBus;
     }
 
@@ -93,14 +82,12 @@ public sealed class UnlinkAppleCommandHandler : ICommandHandler<UnlinkAppleComma
     {
         var result = await SettingsCommandHelper.ExecuteAsync(
             command,
-            AggregateType,
             "apple_unlinked",
             "settings:unlink:apple",
             _idempotencyStore,
-            _versionStore,
             ct => _accountRepository.UnlinkAppleAsync(command.PrincipalId, ct),
             cancellationToken);
-        if (result.Accepted && result.Result is { Replay: false })
+        if (result is { Accepted: true, Result.Replay: false })
         {
             await _eventBus.PublishAsync(new SettingsAppleAccountUnlinkedSignalEvent(command.PrincipalId), cancellationToken);
         }
@@ -111,9 +98,7 @@ public sealed class UnlinkAppleCommandHandler : ICommandHandler<UnlinkAppleComma
 
 public sealed class DeleteAccountCommandHandler : ICommandHandler<DeleteAccountCommand, SettingsCommandResult>
 {
-    private const string AggregateType = "settings";
     private readonly IIdempotencyStore _idempotencyStore;
-    private readonly IAggregateVersionStore _versionStore;
     private readonly IClusterEventBus _eventBus;
     private readonly IAccountRepository _accountRepository;
     private readonly IAlterRepository _alterRepository;
@@ -126,7 +111,6 @@ public sealed class DeleteAccountCommandHandler : ICommandHandler<DeleteAccountC
 
     public DeleteAccountCommandHandler(
         IIdempotencyStore idempotencyStore,
-        IAggregateVersionStore versionStore,
         IClusterEventBus eventBus,
         IAccountRepository accountRepository,
         IAlterRepository alterRepository,
@@ -138,7 +122,6 @@ public sealed class DeleteAccountCommandHandler : ICommandHandler<DeleteAccountC
         IFriendshipRepository friendshipRepository)
     {
         _idempotencyStore = idempotencyStore;
-        _versionStore = versionStore;
         _eventBus = eventBus;
         _accountRepository = accountRepository;
         _alterRepository = alterRepository;
@@ -153,7 +136,7 @@ public sealed class DeleteAccountCommandHandler : ICommandHandler<DeleteAccountC
     public async Task<CommandExecutionResult<SettingsCommandResult>> HandleAsync(CommandEnvelope<DeleteAccountCommand> command, CancellationToken cancellationToken = default)
     {
         var unfriendedIds = new List<string>();
-        var result = await SettingsCommandHelper.ExecuteAsync(command, AggregateType, "account_deleted", "settings:account:delete", _idempotencyStore, _versionStore, async ct =>
+        var result = await SettingsCommandHelper.ExecuteAsync(command, "account_deleted", "settings:account:delete", _idempotencyStore, async ct =>
         {
             var systemId = command.PrincipalId;
 
@@ -205,7 +188,7 @@ public sealed class DeleteAccountCommandHandler : ICommandHandler<DeleteAccountC
             //TODO: Delete account image if it exists
         }, cancellationToken);
 
-        if (result.Accepted && result.Result is { Replay: false })
+        if (result is { Accepted: true, Result.Replay: false })
         {
             await _eventBus.PublishAsync(new SettingsAccountDeletedSignalEvent(command.PrincipalId), cancellationToken);
 
@@ -221,27 +204,23 @@ public sealed class DeleteAccountCommandHandler : ICommandHandler<DeleteAccountC
 
 public sealed class WipeAltersCommandHandler : ICommandHandler<WipeAltersCommand, SettingsCommandResult>
 {
-    private const string AggregateType = "settings";
     private readonly IIdempotencyStore _idempotencyStore;
-    private readonly IAggregateVersionStore _versionStore;
     private readonly IClusterEventBus _eventBus;
     private readonly IAlterRepository _alterRepository;
 
     public WipeAltersCommandHandler(
         IIdempotencyStore idempotencyStore,
-        IAggregateVersionStore versionStore,
         IClusterEventBus eventBus,
         IAlterRepository alterRepository)
     {
         _idempotencyStore = idempotencyStore;
-        _versionStore = versionStore;
         _eventBus = eventBus;
         _alterRepository = alterRepository;
     }
 
     public async Task<CommandExecutionResult<SettingsCommandResult>> HandleAsync(CommandEnvelope<WipeAltersCommand> command, CancellationToken cancellationToken = default)
     {
-        var result = await SettingsCommandHelper.ExecuteAsync(command, AggregateType, "alters_wiped", "settings:alters:wipe", _idempotencyStore, _versionStore, async ct =>
+        var result = await SettingsCommandHelper.ExecuteAsync(command, "alters_wiped", "settings:alters:wipe", _idempotencyStore, async ct =>
         {
             var systemId = command.PrincipalId;
             var alters = await _alterRepository.ListAsync(systemId, ct);
@@ -254,7 +233,7 @@ public sealed class WipeAltersCommandHandler : ICommandHandler<WipeAltersCommand
             return true;
         }, cancellationToken);
 
-        if (result.Accepted && result.Result is { Replay: false })
+        if (result is { Accepted: true, Result.Replay: false })
         {
             await _eventBus.PublishAsync(new SettingsAltersWipedSignalEvent(command.PrincipalId), cancellationToken);
         }

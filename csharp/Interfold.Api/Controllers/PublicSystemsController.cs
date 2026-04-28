@@ -68,7 +68,7 @@ public sealed class PublicSystemsController : InterfoldControllerBase
     [HttpGet("{systemId}/alters/{alterId}")]
     public async Task<IActionResult> ShowAlter([FromRoute] string systemId, [FromRoute] int alterId, CancellationToken ct)
     {
-        CheckAlterId(alterId);
+        await CheckAlterId(alterId);
         if (!await SystemExistsAsync(systemId, ct))
         {
             return NotFound(new { error = "System not found.", code = "system_not_found" });

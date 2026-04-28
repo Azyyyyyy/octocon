@@ -1,7 +1,7 @@
 using System.Diagnostics;
 using Microsoft.Extensions.Primitives;
 
-namespace Interfold.Api;
+namespace Interfold.Api.Middleware;
 
 /// <summary>
 /// Middleware that:

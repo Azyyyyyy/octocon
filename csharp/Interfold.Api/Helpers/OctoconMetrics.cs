@@ -1,6 +1,6 @@
 using System.Diagnostics.Metrics;
 
-namespace Interfold.Api;
+namespace Interfold.Api.Helpers;
 
 /// <summary>
 /// Application-level named <see cref="Meter"/> with the counters and histograms used

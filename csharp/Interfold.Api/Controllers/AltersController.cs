@@ -41,7 +41,7 @@ public sealed class AltersController : InterfoldControllerBase
     [HttpGet("{alterId:int}")]
     public async Task<IActionResult> Show(int alterId, CancellationToken ct)
     {
-        CheckAlterId(alterId);
+        await CheckAlterId(alterId);
         var alter = await _alterRepository.GetAsync(PrincipalId, alterId, ct);
         if (alter is null)
         {
@@ -80,7 +80,7 @@ public sealed class AltersController : InterfoldControllerBase
     [HttpPatch("{alterId:int}")]
     public async Task<IActionResult> Update(int alterId, [FromBody] UpdateAlterRequest req, CancellationToken ct)
     {
-        CheckAlterId(alterId);
+        await CheckAlterId(alterId);
         var fields = req.Fields?.Select(f => new AlterFieldCommand(f.Id, f.Value)).ToList();
         var payload = new UpdateAlterCommand(
             AlterId: alterId,
@@ -115,7 +115,7 @@ public sealed class AltersController : InterfoldControllerBase
     [HttpDelete("{alterId:int}")]
     public async Task<IActionResult> Delete(int alterId, [FromBody] DeleteAlterRequest? req, CancellationToken ct)
     {
-        CheckAlterId(alterId);
+        await CheckAlterId(alterId);
         var envelope = new CommandEnvelope<DeleteAlterCommand>(
             OperationIds.AlterDelete, Guid.NewGuid(),
             PrincipalId: PrincipalId,
@@ -132,7 +132,7 @@ public sealed class AltersController : InterfoldControllerBase
     [Consumes("multipart/form-data")]
     public async Task<IActionResult> UploadAvatarMultipart(int alterId, CancellationToken ct)
     {
-        CheckAlterId(alterId);
+        await CheckAlterId(alterId);
         var principal = PrincipalId;
 
         var upload = await ResolveMultipartUploadAsync(ct);
@@ -292,7 +292,7 @@ public sealed class AltersController : InterfoldControllerBase
     [HttpDelete("{alterId:int}/avatar")]
     public async Task<IActionResult> DeleteAvatar(int alterId, [FromBody] DeleteAlterRequest? req, CancellationToken ct)
     {
-        CheckAlterId(alterId);
+        await CheckAlterId(alterId);
         var principal = PrincipalId;
 
         var existingAlter = await _alterRepository.GetAsync(principal, alterId, ct);

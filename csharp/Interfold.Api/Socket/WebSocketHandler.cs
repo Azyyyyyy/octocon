@@ -15,6 +15,7 @@ using Interfold.Domain.Journals;
 using Interfold.Domain.Polls;
 using System.Security.Claims;
 using System.Security.Cryptography;
+using Interfold.Api.Helpers;
 using Interfold.Infrastructure.Configuration;
 using Microsoft.Extensions.Options;
 

@@ -1,6 +1,8 @@
+using System.Net;
+using Interfold.Api.Models;
+using Interfold.Contracts;
 using Microsoft.AspNetCore.Mvc;
 using Interfold.Contracts.Operations;
-using Interfold.Domain.Alters;
 using Interfold.Domain.Journals;
 
 namespace Interfold.Api.Controllers;
@@ -8,7 +10,6 @@ namespace Interfold.Api.Controllers;
 [Route("api/systems/me/alters")]
 public sealed class AlterJournalsController : InterfoldControllerBase
 {
-    private readonly IAlterRepository _alterRepository;
     private readonly IJournalRepository _journalRepository;
     private readonly CreateAlterJournalEntryCommandHandler _create;
     private readonly UpdateAlterJournalEntryCommandHandler _update;
@@ -17,7 +18,6 @@ public sealed class AlterJournalsController : InterfoldControllerBase
     private readonly SetAlterJournalPinnedCommandHandler _setPinned;
 
     public AlterJournalsController(
-        IAlterRepository alterRepository,
         IJournalRepository journalRepository,
         CreateAlterJournalEntryCommandHandler create,
         UpdateAlterJournalEntryCommandHandler update,
@@ -25,7 +25,6 @@ public sealed class AlterJournalsController : InterfoldControllerBase
         SetAlterJournalLockedCommandHandler setLocked,
         SetAlterJournalPinnedCommandHandler setPinned)
     {
-        _alterRepository = alterRepository;
         _journalRepository = journalRepository;
         _create = create;
         _update = update;
@@ -35,32 +34,29 @@ public sealed class AlterJournalsController : InterfoldControllerBase
     }
 
     [HttpGet("{alterId:int}/journals")]
-    public async Task<IActionResult> Index(int alterId, CancellationToken ct)
+    public async Task<ActionResult<Response<IEnumerable<AlterJournalReadModel>>>> Index(int alterId, CancellationToken ct)
     {
         var principal = PrincipalId;
-        CheckAlterId(alterId);
+        await CheckAlterId(alterId, principal, ct);
 
-        var alterExists = await _alterRepository.ExistsAsync(principal, alterId, ct);
-        if (!alterExists) return NotFound(new { error = "Alter not found.", code = "alter_not_found" });
-
-        IReadOnlyList<AlterJournalReadModel> entries = await _journalRepository.ListAlterAsync(principal, alterId, ct);
-        return Ok(new { data = entries ?? [] });
+        IEnumerable<AlterJournalReadModel> entries = await _journalRepository.ListAlterAsync(principal, alterId, ct) ?? [];
+        return new Response<IEnumerable<AlterJournalReadModel>>(entries);
     }
 
     [HttpGet("journals/{journalId}")]
-    public async Task<IActionResult> Show(string journalId, CancellationToken ct)
+    public async Task<ActionResult<Response<AlterJournalReadModel>>> Show(string journalId, CancellationToken ct)
     {
         var entry = await _journalRepository.GetAlterAsync(PrincipalId, journalId, ct);
-        return entry is null
-            ? NotFound(new { error = "Journal entry not found.", code = "journal_entry_not_found" })
-            : Ok(new { data = entry });
+        return entry is null 
+            ? throw new InterfoldException("Journal entry not found", "journal_entry_not_found", HttpStatusCode.NotFound) 
+            : new Response<AlterJournalReadModel>(entry);
     }
 
     [HttpPost("{alterId:int}/journals")]
     public async Task<IActionResult> Create(int alterId, [FromBody] CreateAlterJournalRequest req, CancellationToken ct)
     {
         var principal = PrincipalId;
-        CheckAlterId(alterId);
+        await CheckAlterId(alterId);
 
         var envelope = new CommandEnvelope<CreateAlterJournalEntryCommand>(
             OperationIds.JournalAlterCreate,

@@ -5,19 +5,16 @@ namespace Interfold.Domain.Settings.Handlers;
 
 public sealed class CreateFieldCommandHandler : ICommandHandler<CreateFieldCommand, SettingsFieldCommandResult>
 {
-    private const string AggregateType = "settings";
     private static readonly HashSet<string> AllowedTypes = ["text", "number", "boolean"];
     private static readonly HashSet<string> AllowedSecurityLevels = ["public", "friends_only", "trusted_only", "private"];
     private readonly ISettingsFieldRepository _fieldRepository;
     private readonly IIdempotencyStore _idempotencyStore;
-    private readonly IAggregateVersionStore _versionStore;
     private readonly IClusterEventBus _eventBus;
 
-    public CreateFieldCommandHandler(ISettingsFieldRepository fieldRepository, IIdempotencyStore idempotencyStore, IAggregateVersionStore versionStore, IClusterEventBus eventBus)
+    public CreateFieldCommandHandler(ISettingsFieldRepository fieldRepository, IIdempotencyStore idempotencyStore, IClusterEventBus eventBus)
     {
         _fieldRepository = fieldRepository;
         _idempotencyStore = idempotencyStore;
-        _versionStore = versionStore;
         _eventBus = eventBus;
     }
 
@@ -26,7 +23,7 @@ public sealed class CreateFieldCommandHandler : ICommandHandler<CreateFieldComma
         if (string.IsNullOrWhiteSpace(command.Payload.Name))
         {
             return CommandExecutionResult<SettingsFieldCommandResult>.Rejected(
-                new ConflictResult(ConflictCode.ConflictInvariant, command.OperationId, "settings:field_name_required", null, "manual_merge_required", null));
+                new ConflictResult(ConflictCode.ConflictInvariant, command.OperationId, "settings:field_name_required", "manual_merge_required"));
         }
 
         var normalizedType = NormalizeType(command.Payload.Type);
@@ -34,7 +31,7 @@ public sealed class CreateFieldCommandHandler : ICommandHandler<CreateFieldComma
         if (!AllowedSecurityLevels.Contains(command.Payload.SecurityLevel))
         {
             return CommandExecutionResult<SettingsFieldCommandResult>.Rejected(
-                new ConflictResult(ConflictCode.ConflictInvariant, command.OperationId, "settings:field_security_level_invalid", null, "manual_merge_required", null));
+                new ConflictResult(ConflictCode.ConflictInvariant, command.OperationId, "settings:field_security_level_invalid", "manual_merge_required"));
         }
 
         var payloadJson = CommandSerialization.Serialize(command.Payload);
@@ -51,25 +48,12 @@ public sealed class CreateFieldCommandHandler : ICommandHandler<CreateFieldComma
             if (!string.Equals(previous.PayloadHash, payloadHash, StringComparison.Ordinal))
             {
                 return CommandExecutionResult<SettingsFieldCommandResult>.Rejected(
-                    new ConflictResult(ConflictCode.ConflictDuplicate, command.OperationId, "settings:field:create", null, "no_retry", null));
+                    new ConflictResult(ConflictCode.ConflictDuplicate, command.OperationId, "settings:field:create", "no_retry"));
             }
 
             var replay = CommandSerialization.Deserialize<SettingsFieldCommandResult>(previous.OutcomePayload);
             if (replay is not null)
                 return CommandExecutionResult<SettingsFieldCommandResult>.Success(replay with { Replay = true });
-        }
-
-        var versionAdvanced = await _versionStore.TryAdvanceVersionAsync(
-            AggregateType,
-            command.PrincipalId,
-            command.ExpectedVersion,
-            cancellationToken);
-
-        if (!versionAdvanced)
-        {
-            var current = await _versionStore.GetVersionAsync(AggregateType, command.PrincipalId, cancellationToken);
-            return CommandExecutionResult<SettingsFieldCommandResult>.Rejected(
-                new ConflictResult(ConflictCode.ConflictStaleVersion, command.OperationId, $"{AggregateType}:{command.PrincipalId}", current, "refresh_and_retry", null));
         }
 
         var fieldId = await _fieldRepository.CreateAsync(
@@ -83,7 +67,7 @@ public sealed class CreateFieldCommandHandler : ICommandHandler<CreateFieldComma
         if (fieldId is null)
         {
             return CommandExecutionResult<SettingsFieldCommandResult>.Rejected(
-                new ConflictResult(ConflictCode.ConflictInvariant, command.OperationId, "settings:field:create_failed", null, "manual_merge_required", null));
+                new ConflictResult(ConflictCode.ConflictInvariant, command.OperationId, "settings:field:create_failed", "manual_merge_required"));
         }
 
         var result = new SettingsFieldCommandResult(command.PrincipalId, "field_created", fieldId, Replay: false);
@@ -117,17 +101,14 @@ public sealed class CreateFieldCommandHandler : ICommandHandler<CreateFieldComma
 
 public sealed class UpdateFieldCommandHandler : ICommandHandler<UpdateFieldCommand, SettingsCommandResult>
 {
-    private const string AggregateType = "settings";
     private readonly ISettingsFieldRepository _fieldRepository;
     private readonly IIdempotencyStore _idempotencyStore;
-    private readonly IAggregateVersionStore _versionStore;
     private readonly IClusterEventBus _eventBus;
 
-    public UpdateFieldCommandHandler(ISettingsFieldRepository fieldRepository, IIdempotencyStore idempotencyStore, IAggregateVersionStore versionStore, IClusterEventBus eventBus)
+    public UpdateFieldCommandHandler(ISettingsFieldRepository fieldRepository, IIdempotencyStore idempotencyStore, IClusterEventBus eventBus)
     {
         _fieldRepository = fieldRepository;
         _idempotencyStore = idempotencyStore;
-        _versionStore = versionStore;
         _eventBus = eventBus;
     }
 
@@ -135,15 +116,13 @@ public sealed class UpdateFieldCommandHandler : ICommandHandler<UpdateFieldComma
     {
         var result = await SettingsCommandHelper.ExecuteAsync(
             command,
-            AggregateType,
             "field_updated",
             "settings:field:update",
             _idempotencyStore,
-            _versionStore,
             ct => _fieldRepository.UpdateAsync(command.PrincipalId, command.Payload.FieldId, command.Payload.Name, command.Payload.SecurityLevel, command.Payload.Locked, ct),
             cancellationToken);
 
-        if (result.Accepted && result.Result is { Replay: false })
+        if (result is { Accepted: true, Result.Replay: false })
         {
             await _eventBus.PublishAsync(new SettingsFieldsChangedEvent(command.PrincipalId), cancellationToken);
         }
@@ -154,17 +133,14 @@ public sealed class UpdateFieldCommandHandler : ICommandHandler<UpdateFieldComma
 
 public sealed class DeleteFieldCommandHandler : ICommandHandler<DeleteFieldCommand, SettingsCommandResult>
 {
-    private const string AggregateType = "settings";
     private readonly ISettingsFieldRepository _fieldRepository;
     private readonly IIdempotencyStore _idempotencyStore;
-    private readonly IAggregateVersionStore _versionStore;
     private readonly IClusterEventBus _eventBus;
 
-    public DeleteFieldCommandHandler(ISettingsFieldRepository fieldRepository, IIdempotencyStore idempotencyStore, IAggregateVersionStore versionStore, IClusterEventBus eventBus)
+    public DeleteFieldCommandHandler(ISettingsFieldRepository fieldRepository, IIdempotencyStore idempotencyStore, IClusterEventBus eventBus)
     {
         _fieldRepository = fieldRepository;
         _idempotencyStore = idempotencyStore;
-        _versionStore = versionStore;
         _eventBus = eventBus;
     }
 
@@ -172,15 +148,13 @@ public sealed class DeleteFieldCommandHandler : ICommandHandler<DeleteFieldComma
     {
         var result = await SettingsCommandHelper.ExecuteAsync(
             command,
-            AggregateType,
             "field_deleted",
             "settings:field:delete",
             _idempotencyStore,
-            _versionStore,
             ct => _fieldRepository.DeleteAsync(command.PrincipalId, command.Payload.FieldId, ct),
             cancellationToken);
 
-        if (result.Accepted && result.Result is { Replay: false })
+        if (result is { Accepted: true, Result.Replay: false })
         {
             await _eventBus.PublishAsync(new SettingsFieldsChangedEvent(command.PrincipalId), cancellationToken);
         }
@@ -191,17 +165,14 @@ public sealed class DeleteFieldCommandHandler : ICommandHandler<DeleteFieldComma
 
 public sealed class RelocateFieldCommandHandler : ICommandHandler<RelocateFieldCommand, SettingsCommandResult>
 {
-    private const string AggregateType = "settings";
     private readonly ISettingsFieldRepository _fieldRepository;
     private readonly IIdempotencyStore _idempotencyStore;
-    private readonly IAggregateVersionStore _versionStore;
     private readonly IClusterEventBus _eventBus;
 
-    public RelocateFieldCommandHandler(ISettingsFieldRepository fieldRepository, IIdempotencyStore idempotencyStore, IAggregateVersionStore versionStore, IClusterEventBus eventBus)
+    public RelocateFieldCommandHandler(ISettingsFieldRepository fieldRepository, IIdempotencyStore idempotencyStore, IClusterEventBus eventBus)
     {
         _fieldRepository = fieldRepository;
         _idempotencyStore = idempotencyStore;
-        _versionStore = versionStore;
         _eventBus = eventBus;
     }
 
@@ -209,15 +180,13 @@ public sealed class RelocateFieldCommandHandler : ICommandHandler<RelocateFieldC
     {
         var result = await SettingsCommandHelper.ExecuteAsync(
             command,
-            AggregateType,
             "field_relocated",
             "settings:field:relocate",
             _idempotencyStore,
-            _versionStore,
             ct => _fieldRepository.RelocateAsync(command.PrincipalId, command.Payload.FieldId, command.Payload.Index, ct),
             cancellationToken);
 
-        if (result.Accepted && result.Result is { Replay: false })
+        if (result is { Accepted: true, Result.Replay: false })
         {
             await _eventBus.PublishAsync(new SettingsFieldsChangedEvent(command.PrincipalId), cancellationToken);
         }

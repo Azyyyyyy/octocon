@@ -1,5 +1,6 @@
 using System.Net.WebSockets;
 using System.Text.Json;
+using Interfold.Api.Helpers;
 using Interfold.Domain.Accounts;
 using Interfold.Domain.Alters;
 using Interfold.Domain.Fronting;

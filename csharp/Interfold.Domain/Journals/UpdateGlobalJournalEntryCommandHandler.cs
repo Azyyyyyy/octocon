@@ -5,22 +5,17 @@ namespace Interfold.Domain.Journals;
 
 public sealed class UpdateGlobalJournalEntryCommandHandler : ICommandHandler<UpdateGlobalJournalEntryCommand, GlobalJournalCommandResult>
 {
-    private const string AggregateType = "journals";
-
     private readonly IJournalRepository _journalRepository;
     private readonly IIdempotencyStore _idempotencyStore;
-    private readonly IAggregateVersionStore _versionStore;
     private readonly IClusterEventBus _eventBus;
 
     public UpdateGlobalJournalEntryCommandHandler(
         IJournalRepository journalRepository,
         IIdempotencyStore idempotencyStore,
-        IAggregateVersionStore versionStore,
         IClusterEventBus eventBus)
     {
         _journalRepository = journalRepository;
         _idempotencyStore = idempotencyStore;
-        _versionStore = versionStore;
         _eventBus = eventBus;
     }
 
@@ -54,11 +49,6 @@ public sealed class UpdateGlobalJournalEntryCommandHandler : ICommandHandler<Upd
         if (!exists)
             return RejectInvariant(command, "journal:not_found");
 
-        var versionAdvanced = await _versionStore.TryAdvanceVersionAsync(
-            AggregateType, command.PrincipalId, command.ExpectedVersion, cancellationToken);
-        if (!versionAdvanced)
-            return await RejectStaleVersion(command, cancellationToken);
-
         var updated = await _journalRepository.UpdateGlobalAsync(command.PrincipalId, command.Payload, cancellationToken);
         if (!updated)
             return RejectInvariant(command, "journal:update_failed");
@@ -83,19 +73,10 @@ public sealed class UpdateGlobalJournalEntryCommandHandler : ICommandHandler<Upd
     private static CommandExecutionResult<GlobalJournalCommandResult> RejectDuplicate(
         CommandEnvelope<UpdateGlobalJournalEntryCommand> command, string entityRef) =>
         CommandExecutionResult<GlobalJournalCommandResult>.Rejected(
-            new ConflictResult(ConflictCode.ConflictDuplicate, command.OperationId, entityRef, null, "no_retry", null));
+            new ConflictResult(ConflictCode.ConflictDuplicate, command.OperationId, entityRef, "no_retry"));
 
     private static CommandExecutionResult<GlobalJournalCommandResult> RejectInvariant(
         CommandEnvelope<UpdateGlobalJournalEntryCommand> command, string entityRef) =>
         CommandExecutionResult<GlobalJournalCommandResult>.Rejected(
-            new ConflictResult(ConflictCode.ConflictInvariant, command.OperationId, entityRef, null, "manual_merge_required", null));
-
-    private async Task<CommandExecutionResult<GlobalJournalCommandResult>> RejectStaleVersion(
-        CommandEnvelope<UpdateGlobalJournalEntryCommand> command, CancellationToken cancellationToken)
-    {
-        var current = await _versionStore.GetVersionAsync(AggregateType, command.PrincipalId, cancellationToken);
-        return CommandExecutionResult<GlobalJournalCommandResult>.Rejected(
-            new ConflictResult(ConflictCode.ConflictStaleVersion, command.OperationId,
-                $"{AggregateType}:{command.PrincipalId}", current, "refresh_and_retry", null));
-    }
+            new ConflictResult(ConflictCode.ConflictInvariant, command.OperationId, entityRef, "manual_merge_required"));
 }

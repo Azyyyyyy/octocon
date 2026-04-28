@@ -1,9 +1,9 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
-using Interfold.Api;
 using Interfold.Api.Auth;
-using Microsoft.AspNetCore.Authentication;
+using Interfold.Api.Helpers;
+using Interfold.Api.Middleware;
 using Interfold.Api.Services;
 using Interfold.Api.Socket;
 using Interfold.Api.Swagger;
