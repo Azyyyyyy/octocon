@@ -10,6 +10,9 @@ using Interfold.Api.Swagger;
 using Interfold.Domain.Auth;
 using Interfold.Infrastructure.Configuration;
 using Interfold.Infrastructure.DependencyInjection;
+using Interfold.Infrastructure.InMemory;
+using Interfold.Infrastructure.Postgres;
+using Interfold.Infrastructure.Scylla;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.Extensions.Options;
@@ -20,6 +23,11 @@ using OpenTelemetry.Metrics;
 using OpenTelemetry.Trace;
 
 var builder = WebApplication.CreateBuilder(args);
+
+//Database connections which have been implemented
+ScyllaServiceCollectionExtensions.Register();
+InMemoryServiceCollectionExtensions.Register();
+PostgresServiceCollectionExtensions.Register();
 
 // --- Configuration ---
 // Register all typed options. consumed via IOptionsMonitor in services. 

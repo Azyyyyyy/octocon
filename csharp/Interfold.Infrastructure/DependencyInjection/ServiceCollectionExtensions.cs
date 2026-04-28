@@ -1,35 +1,42 @@
+using System.Collections.Concurrent;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
-using Interfold.Domain.Abstractions;
 using Interfold.Domain.Accounts;
 using Interfold.Domain.Alters;
-using Interfold.Domain.Auth;
 using Interfold.Domain.Friendships;
 using Interfold.Domain.Fronting;
-using Interfold.Domain.InMemory;
 using Interfold.Domain.Journals;
 using Interfold.Domain.Polls;
-using Interfold.Domain.Settings;
 using Interfold.Domain.Settings.Handlers;
 using Interfold.Domain.Tags;
 using Interfold.Infrastructure.Configuration;
 using Interfold.Infrastructure.Persistence;
-using Interfold.Infrastructure.Persistence.Bootstrap;
-using Interfold.Infrastructure.Persistence.Postgres;
-using Interfold.Infrastructure.Persistence.Scylla;
 
 namespace Interfold.Infrastructure.DependencyInjection;
 
 public static partial class ServiceCollectionExtensions
 {
+    private static readonly ConcurrentDictionary<PersistenceMode, List<Func<IServiceCollection, PersistenceConfiguration, IServiceCollection>>> PersistenceReg = [];
+
+    internal static void AddPersistenceMode(PersistenceMode persistenceMode, Func<IServiceCollection, PersistenceConfiguration, IServiceCollection> reg)
+    {
+        if (!PersistenceReg.TryGetValue(persistenceMode, out var regs))
+        {
+            regs = [];
+            PersistenceReg.GetOrAdd(persistenceMode, regs);
+        }
+
+        regs.Add(reg);
+    }
+    
     public static IServiceCollection AddInterfoldPersistence(
         this IServiceCollection services,
         PersistenceMode mode,
         PersistenceConfiguration configuration
     ) => AddInterfoldPersistence(services, mode, cfg =>
     {
-        cfg.DefaultRegion = configuration.DefaultRegion;
-        cfg.CompatibilityMode = configuration.CompatibilityMode;
+        cfg.DefaultRegion            = configuration.DefaultRegion;
+        cfg.CompatibilityMode        = configuration.CompatibilityMode;
         cfg.PostgresConnectionString = configuration.PostgresConnectionString;
         cfg.ScyllaKeyspace           = configuration.ScyllaKeyspace;
         cfg.ScyllaLocalDatacenter    = configuration.ScyllaLocalDatacenter;
@@ -71,85 +78,22 @@ public static partial class ServiceCollectionExtensions
 
         services.AddSingleton(options);
 
-        return mode switch
+        if (!Enum.IsDefined(mode))
         {
-            PersistenceMode.InMemory => services
-                .AddSingleton<IRegionContext>(_ => new InMemoryRegionContext(options.DefaultRegion))
-                .AddSingleton<IAccountRepository, InMemoryRegionalAccountRepository>()
-                .AddSingleton<INotificationTokenRepository, InMemoryNotificationTokenRepository>()
-                .AddSingleton<IEncryptionStateRepository, InMemoryEncryptionStateRepository>()
-                .AddSingleton<ISettingsFieldRepository, InMemorySettingsFieldRepository>()
-                .AddSingleton<IPollRepository, InMemoryPollRepository>()
-                .AddSingleton<IAlterRepository>(sp => new InMemoryRegionalAlterRepository(
-                    sp.GetRequiredService<IRegionContext>(),
-                    sp.GetRequiredService<IFriendshipRepository>(),
-                    sp.GetRequiredService<ISettingsFieldRepository>(),
-                    sp.GetRequiredService<IPollRepository>()))
-                .AddSingleton<IFrontingRepository, InMemoryRegionalFrontingRepository>()
-                .AddSingleton<IFriendshipRepository, InMemoryFriendshipRepository>()
-                .AddSingleton<ITagRepository, InMemoryTagRepository>()
-                .AddSingleton<IJournalRepository, InMemoryJournalRepository>()
-                .AddSingleton<IIdempotencyStore, InMemoryIdempotencyStore>()
-                .AddSingleton<IAuthTokenRevocationRepository, InMemoryAuthTokenRevocationRepository>()
-                .AddSingleton<IDatabaseBootstrapHealthChecker>(sp => 
-                    new InMemoryBootstrapHealthChecker(sp.GetRequiredService<IAlterRepository>()))
-                .AddSingleton<IOperationalHealthChecker>(sp =>
-                    sp.GetRequiredService<IDatabaseBootstrapHealthChecker>() as IOperationalHealthChecker ?? throw new InvalidOperationException()),
-
-            PersistenceMode.ScyllaPostgres => AddScyllaPostgresPersistence(services, options),
-
-            _ => throw new InvalidOperationException($"Unsupported persistence mode: {mode}")
-        };
-    }
-
-    private static IServiceCollection AddScyllaPostgresPersistence(
-        IServiceCollection services,
-        PersistenceConfiguration options)
-    {
-        var pipeline = services
-                .AddSingleton<IScyllaSessionProvider, ScyllaSessionProvider>()
-                .AddSingleton<IScyllaKeyspaceResolver, ScyllaKeyspaceResolver>()
-                .AddSingleton<IRegionContext, ScyllaUserRegistryRegionContext>()
-                .AddSingleton<IAccountRepository, ScyllaAccountRepository>()
-                .AddSingleton<INotificationTokenRepository, ScyllaNotificationTokenRepository>()
-                .AddSingleton<IEncryptionStateRepository, ScyllaEncryptionStateRepository>()
-                .AddSingleton<ISettingsFieldRepository, ScyllaSettingsFieldRepository>()
-                .AddSingleton<IAlterRepository, ScyllaAlterRepository>()
-                .AddSingleton<IFrontingRepository, ScyllaFrontingRepository>()
-                .AddSingleton<IFriendshipRepository, ScyllaFriendshipRepository>()
-                .AddSingleton<ITagRepository, ScyllaTagRepository>()
-                .AddSingleton<IJournalRepository, ScyllaJournalRepository>()
-                .AddSingleton<IPollRepository, ScyllaPollRepository>();
-
-        if (!options.CompatibilityMode)
-        {
-            pipeline = pipeline
-                .AddSingleton<IPostgresConnectionFactory, PostgresConnectionFactory>()
-                .AddSingleton<IIdempotencyStore, PostgresIdempotencyStore>()
-                .AddSingleton<IAuthTokenRevocationRepository, AuthTokenRevocationRepository>()
-                .AddSingleton<IDatabaseBootstrapHealthChecker>(sp =>
-                    new ScyllaPostgresBootstrapHealthChecker(
-                        sp.GetRequiredService<IPostgresConnectionFactory>(),
-                        sp.GetRequiredService<IScyllaSessionProvider>(),
-                        sp.GetRequiredService<IAlterRepository>(),
-                        options));
-        }
-        else
-        {
-            pipeline = pipeline
-                .AddSingleton<IIdempotencyStore, InMemoryIdempotencyStore>()
-                .AddSingleton<IAuthTokenRevocationRepository, InMemoryAuthTokenRevocationRepository>()
-                .AddSingleton<IDatabaseBootstrapHealthChecker>(sp =>
-                    new ScyllaPostgresBootstrapHealthChecker(
-                        null,
-                        sp.GetRequiredService<IScyllaSessionProvider>(),
-                        sp.GetRequiredService<IAlterRepository>(),
-                        options));
+            throw new InvalidOperationException($"Unsupported persistence mode: {mode}");
         }
 
-        return pipeline
-            .AddSingleton<IOperationalHealthChecker>(sp =>
-                sp.GetRequiredService<IDatabaseBootstrapHealthChecker>() as IOperationalHealthChecker ?? throw new InvalidOperationException());
+        if (PersistenceReg.TryGetValue(mode, out var list))
+        {
+            foreach (Func<IServiceCollection, PersistenceConfiguration, IServiceCollection> func in list)
+            {
+                func(services, options);
+            }
+
+            return services;
+        }
+        
+        throw new InvalidOperationException($"Persistence mode has not yet been implemented: {mode}");
     }
 
     public static IServiceCollection AddInterfoldDomainHandlers(this IServiceCollection services) =>

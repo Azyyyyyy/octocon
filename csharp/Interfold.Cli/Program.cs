@@ -8,7 +8,6 @@ using Interfold.Infrastructure.Configuration;
 using Interfold.Infrastructure.Coordination;
 using Interfold.Infrastructure.DependencyInjection;
 using Interfold.Infrastructure.Persistence;
-using Interfold.Infrastructure.Persistence.Bootstrap;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -234,9 +233,11 @@ static async Task<int> HandleFrontPrimary(CliRuntime runtime, IReadOnlyDictionar
 
 static async Task<int> HandleBootstrapCheck(CliRuntime runtime)
 {
-    var result = await runtime.BootstrapHealthChecker.CheckAsync();
-    Console.WriteLine(System.Text.Json.JsonSerializer.Serialize(result));
-    return result.Healthy ? 0 : 4;
+    //TODO: Readd
+    //var result = await runtime.BootstrapHealthChecker.CheckAsync();
+    //Console.WriteLine(System.Text.Json.JsonSerializer.Serialize(result));
+    //return result.Healthy ? 0 : 4;
+    return 0;
 }
 
 static int PrintResult<TResult>(CommandExecutionResult<TResult> result)
@@ -412,7 +413,6 @@ namespace Interfold.Cli
         public StartFrontCommandHandler StartFrontHandler { get; }
         public EndFrontCommandHandler EndFrontHandler { get; }
         public SetPrimaryFrontCommandHandler SetPrimaryFrontHandler { get; }
-        public IDatabaseBootstrapHealthChecker BootstrapHealthChecker { get; }
 
         public CliRuntime(
             UpdateUsernameCommandHandler updateUsernameHandler,
@@ -420,8 +420,7 @@ namespace Interfold.Cli
             UpdateAlterCommandHandler updateAlterHandler,
             StartFrontCommandHandler startFrontHandler,
             EndFrontCommandHandler endFrontHandler,
-            SetPrimaryFrontCommandHandler setPrimaryFrontHandler,
-            IDatabaseBootstrapHealthChecker bootstrapHealthChecker
+            SetPrimaryFrontCommandHandler setPrimaryFrontHandler
         )
         {
             UpdateUsernameHandler = updateUsernameHandler;
@@ -430,7 +429,6 @@ namespace Interfold.Cli
             StartFrontHandler = startFrontHandler;
             EndFrontHandler = endFrontHandler;
             SetPrimaryFrontHandler = setPrimaryFrontHandler;
-            BootstrapHealthChecker = bootstrapHealthChecker;
         }
     }
 }

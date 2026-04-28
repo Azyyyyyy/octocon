@@ -1,0 +1,59 @@
+using Interfold.Infrastructure.Configuration;
+using Interfold.Infrastructure.Persistence.Transient;
+using Microsoft.Extensions.Diagnostics.HealthChecks;
+using Npgsql;
+
+namespace Interfold.Infrastructure.Postgres;
+
+public sealed class PostgresHealthChecker : IHealthCheck
+{
+    private readonly IPostgresConnectionFactory? _postgresConnectionFactory;
+    private readonly PersistenceConfiguration _options;
+
+    public PostgresHealthChecker(
+        IPostgresConnectionFactory? postgresConnectionFactory,
+        PersistenceConfiguration options
+    )
+    {
+        _postgresConnectionFactory = postgresConnectionFactory;
+        _options = options;
+    }
+
+    public async Task<HealthCheckResult> CheckHealthAsync(HealthCheckContext context, CancellationToken cancellationToken = new CancellationToken())
+    {
+        if (_options.CompatibilityMode || _postgresConnectionFactory is null)
+        {
+            return new HealthCheckResult(HealthStatus.Healthy, "Skipped in compatibility mode.");
+        }
+
+        try
+        {
+            await DatabaseTransientRetry.ExecutePostgresAsync(async () =>
+            {
+                await using var connection = await _postgresConnectionFactory.OpenConnectionAsync(cancellationToken);
+
+                await using var pingCommand = new NpgsqlCommand("SELECT 1", connection);
+                await pingCommand.ExecuteScalarAsync(cancellationToken);
+
+                await using var tableCommand = new NpgsqlCommand(
+                    "SELECT to_regclass('public.octocon_idempotency')::text",
+                    connection
+                );
+
+                var table = await tableCommand.ExecuteScalarAsync(cancellationToken) as string;
+                if (string.IsNullOrWhiteSpace(table))
+                {
+                    throw new InvalidOperationException(
+                        "Postgres table 'octocon_idempotency' was not found. Run the SQL bootstrap script first."
+                    );
+                }
+            }, _options, cancellationToken);
+
+            return new HealthCheckResult(HealthStatus.Healthy, "Connected and required table exists.");
+        }
+        catch (Exception ex)
+        {
+            return new HealthCheckResult(HealthStatus.Unhealthy, exception: ex);
+        }
+    }
+}

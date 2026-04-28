@@ -1,7 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Interfold.Domain.Abstractions;
-using Interfold.Infrastructure.Persistence.Bootstrap;
 
 namespace Interfold.Api.Controllers;
 
@@ -13,12 +12,10 @@ namespace Interfold.Api.Controllers;
 public sealed class NodeRoleController : InterfoldControllerBase
 {
     private readonly INodeRoleContext _nodeRole;
-    private readonly IOperationalHealthChecker _healthChecker;
 
-    public NodeRoleController(INodeRoleContext nodeRole, IOperationalHealthChecker healthChecker)
+    public NodeRoleController(INodeRoleContext nodeRole)
     {
         _nodeRole = nodeRole;
-        _healthChecker = healthChecker;
     }
 
     /// <summary>
@@ -34,20 +31,6 @@ public sealed class NodeRoleController : InterfoldControllerBase
         {
             role = _nodeRole.Role.ToString().ToLowerInvariant(),
             owns_singletons = _nodeRole.IsPrimary
-        });
-    }
-
-    /// <summary>
-    /// Returns the operational health status of the database and guarded paths.
-    /// </summary>
-    [HttpGet("database")]
-    public async Task<IActionResult> GetDatabaseHealth()
-    {
-        var result = await _healthChecker.CheckGuardedPathsAsync();
-        return StatusCode(result.Healthy ? 200 : 500, new
-        {
-            healthy = result.Healthy,
-            paths = result.Paths.Select(p => new { p.Path, p.Healthy, p.Message }).ToList()
         });
     }
 }
