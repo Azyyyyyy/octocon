@@ -1,5 +1,5 @@
-using Interfold.Domain.Abstractions;
-using Interfold.Infrastructure.Configuration;
+using Interfold.Contracts.Configuration;
+using Interfold.Contracts.Enums;
 
 namespace Interfold.Infrastructure.Coordination;
 

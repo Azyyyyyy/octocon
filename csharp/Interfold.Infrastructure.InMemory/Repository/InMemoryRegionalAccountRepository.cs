@@ -1,8 +1,9 @@
 using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text;
+using Interfold.Contracts.Models.Read;
 using Interfold.Domain.Abstractions;
-using Interfold.Domain.Accounts;
+using Interfold.Domain.Abstractions.Repository;
 
 namespace Interfold.Infrastructure.InMemory.Repository;
 

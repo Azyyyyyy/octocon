@@ -1,4 +1,6 @@
 using System.Collections.Concurrent;
+using Interfold.Contracts;
+using Interfold.Contracts.Configuration;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Interfold.Domain.Accounts;
@@ -7,10 +9,8 @@ using Interfold.Domain.Friendships;
 using Interfold.Domain.Fronting;
 using Interfold.Domain.Journals;
 using Interfold.Domain.Polls;
-using Interfold.Domain.Settings.Handlers;
+using Interfold.Domain.Settings;
 using Interfold.Domain.Tags;
-using Interfold.Infrastructure.Configuration;
-using Interfold.Infrastructure.Persistence;
 
 namespace Interfold.Infrastructure.DependencyInjection;
 

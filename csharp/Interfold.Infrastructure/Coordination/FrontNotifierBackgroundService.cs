@@ -1,8 +1,9 @@
 using System.Collections.Concurrent;
+using Interfold.Contracts.Events;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Interfold.Domain.Abstractions;
-using Interfold.Domain.Fronting;
+using Interfold.Domain.Abstractions.Repository;
 
 namespace Interfold.Infrastructure.Coordination;
 

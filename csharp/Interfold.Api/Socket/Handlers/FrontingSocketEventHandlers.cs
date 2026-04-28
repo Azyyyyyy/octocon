@@ -1,4 +1,5 @@
-using Interfold.Domain.Fronting;
+using Interfold.Contracts.Events;
+using Interfold.Domain.Abstractions.Repository;
 
 namespace Interfold.Api.Socket.Handlers;
 

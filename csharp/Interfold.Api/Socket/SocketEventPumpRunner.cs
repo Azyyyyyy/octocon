@@ -1,13 +1,7 @@
 using Interfold.Api.Socket.Handlers;
+using Interfold.Contracts.Events;
 using Interfold.Domain.Abstractions;
-using Interfold.Domain.Accounts;
-using Interfold.Domain.Alters;
-using Interfold.Domain.Friendships;
-using Interfold.Domain.Fronting;
-using Interfold.Domain.Journals;
-using Interfold.Domain.Polls;
-using Interfold.Domain.Settings;
-using Interfold.Domain.Tags;
+using Interfold.Domain.Abstractions.Repository;
 
 namespace Interfold.Api.Socket;
 

@@ -3,10 +3,9 @@ using Microsoft.AspNetCore.Authentication;
 using Microsoft.Extensions.Options;
 using Microsoft.AspNetCore.Mvc;
 using Interfold.Contracts.Operations;
-using Interfold.Domain.Accounts;
-using Interfold.Domain.Auth;
 using Interfold.Api.Services;
-using Interfold.Infrastructure.Configuration;
+using Interfold.Contracts.Configuration;
+using Interfold.Domain.Abstractions.Repository;
 using Interfold.Infrastructure;
 
 namespace Interfold.Api.Controllers;

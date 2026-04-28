@@ -1,11 +1,9 @@
 using System.Net.WebSockets;
 using System.Text.Json;
 using Interfold.Api.Helpers;
-using Interfold.Domain.Accounts;
-using Interfold.Domain.Alters;
-using Interfold.Domain.Fronting;
-using Interfold.Domain.Settings;
-using Interfold.Domain.Tags;
+using Interfold.Contracts.Models;
+using Interfold.Contracts.Models.Read;
+using Interfold.Domain.Abstractions.Repository;
 
 namespace Interfold.Api.Socket;
 

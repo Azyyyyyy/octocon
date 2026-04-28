@@ -1,7 +1,8 @@
+using Interfold.Contracts.Configuration;
+using Interfold.Contracts.Enums;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Interfold.Domain.Abstractions;
-using Interfold.Infrastructure.Configuration;
 using Interfold.Infrastructure.Coordination;
 
 namespace Interfold.Infrastructure.DependencyInjection;

@@ -1,16 +1,15 @@
-﻿using Interfold.Domain.Abstractions;
-using Interfold.Domain.Auth;
-using Interfold.Infrastructure.Configuration;
+﻿using Interfold.Contracts;
+using Interfold.Contracts.Configuration;
+using Interfold.Domain.Abstractions;
+using Interfold.Domain.Abstractions.Repository;
 using Interfold.Infrastructure.DependencyInjection;
-using Interfold.Infrastructure.Persistence;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Interfold.Infrastructure.Postgres;
 
-public class PostgresServiceCollectionExtensions
+public static class PostgresServiceCollectionExtensions
 {
-    private static bool _added = false;
-    
+    private static bool _added;
     public static void Register()
     {
         if (!_added)

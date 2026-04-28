@@ -1,5 +1,7 @@
 using System.Collections.Concurrent;
-using Interfold.Domain.Journals;
+using Interfold.Contracts.Models.Commands;
+using Interfold.Contracts.Models.Read;
+using Interfold.Domain.Abstractions.Repository;
 
 namespace Interfold.Infrastructure.InMemory.Repository;
 

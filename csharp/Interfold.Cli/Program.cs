@@ -1,13 +1,14 @@
 using Interfold.Cli;
+using Interfold.Contracts;
+using Interfold.Contracts.Configuration;
+using Interfold.Contracts.Models;
+using Interfold.Contracts.Models.Commands;
 using Interfold.Contracts.Operations;
-using Interfold.Domain.Abstractions;
 using Interfold.Domain.Accounts;
 using Interfold.Domain.Alters;
 using Interfold.Domain.Fronting;
-using Interfold.Infrastructure.Configuration;
 using Interfold.Infrastructure.Coordination;
 using Interfold.Infrastructure.DependencyInjection;
-using Interfold.Infrastructure.Persistence;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 

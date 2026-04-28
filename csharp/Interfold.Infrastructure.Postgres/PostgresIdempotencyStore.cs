@@ -1,6 +1,7 @@
+using Interfold.Contracts.Configuration;
+using Interfold.Contracts.Models;
 using Interfold.Domain.Abstractions;
-using Interfold.Infrastructure.Configuration;
-using Interfold.Infrastructure.Persistence.Transient;
+using Interfold.Infrastructure.Persistence;
 using Npgsql;
 
 namespace Interfold.Infrastructure.Postgres;

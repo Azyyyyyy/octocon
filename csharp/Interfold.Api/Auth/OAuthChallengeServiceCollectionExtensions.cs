@@ -1,4 +1,4 @@
-using Interfold.Infrastructure.Configuration;
+using Interfold.Infrastructure.DependencyInjection;
 
 namespace Interfold.Api.Auth;
 

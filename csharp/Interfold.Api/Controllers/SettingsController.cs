@@ -5,11 +5,13 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Interfold.Api.Services;
+using Interfold.Contracts;
+using Interfold.Contracts.Models.Commands;
 using Interfold.Contracts.Operations;
 using Interfold.Domain.Abstractions;
+using Interfold.Domain.Abstractions.Repository;
 using Interfold.Domain.Accounts;
 using Interfold.Domain.Settings;
-using Interfold.Domain.Settings.Handlers;
 
 namespace Interfold.Api.Controllers;
 
@@ -194,14 +196,14 @@ public sealed class SettingsController : InterfoldControllerBase
         if (!TryResolveRecoveryCode(req.RecoveryCode, out var recoveryCode, out var decryptionErrorCode))
             return BadRequest(new { error = "Failed to decrypt recovery code.", code = decryptionErrorCode });
 
-        var envelope = new CommandEnvelope<Domain.Settings.SetupEncryptionCommand>(
+        var envelope = new CommandEnvelope<SetupEncryptionCommand>(
             OperationIds.SettingsEncryptionSetup,
             Guid.NewGuid(),
             PrincipalId: PrincipalId,
             IdempotencyKey: GetIdempotencyKey(req.IdempotencyKey),
             ExpectedVersion: req.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
-            Payload: new Domain.Settings.SetupEncryptionCommand(recoveryCode)
+            Payload: new SetupEncryptionCommand(recoveryCode)
         );
 
         var execution = await _setupEncryptionHandler.HandleAsync(envelope, ct);
@@ -217,14 +219,14 @@ public sealed class SettingsController : InterfoldControllerBase
         if (!TryResolveRecoveryCode(req.RecoveryCode, out var recoveryCode, out var decryptionErrorCode))
             return BadRequest(new { error = "Failed to decrypt recovery code.", code = decryptionErrorCode });
 
-        var envelope = new CommandEnvelope<Domain.Settings.RecoverEncryptionCommand>(
+        var envelope = new CommandEnvelope<RecoverEncryptionCommand>(
             OperationIds.SettingsEncryptionRecover,
             Guid.NewGuid(),
             PrincipalId: PrincipalId,
             IdempotencyKey: GetIdempotencyKey(req.IdempotencyKey),
             ExpectedVersion: req.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
-            Payload: new Domain.Settings.RecoverEncryptionCommand(recoveryCode)
+            Payload: new RecoverEncryptionCommand(recoveryCode)
         );
 
         var execution = await _recoverEncryptionHandler.HandleAsync(envelope, ct);

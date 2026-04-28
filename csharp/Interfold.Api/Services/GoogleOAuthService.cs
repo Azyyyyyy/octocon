@@ -1,6 +1,6 @@
 using System.Text.Json;
+using Interfold.Contracts.Configuration;
 using Microsoft.Extensions.Options;
-using Interfold.Infrastructure.Configuration;
 
 namespace Interfold.Api.Services;
 

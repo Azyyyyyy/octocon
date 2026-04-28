@@ -1,6 +1,6 @@
 ﻿using Cassandra;
-using Interfold.Infrastructure.Configuration;
-using Interfold.Infrastructure.Scylla.Repository;
+using Interfold.Contracts.Configuration;
+using Interfold.Infrastructure.Scylla;
 using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Interfold.IntegrationTests.Services.Scylla;

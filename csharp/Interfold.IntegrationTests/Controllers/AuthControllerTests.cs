@@ -1,7 +1,7 @@
 ﻿using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
-using Interfold.Infrastructure.Configuration;
+using Interfold.Contracts.Configuration;
 using Interfold.IntegrationTests.Attributes;
 using Interfold.IntegrationTests.TestServices;
 using Microsoft.AspNetCore.Mvc.Testing;

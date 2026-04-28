@@ -4,9 +4,11 @@ using Microsoft.Extensions.Options;
 using Microsoft.AspNetCore.Mvc;
 using Interfold.Domain.Abstractions;
 using Interfold.Contracts.Operations;
-using Interfold.Domain.Accounts;
 using Interfold.Api.Services;
-using Interfold.Infrastructure.Configuration;
+using Interfold.Contracts.Configuration;
+using Interfold.Contracts.Events;
+using Interfold.Contracts.Models.Read;
+using Interfold.Domain.Abstractions.Repository;
 
 namespace Interfold.Api.Controllers;
 

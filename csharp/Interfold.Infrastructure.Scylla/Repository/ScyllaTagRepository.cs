@@ -1,8 +1,10 @@
 using Cassandra;
-using Interfold.Domain.Alters;
-using Interfold.Domain.Tags;
-using Interfold.Infrastructure.Configuration;
-using Interfold.Infrastructure.Persistence.Transient;
+using Interfold.Contracts.Configuration;
+using Interfold.Contracts.Models;
+using Interfold.Contracts.Models.Commands;
+using Interfold.Contracts.Models.Read;
+using Interfold.Domain.Abstractions.Repository;
+using Interfold.Infrastructure.Persistence;
 
 namespace Interfold.Infrastructure.Scylla.Repository;
 

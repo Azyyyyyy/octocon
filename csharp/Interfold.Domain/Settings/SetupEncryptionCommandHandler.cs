@@ -1,0 +1,101 @@
+using System.Security.Cryptography;
+using System.Text;
+using Interfold.Contracts;
+using Interfold.Contracts.Events;
+using Interfold.Contracts.Models;
+using Interfold.Contracts.Models.Commands;
+using Interfold.Contracts.Operations;
+using Interfold.Domain.Abstractions;
+using Interfold.Domain.Abstractions.Repository;
+
+namespace Interfold.Domain.Settings;
+
+public sealed class SetupEncryptionCommandHandler : ICommandHandler<SetupEncryptionCommand, EncryptionCommandResult>
+{
+    private readonly IEncryptionStateRepository _repository;
+    private readonly IIdempotencyStore _idempotencyStore;
+    private readonly IClusterEventBus _eventBus;
+
+    public SetupEncryptionCommandHandler(
+        IEncryptionStateRepository repository,
+        IIdempotencyStore idempotencyStore,
+        IClusterEventBus eventBus)
+    {
+        _repository = repository;
+        _idempotencyStore = idempotencyStore;
+        _eventBus = eventBus;
+    }
+
+    public async Task<CommandExecutionResult<EncryptionCommandResult>> HandleAsync(
+        CommandEnvelope<SetupEncryptionCommand> command,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(command.Payload.RecoveryCode))
+            return RejectInvariant(command, "settings:recovery_code_invalid");
+
+        var payloadJson = CommandSerialization.Serialize(command.Payload);
+        var payloadHash = CommandSerialization.Hash(payloadJson);
+
+        var previous = await _idempotencyStore.FindAsync(
+            command.PrincipalId,
+            command.OperationId,
+            command.IdempotencyKey,
+            cancellationToken);
+
+        if (previous is not null)
+        {
+            if (!string.Equals(previous.PayloadHash, payloadHash, StringComparison.Ordinal))
+                return RejectDuplicate(command, "settings:encryption:setup");
+
+            var replay = CommandSerialization.Deserialize<EncryptionCommandResult>(previous.OutcomePayload);
+            if (replay is not null)
+                return CommandExecutionResult<EncryptionCommandResult>.Success(replay with { Replay = true });
+        }
+        
+        var key = DeriveKey(command.PrincipalId, command.Payload.RecoveryCode);
+        var checksum = DeriveChecksum(key);
+
+        var persisted = await _repository.UpsertAsync(command.PrincipalId, true, checksum, cancellationToken);
+        if (!persisted)
+            return RejectInvariant(command, "settings:encryption_setup_failed");
+
+        var result = new EncryptionCommandResult(command.PrincipalId, "encryption_setup", key, Replay: false);
+        var resultJson = CommandSerialization.Serialize(result);
+
+        await _idempotencyStore.SaveAsync(
+            command.PrincipalId,
+            command.OperationId,
+            command.IdempotencyKey,
+            payloadHash,
+            CommandSerialization.Hash(resultJson),
+            resultJson,
+            cancellationToken);
+
+        await _eventBus.PublishAsync(new SettingsProfileUpdatedEvent(command.PrincipalId, false), cancellationToken);
+        return CommandExecutionResult<EncryptionCommandResult>.Success(result);
+    }
+
+    private static string DeriveKey(string systemId, string recoveryCode)
+    {
+        var input = Encoding.UTF8.GetBytes($"{systemId}:{recoveryCode}");
+        return Convert.ToBase64String(SHA256.HashData(input));
+    }
+
+    private static string DeriveChecksum(string key)
+    {
+        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(key));
+        return Convert.ToBase64String(hash)[..9];
+    }
+
+    private static CommandExecutionResult<EncryptionCommandResult> RejectDuplicate(
+        CommandEnvelope<SetupEncryptionCommand> command,
+        string entityRef) =>
+        CommandExecutionResult<EncryptionCommandResult>.Rejected(
+            new ConflictResult(ConflictCode.ConflictDuplicate, command.OperationId, entityRef, "no_retry"));
+
+    private static CommandExecutionResult<EncryptionCommandResult> RejectInvariant(
+        CommandEnvelope<SetupEncryptionCommand> command,
+        string entityRef) =>
+        CommandExecutionResult<EncryptionCommandResult>.Rejected(
+            new ConflictResult(ConflictCode.ConflictInvariant, command.OperationId, entityRef, "manual_merge_required"));
+}

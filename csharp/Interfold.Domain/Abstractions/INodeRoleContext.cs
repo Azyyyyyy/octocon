@@ -1,3 +1,5 @@
+using Interfold.Contracts.Enums;
+
 namespace Interfold.Domain.Abstractions;
 
 /// <summary>

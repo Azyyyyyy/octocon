@@ -1,5 +1,5 @@
 using System.Text.RegularExpressions;
-using Interfold.Infrastructure.Configuration;
+using Interfold.Contracts.Configuration;
 using Microsoft.Extensions.Options;
 
 namespace Interfold.Api.Services;

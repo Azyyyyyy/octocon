@@ -1,9 +1,9 @@
 ﻿using Interfold.Infrastructure;
 using Microsoft.AspNetCore.Hosting;
 using System.Runtime.CompilerServices;
+using Interfold.Contracts.Configuration;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
-using Interfold.Infrastructure.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 

@@ -1,9 +1,9 @@
 using Cassandra;
-using Interfold.Domain.Alters;
-using Interfold.Domain.Fronting;
-using Interfold.Domain.Settings;
-using Interfold.Infrastructure.Configuration;
-using Interfold.Infrastructure.Persistence.Transient;
+using Interfold.Contracts.Configuration;
+using Interfold.Contracts.Models;
+using Interfold.Contracts.Models.Read;
+using Interfold.Domain.Abstractions.Repository;
+using Interfold.Infrastructure.Persistence;
 using Microsoft.Extensions.Logging;
 using static Interfold.Infrastructure.Scylla.Repository.ScyllaAlterRepository;
 

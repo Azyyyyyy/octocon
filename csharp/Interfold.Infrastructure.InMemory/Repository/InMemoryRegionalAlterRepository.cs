@@ -1,9 +1,9 @@
 using System.Collections.Concurrent;
+using Interfold.Contracts.Models;
+using Interfold.Contracts.Models.Commands;
+using Interfold.Contracts.Models.Read;
 using Interfold.Domain.Abstractions;
-using Interfold.Domain.Alters;
-using Interfold.Domain.Friendships;
-using Interfold.Domain.Polls;
-using Interfold.Domain.Settings;
+using Interfold.Domain.Abstractions.Repository;
 
 namespace Interfold.Infrastructure.InMemory.Repository;
 

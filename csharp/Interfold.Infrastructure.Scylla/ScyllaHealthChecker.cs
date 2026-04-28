@@ -1,7 +1,6 @@
 ﻿using Cassandra;
-using Interfold.Infrastructure.Configuration;
-using Interfold.Infrastructure.Persistence.Transient;
-using Interfold.Infrastructure.Scylla.Repository;
+using Interfold.Contracts.Configuration;
+using Interfold.Infrastructure.Persistence;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 
 namespace Interfold.Infrastructure.Scylla;

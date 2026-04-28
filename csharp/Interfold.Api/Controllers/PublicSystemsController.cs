@@ -1,9 +1,5 @@
+using Interfold.Domain.Abstractions.Repository;
 using Microsoft.AspNetCore.Mvc;
-using Interfold.Domain.Accounts;
-using Interfold.Domain.Alters;
-using Interfold.Domain.Friendships;
-using Interfold.Domain.Fronting;
-using Interfold.Domain.Tags;
 
 namespace Interfold.Api.Controllers;
 

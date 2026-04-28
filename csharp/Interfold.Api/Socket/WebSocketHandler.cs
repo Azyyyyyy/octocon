@@ -1,22 +1,14 @@
 using System.Net.WebSockets;
 using System.IdentityModel.Tokens.Jwt;
 using Interfold.Domain.Abstractions;
-using Interfold.Domain.Auth;
-using Interfold.Domain.Fronting;
-using Interfold.Domain.Alters;
-using Interfold.Domain.Tags;
-using Interfold.Domain.Settings;
-using Interfold.Domain.Friendships;
 using System.Text.Json;
 using System.Text;
-using Interfold.Domain.Accounts;
 using Microsoft.IdentityModel.Tokens;
-using Interfold.Domain.Journals;
-using Interfold.Domain.Polls;
 using System.Security.Claims;
 using System.Security.Cryptography;
 using Interfold.Api.Helpers;
-using Interfold.Infrastructure.Configuration;
+using Interfold.Contracts.Configuration;
+using Interfold.Domain.Abstractions.Repository;
 using Microsoft.Extensions.Options;
 
 namespace Interfold.Api.Socket;

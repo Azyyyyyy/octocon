@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
-using Interfold.Domain.Friendships;
+using Interfold.Contracts.Models.Read;
+using Interfold.Domain.Abstractions.Repository;
 
 namespace Interfold.Infrastructure.InMemory.Repository;
 

@@ -1,7 +1,7 @@
 ﻿using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
-using Interfold.Infrastructure.Configuration;
+using Interfold.Contracts.Configuration;
 
 namespace Interfold.Infrastructure;
 

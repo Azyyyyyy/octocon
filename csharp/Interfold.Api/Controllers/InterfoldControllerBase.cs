@@ -6,7 +6,8 @@ using Microsoft.AspNetCore.Mvc;
 using Interfold.Contracts.Operations;
 using Interfold.Domain.Abstractions;
 using Interfold.Contracts;
-using Interfold.Domain.Alters;
+using Interfold.Contracts.Models;
+using Interfold.Domain.Abstractions.Repository;
 
 namespace Interfold.Api.Controllers;
 

@@ -1,10 +1,11 @@
 using System.Collections.Concurrent;
 using Cassandra;
-using Interfold.Domain.Alters;
-using Interfold.Domain.Polls;
-using Interfold.Domain.Settings;
-using Interfold.Infrastructure.Configuration;
-using Interfold.Infrastructure.Persistence.Transient;
+using Interfold.Contracts.Configuration;
+using Interfold.Contracts.Models;
+using Interfold.Contracts.Models.Commands;
+using Interfold.Contracts.Models.Read;
+using Interfold.Domain.Abstractions.Repository;
+using Interfold.Infrastructure.Persistence;
 using Microsoft.Extensions.Logging;
 
 namespace Interfold.Infrastructure.Scylla.Repository;

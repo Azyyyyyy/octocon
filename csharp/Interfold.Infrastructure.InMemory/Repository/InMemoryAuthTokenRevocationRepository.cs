@@ -1,4 +1,4 @@
-using Interfold.Domain.Auth;
+using Interfold.Domain.Abstractions.Repository;
 
 namespace Interfold.Infrastructure.InMemory.Repository;
 

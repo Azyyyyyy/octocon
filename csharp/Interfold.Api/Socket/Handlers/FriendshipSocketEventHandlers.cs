@@ -1,6 +1,7 @@
 using Interfold.Api.Helpers;
-using Interfold.Domain.Abstractions;
-using Interfold.Domain.Friendships;
+using Interfold.Contracts.Events;
+using Interfold.Contracts.Models.Read;
+using Interfold.Domain.Abstractions.Repository;
 
 namespace Interfold.Api.Socket.Handlers;
 

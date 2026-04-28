@@ -1,3 +1,5 @@
+using Interfold.Contracts.Models;
+
 namespace Interfold.Domain.Abstractions;
 
 public interface IIdempotencyStore
@@ -19,5 +21,3 @@ public interface IIdempotencyStore
         CancellationToken cancellationToken = default
     );
 }
-
-public sealed record IdempotencyMatch(string PayloadHash, string OutcomeHash, string? OutcomePayload);
