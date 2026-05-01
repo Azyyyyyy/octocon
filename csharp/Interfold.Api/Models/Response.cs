@@ -42,7 +42,7 @@ public class Response<TValue> : OneOfBase<SuccessResponse<TValue>, ErrorResponse
     {
         return new ObjectResult(Value)
         {
-            DeclaredType = IsT0 ? typeof(TValue) : typeof(ErrorResponse),
+            DeclaredType = IsT0 ? typeof(SuccessResponse<TValue>) : typeof(ErrorResponse),
             StatusCode = IsT0 ? 200 : (int)AsT1.StatusCode
         };
     }
