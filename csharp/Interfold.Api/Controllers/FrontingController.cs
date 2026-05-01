@@ -1,6 +1,6 @@
 using Microsoft.AspNetCore.Mvc;
-using System.Text.Json.Serialization;
 using Interfold.Contracts.Models.Commands;
+using Interfold.Contracts.Models.Read;
 using Interfold.Contracts.Operations;
 using Interfold.Domain.Abstractions.Repository;
 using Interfold.Domain.Fronting;
@@ -52,7 +52,6 @@ public sealed class FrontingController : InterfoldControllerBase
             Guid.NewGuid(),
             PrincipalId: PrincipalId,
             IdempotencyKey: GetIdempotencyKey(req.IdempotencyKey),
-            ExpectedVersion: req.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
             Payload: payload
         );
@@ -71,7 +70,6 @@ public sealed class FrontingController : InterfoldControllerBase
             OperationIds.FrontStart, Guid.NewGuid(),
             PrincipalId: PrincipalId,
             IdempotencyKey: GetIdempotencyKey(req.IdempotencyKey),
-            ExpectedVersion: req.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
             Payload: new StartFrontCommand(alterId, req.Comment)
         );
@@ -100,7 +98,6 @@ public sealed class FrontingController : InterfoldControllerBase
             OperationIds.FrontEnd, Guid.NewGuid(),
             PrincipalId: PrincipalId,
             IdempotencyKey: GetIdempotencyKey(req.IdempotencyKey),
-            ExpectedVersion: req.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
             Payload: new EndFrontCommand(alterId)
         );
@@ -119,7 +116,6 @@ public sealed class FrontingController : InterfoldControllerBase
             Guid.NewGuid(),
             PrincipalId: PrincipalId,
             IdempotencyKey: GetIdempotencyKey(req.IdempotencyKey),
-            ExpectedVersion: req.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
             Payload: new SetFrontCommand(alterId, req.Comment)
         );
@@ -137,7 +133,6 @@ public sealed class FrontingController : InterfoldControllerBase
             OperationIds.FrontPrimary, Guid.NewGuid(),
             PrincipalId: PrincipalId,
             IdempotencyKey: GetIdempotencyKey(req.IdempotencyKey),
-            ExpectedVersion: req.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
             Payload: new SetPrimaryFrontCommand(alterId)
         );
@@ -203,14 +198,13 @@ public sealed class FrontingController : InterfoldControllerBase
     }
 
     [HttpDelete("{id}")]
-    public async Task<IActionResult> Delete(string id, [FromBody] FrontCommandRequest? req, CancellationToken ct)
+    public async Task<IActionResult> Delete(string id, [FromBody] BaseRequest? req, CancellationToken ct)
     {
         var envelope = new CommandEnvelope<DeleteFrontByIdCommand>(
             OperationIds.FrontDelete,
             Guid.NewGuid(),
             PrincipalId: PrincipalId,
             IdempotencyKey: GetIdempotencyKey(req?.IdempotencyKey),
-            ExpectedVersion: req?.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
             Payload: new DeleteFrontByIdCommand(id)
         );
@@ -227,7 +221,6 @@ public sealed class FrontingController : InterfoldControllerBase
             Guid.NewGuid(),
             PrincipalId: PrincipalId,
             IdempotencyKey: GetIdempotencyKey(req.IdempotencyKey),
-            ExpectedVersion: req.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
             Payload: new UpdateFrontCommentCommand(id, req.Comment)
         );
@@ -236,65 +229,3 @@ public sealed class FrontingController : InterfoldControllerBase
         return result is OkObjectResult ? NoContent() : result;
     }
 }
-
-public sealed record FrontBulkUpdateRequest(
-    IReadOnlyList<FrontStartEntry> Start,
-    IReadOnlyList<int> End,
-    string? IdempotencyKey = null,
-    long? ExpectedVersion = null
-);
-
-public sealed record FrontStartEntry(int AlterId, string? Comment = null);
-
-public sealed record FrontStartRequest(
-    int? AlterId,
-    [property: JsonPropertyName("id")] int? Id = null,
-    string? Comment = null,
-    string? IdempotencyKey = null,
-    long? ExpectedVersion = null
-)
-{
-    public int ResolveAlterId() => AlterId ?? Id ?? 0;
-}
-
-public sealed record FrontEndRequest(
-    int? AlterId,
-    [property: JsonPropertyName("id")] int? Id = null,
-    string? IdempotencyKey = null,
-    long? ExpectedVersion = null
-)
-{
-    public int ResolveAlterId() => AlterId ?? Id ?? 0;
-}
-
-public sealed record FrontPrimaryRequest(
-    int? AlterId = null,
-    [property: JsonPropertyName("id")] int? Id = null,
-    string? IdempotencyKey = null,
-    long? ExpectedVersion = null
-)
-{
-    public int? ResolveAlterId() => AlterId ?? Id;
-}
-
-public sealed record FrontSetRequest(
-    int? AlterId,
-    [property: JsonPropertyName("id")] int? Id = null,
-    string? Comment = null,
-    string? IdempotencyKey = null,
-    long? ExpectedVersion = null
-)
-{
-    public int ResolveAlterId() => AlterId ?? Id ?? 0;
-}
-
-public sealed record FrontCommentRequest(
-    string Comment,
-    string? IdempotencyKey = null,
-    long? ExpectedVersion = null
-);
-
-public sealed record FrontCommandRequest(
-    string? IdempotencyKey = null,
-    long? ExpectedVersion = null
-);

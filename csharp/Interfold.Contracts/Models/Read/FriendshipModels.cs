@@ -50,6 +50,7 @@ public sealed record FriendshipRequestModel(
     DateTimeOffset DateSent
 );
 
+
 public sealed record FriendRequestIndexReadModel(
     IReadOnlyList<FriendRequestReadModel> Incoming,
     IReadOnlyList<FriendRequestReadModel> Outgoing

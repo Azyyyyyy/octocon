@@ -231,10 +231,10 @@ public sealed class InMemoryJournalRepository : IJournalRepository
         );
     }
 
-    public Task<IReadOnlyList<GlobalJournalReadModel>> ListGlobalAsync(string systemId, CancellationToken cancellationToken = default)
+    public Task<IReadOnlyList<JournalReadModel>> ListGlobalAsync(string systemId, CancellationToken cancellationToken = default)
     {
         if (!_bySystem.TryGetValue(systemId, out var store))
-            return Task.FromResult<IReadOnlyList<GlobalJournalReadModel>>(Array.Empty<GlobalJournalReadModel>());
+            return Task.FromResult<IReadOnlyList<JournalReadModel>>(Array.Empty<JournalReadModel>());
 
         var entries = store.Values
             .OrderByDescending(e => e.EntryId)
@@ -242,7 +242,7 @@ public sealed class InMemoryJournalRepository : IJournalRepository
             {
                 var (pinned, locked) = GetGlobalState(systemId, e.EntryId);
                 var alterIds = GetGlobalAlterIds(systemId, e.EntryId);
-                return new GlobalJournalReadModel(
+                return new JournalReadModel(
                     e.EntryId,
                     e.UserId,
                     e.Title,
@@ -256,18 +256,18 @@ public sealed class InMemoryJournalRepository : IJournalRepository
             })
             .ToArray();
 
-        return Task.FromResult<IReadOnlyList<GlobalJournalReadModel>>(entries);
+        return Task.FromResult<IReadOnlyList<JournalReadModel>>(entries);
     }
 
-    public Task<GlobalJournalReadModel?> GetGlobalAsync(string systemId, string entryId, CancellationToken cancellationToken = default)
+    public Task<JournalReadModel?> GetGlobalAsync(string systemId, string entryId, CancellationToken cancellationToken = default)
     {
         if (!_bySystem.TryGetValue(systemId, out var store) || !store.TryGetValue(entryId, out var entry))
-            return Task.FromResult<GlobalJournalReadModel?>(null);
+            return Task.FromResult<JournalReadModel?>(null);
 
         var (pinned, locked) = GetGlobalState(systemId, entryId);
         var alterIds = GetGlobalAlterIds(systemId, entryId);
-        return Task.FromResult<GlobalJournalReadModel?>(
-            new GlobalJournalReadModel(
+        return Task.FromResult<JournalReadModel?>(
+            new JournalReadModel(
                 entry.EntryId,
                 entry.UserId,
                 entry.Title,

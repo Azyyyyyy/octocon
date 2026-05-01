@@ -7,6 +7,7 @@ using System.Text.Json;
 using Interfold.Api.Services;
 using Interfold.Contracts;
 using Interfold.Contracts.Models.Commands;
+using Interfold.Contracts.Models.Read;
 using Interfold.Contracts.Operations;
 using Interfold.Domain.Abstractions;
 using Interfold.Domain.Abstractions.Repository;
@@ -122,7 +123,6 @@ public sealed class SettingsController : InterfoldControllerBase
             OperationIds.SettingsUsernameUpdate, Guid.NewGuid(),
             PrincipalId: principal,
             IdempotencyKey: GetIdempotencyKey(req.IdempotencyKey),
-            ExpectedVersion: req.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
             Payload: new UpdateUsernameCommand(req.Username)
         );
@@ -139,7 +139,6 @@ public sealed class SettingsController : InterfoldControllerBase
             Guid.NewGuid(),
             PrincipalId: PrincipalId,
             IdempotencyKey: GetIdempotencyKey(req.IdempotencyKey),
-            ExpectedVersion: req.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
             Payload: new UpdateDescriptionCommand(req.Description)
         );
@@ -160,7 +159,6 @@ public sealed class SettingsController : InterfoldControllerBase
             Guid.NewGuid(),
             PrincipalId: PrincipalId,
             IdempotencyKey: GetIdempotencyKey(req.IdempotencyKey),
-            ExpectedVersion: req.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
             Payload: new AddPushTokenCommand(pushToken)
         );
@@ -181,7 +179,6 @@ public sealed class SettingsController : InterfoldControllerBase
             Guid.NewGuid(),
             PrincipalId: PrincipalId,
             IdempotencyKey: GetIdempotencyKey(req.IdempotencyKey),
-            ExpectedVersion: req.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
             Payload: new RemovePushTokenCommand(pushToken)
         );
@@ -201,7 +198,6 @@ public sealed class SettingsController : InterfoldControllerBase
             Guid.NewGuid(),
             PrincipalId: PrincipalId,
             IdempotencyKey: GetIdempotencyKey(req.IdempotencyKey),
-            ExpectedVersion: req.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
             Payload: new SetupEncryptionCommand(recoveryCode)
         );
@@ -224,7 +220,6 @@ public sealed class SettingsController : InterfoldControllerBase
             Guid.NewGuid(),
             PrincipalId: PrincipalId,
             IdempotencyKey: GetIdempotencyKey(req.IdempotencyKey),
-            ExpectedVersion: req.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
             Payload: new RecoverEncryptionCommand(recoveryCode)
         );
@@ -239,14 +234,13 @@ public sealed class SettingsController : InterfoldControllerBase
 
     //TODO: To ensure route works as expected - does not delete journal entries currently which need adding
     [HttpPost("reset-encryption")]
-    public async Task<IActionResult> ResetEncryption([FromBody] SettingsCommandRequest? req, CancellationToken ct)
+    public async Task<IActionResult> ResetEncryption([FromBody] BaseRequest? req, CancellationToken ct)
     {
         var envelope = new CommandEnvelope<ResetEncryptionCommand>(
             OperationIds.SettingsEncryptionReset,
             Guid.NewGuid(),
             PrincipalId: PrincipalId,
             IdempotencyKey: GetIdempotencyKey(req?.IdempotencyKey),
-            ExpectedVersion: req?.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
             Payload: new ResetEncryptionCommand()
         );
@@ -298,7 +292,6 @@ public sealed class SettingsController : InterfoldControllerBase
             Guid.NewGuid(),
             PrincipalId: principal,
             IdempotencyKey: GetIdempotencyKey(upload.IdempotencyKey),
-            ExpectedVersion: upload.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
             Payload: new UploadAvatarCommand(avatarUrl)
         );
@@ -323,7 +316,7 @@ public sealed class SettingsController : InterfoldControllerBase
     }
 
     [HttpDelete("avatar")]
-    public async Task<IActionResult> DeleteAvatar([FromBody] SettingsCommandRequest? req, CancellationToken ct)
+    public async Task<IActionResult> DeleteAvatar([FromBody] BaseRequest? req, CancellationToken ct)
     {
         var principal = PrincipalId;
         var currentProfile = await _accountRepository.GetPublicProfileAsync(principal, ct);
@@ -334,7 +327,6 @@ public sealed class SettingsController : InterfoldControllerBase
             Guid.NewGuid(),
             PrincipalId: principal,
             IdempotencyKey: GetIdempotencyKey(req?.IdempotencyKey),
-            ExpectedVersion: req?.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
             Payload: new DeleteAvatarCommand()
         );
@@ -365,7 +357,6 @@ public sealed class SettingsController : InterfoldControllerBase
             Guid.NewGuid(),
             PrincipalId: PrincipalId,
             IdempotencyKey: GetIdempotencyKey(req.IdempotencyKey),
-            ExpectedVersion: req.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
             Payload: new ImportPkCommand(req.Token)
         );
@@ -383,7 +374,6 @@ public sealed class SettingsController : InterfoldControllerBase
             Guid.NewGuid(),
             PrincipalId: PrincipalId,
             IdempotencyKey: GetIdempotencyKey(req.IdempotencyKey),
-            ExpectedVersion: req.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
             Payload: new ImportSpCommand(req.Token)
         );
@@ -393,14 +383,13 @@ public sealed class SettingsController : InterfoldControllerBase
     }
 
     [HttpPost("unlink_discord")]
-    public async Task<IActionResult> UnlinkDiscord([FromBody] SettingsCommandRequest? req, CancellationToken ct)
+    public async Task<IActionResult> UnlinkDiscord([FromBody] BaseRequest? req, CancellationToken ct)
     {
         var envelope = new CommandEnvelope<UnlinkDiscordCommand>(
             OperationIds.SettingsAuthUnlinkDiscord,
             Guid.NewGuid(),
             PrincipalId: PrincipalId,
             IdempotencyKey: GetIdempotencyKey(req?.IdempotencyKey),
-            ExpectedVersion: req?.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
             Payload: new UnlinkDiscordCommand()
         );
@@ -410,14 +399,13 @@ public sealed class SettingsController : InterfoldControllerBase
     }
 
     [HttpPost("unlink_email")]
-    public async Task<IActionResult> UnlinkEmail([FromBody] SettingsCommandRequest? req, CancellationToken ct)
+    public async Task<IActionResult> UnlinkEmail([FromBody] BaseRequest? req, CancellationToken ct)
     {
         var envelope = new CommandEnvelope<UnlinkEmailCommand>(
             OperationIds.SettingsAuthUnlinkEmail,
             Guid.NewGuid(),
             PrincipalId: PrincipalId,
             IdempotencyKey: GetIdempotencyKey(req?.IdempotencyKey),
-            ExpectedVersion: req?.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
             Payload: new UnlinkEmailCommand()
         );
@@ -428,14 +416,13 @@ public sealed class SettingsController : InterfoldControllerBase
 
     //TODO: To ensure route works as expected - other ones work but this one needs testing to ensure the command handler is correctly implemented
     [HttpPost("unlink_apple")]
-    public async Task<IActionResult> UnlinkApple([FromBody] SettingsCommandRequest? req, CancellationToken ct)
+    public async Task<IActionResult> UnlinkApple([FromBody] BaseRequest? req, CancellationToken ct)
     {
         var envelope = new CommandEnvelope<UnlinkAppleCommand>(
             OperationIds.SettingsAuthUnlinkApple,
             Guid.NewGuid(),
             PrincipalId: PrincipalId,
             IdempotencyKey: GetIdempotencyKey(req?.IdempotencyKey),
-            ExpectedVersion: req?.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
             Payload: new UnlinkAppleCommand()
         );
@@ -446,14 +433,13 @@ public sealed class SettingsController : InterfoldControllerBase
 
     //TODO: To ensure route works as expected
     [HttpPost("delete-account")]
-    public async Task<IActionResult> DeleteAccount([FromBody] SettingsCommandRequest? req, CancellationToken ct)
+    public async Task<IActionResult> DeleteAccount([FromBody] BaseRequest? req, CancellationToken ct)
     {
         var envelope = new CommandEnvelope<DeleteAccountCommand>(
             OperationIds.SettingsAccountDelete,
             Guid.NewGuid(),
             PrincipalId: PrincipalId,
             IdempotencyKey: GetIdempotencyKey(req?.IdempotencyKey),
-            ExpectedVersion: req?.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
             Payload: new DeleteAccountCommand()
         );
@@ -463,14 +449,13 @@ public sealed class SettingsController : InterfoldControllerBase
     }
 
     [HttpPost("wipe-alters")]
-    public async Task<IActionResult> WipeAlters([FromBody] SettingsCommandRequest? req, CancellationToken ct)
+    public async Task<IActionResult> WipeAlters([FromBody] BaseRequest? req, CancellationToken ct)
     {
         var envelope = new CommandEnvelope<WipeAltersCommand>(
             OperationIds.SettingsAltersWipe,
             Guid.NewGuid(),
             PrincipalId: PrincipalId,
             IdempotencyKey: GetIdempotencyKey(req?.IdempotencyKey),
-            ExpectedVersion: req?.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
             Payload: new WipeAltersCommand()
         );
@@ -487,7 +472,6 @@ public sealed class SettingsController : InterfoldControllerBase
             Guid.NewGuid(),
             PrincipalId: PrincipalId,
             IdempotencyKey: GetIdempotencyKey(req.IdempotencyKey),
-            ExpectedVersion: req.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
             Payload: new CreateFieldCommand(req.Name, req.Type ?? string.Empty, req.SecurityLevel ?? "private", req.Locked ?? false)
         );
@@ -514,7 +498,6 @@ public sealed class SettingsController : InterfoldControllerBase
             Guid.NewGuid(),
             PrincipalId: PrincipalId,
             IdempotencyKey: GetIdempotencyKey(req.IdempotencyKey),
-            ExpectedVersion: req.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
             Payload: new UpdateFieldCommand(id, req.Name, req.SecurityLevel, req.Locked)
         );
@@ -524,14 +507,13 @@ public sealed class SettingsController : InterfoldControllerBase
     }
 
     [HttpDelete("fields/{id}")]
-    public async Task<IActionResult> DeleteField([FromRoute] string id, [FromBody] SettingsCommandRequest? req, CancellationToken ct)
+    public async Task<IActionResult> DeleteField([FromRoute] string id, [FromBody] BaseRequest? req, CancellationToken ct)
     {
         var envelope = new CommandEnvelope<DeleteFieldCommand>(
             OperationIds.SettingsFieldDelete,
             Guid.NewGuid(),
             PrincipalId: PrincipalId,
             IdempotencyKey: GetIdempotencyKey(req?.IdempotencyKey),
-            ExpectedVersion: req?.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
             Payload: new DeleteFieldCommand(id)
         );
@@ -548,7 +530,6 @@ public sealed class SettingsController : InterfoldControllerBase
             Guid.NewGuid(),
             PrincipalId: PrincipalId,
             IdempotencyKey: GetIdempotencyKey(req.IdempotencyKey),
-            ExpectedVersion: req.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
             Payload: new RelocateFieldCommand(id, req.Index)
         );
@@ -560,11 +541,10 @@ public sealed class SettingsController : InterfoldControllerBase
     private async Task<AvatarUploadPayload> ResolveMultipartUploadAsync(CancellationToken ct)
     {
         string? idempotencyKey = null;
-        long? expectedVersion = null;
         var emptyFilePart = false;
 
         if (Request.Body is null)
-            return new AvatarUploadPayload(null, idempotencyKey, expectedVersion, emptyFilePart);
+            return new AvatarUploadPayload(null, idempotencyKey, emptyFilePart);
 
         Request.EnableBuffering();
 
@@ -575,12 +555,12 @@ public sealed class SettingsController : InterfoldControllerBase
             || !mediaType.MediaType.HasValue
             || !mediaType.MediaType.Value.StartsWith("multipart/", StringComparison.OrdinalIgnoreCase))
         {
-            return new AvatarUploadPayload(null, idempotencyKey, expectedVersion, emptyFilePart);
+            return new AvatarUploadPayload(null, idempotencyKey, emptyFilePart);
         }
 
         var boundary = HeaderUtilities.RemoveQuotes(mediaType.Boundary).Value;
         if (string.IsNullOrWhiteSpace(boundary))
-            return new AvatarUploadPayload(null, idempotencyKey, expectedVersion, emptyFilePart);
+            return new AvatarUploadPayload(null, idempotencyKey, emptyFilePart);
 
         try
         {
@@ -608,7 +588,7 @@ public sealed class SettingsController : InterfoldControllerBase
                     }
 
                     payload.Position = 0;
-                    return new AvatarUploadPayload(payload, idempotencyKey, expectedVersion, emptyFilePart);
+                    return new AvatarUploadPayload(payload, idempotencyKey, emptyFilePart);
                 }
 
                 if (string.IsNullOrWhiteSpace(fieldName))
@@ -618,21 +598,16 @@ public sealed class SettingsController : InterfoldControllerBase
                 var value = (await readerText.ReadToEndAsync(ct)).Trim();
                 if (fieldName.Equals("idempotencyKey", StringComparison.OrdinalIgnoreCase))
                     idempotencyKey = string.IsNullOrWhiteSpace(value) ? null : value;
-                else if (fieldName.Equals("expectedVersion", StringComparison.OrdinalIgnoreCase)
-                         && long.TryParse(value, out var parsed))
-                    expectedVersion = parsed;
             }
         }
         catch (IOException)
         {
-            return new AvatarUploadPayload(null, idempotencyKey, expectedVersion, emptyFilePart);
+            return new AvatarUploadPayload(null, idempotencyKey, emptyFilePart);
         }
 
-        return new AvatarUploadPayload(null, idempotencyKey, expectedVersion, emptyFilePart);
+        return new AvatarUploadPayload(null, idempotencyKey, emptyFilePart);
     }
-
-    private sealed record AvatarUploadPayload(Stream? Stream, string? IdempotencyKey, long? ExpectedVersion, bool EmptyFilePart = false);
-
+    
     private static bool TryResolveRecoveryCode(string candidate, out string recoveryCode, out string errorCode)
     {
         recoveryCode = string.Empty;
@@ -732,67 +707,3 @@ public sealed class SettingsController : InterfoldControllerBase
         }
     }
 }
-
-public sealed record SettingsUsernameRequest(
-    string Username,
-    string? IdempotencyKey = null,
-    long? ExpectedVersion = null
-);
-
-public sealed record SettingsDescriptionRequest(
-    string Description,
-    string? IdempotencyKey = null,
-    long? ExpectedVersion = null
-);
-
-public sealed record SettingsPushTokenRequest(
-    string? Token = null,
-    string? IdempotencyKey = null,
-    long? ExpectedVersion = null
-);
-
-public sealed record SettingsEncryptionRequest(
-    string RecoveryCode,
-    string? IdempotencyKey = null,
-    long? ExpectedVersion = null
-);
-
-public sealed record SettingsCommandRequest(
-    string? IdempotencyKey = null,
-    long? ExpectedVersion = null
-);
-
-public sealed record SettingsAvatarMultipartRequest(
-    IFormFile File,
-    string? IdempotencyKey = null,
-    long? ExpectedVersion = null
-);
-
-public sealed record SettingsImportRequest(
-    string Token,
-    string? IdempotencyKey = null,
-    long? ExpectedVersion = null
-);
-
-public sealed record SettingsCreateFieldRequest(
-    string Name,
-    string? Type,
-    string? SecurityLevel,
-    bool? Locked,
-    string? IdempotencyKey = null,
-    long? ExpectedVersion = null
-);
-
-public sealed record SettingsUpdateFieldRequest(
-    string? Name,
-    string? SecurityLevel,
-    bool? Locked,
-    string? IdempotencyKey = null,
-    long? ExpectedVersion = null
-);
-
-public sealed record SettingsRelocateFieldRequest(
-    int Index,
-    string? IdempotencyKey = null,
-    long? ExpectedVersion = null
-);

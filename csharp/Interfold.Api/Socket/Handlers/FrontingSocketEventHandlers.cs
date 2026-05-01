@@ -1,3 +1,4 @@
+using Interfold.Contracts;
 using Interfold.Contracts.Events;
 using Interfold.Domain.Abstractions.Repository;
 

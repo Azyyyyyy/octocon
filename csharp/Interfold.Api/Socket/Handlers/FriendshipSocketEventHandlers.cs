@@ -1,4 +1,5 @@
 using Interfold.Api.Helpers;
+using Interfold.Contracts;
 using Interfold.Contracts.Events;
 using Interfold.Contracts.Models.Read;
 using Interfold.Domain.Abstractions.Repository;

@@ -1,4 +1,5 @@
 using Interfold.Contracts.Models.Commands;
+using Interfold.Contracts.Models.Read;
 using Microsoft.AspNetCore.Mvc;
 using Interfold.Contracts.Operations;
 using Interfold.Domain.Abstractions.Repository;
@@ -63,7 +64,6 @@ public sealed class JournalsController : InterfoldControllerBase
             Guid.NewGuid(),
             PrincipalId: principal,
             IdempotencyKey: GetIdempotencyKey(req.IdempotencyKey),
-            ExpectedVersion: req.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
             Payload: new CreateGlobalJournalEntryCommand(req.Title)
         );
@@ -87,7 +87,6 @@ public sealed class JournalsController : InterfoldControllerBase
             Guid.NewGuid(),
             PrincipalId: PrincipalId,
             IdempotencyKey: GetIdempotencyKey(req.IdempotencyKey),
-            ExpectedVersion: req.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
             Payload: new UpdateGlobalJournalEntryCommand(id, req.Title, req.Content, req.Color)
         );
@@ -104,7 +103,6 @@ public sealed class JournalsController : InterfoldControllerBase
             Guid.NewGuid(),
             PrincipalId: PrincipalId,
             IdempotencyKey: GetIdempotencyKey(req?.IdempotencyKey),
-            ExpectedVersion: req?.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
             Payload: new DeleteGlobalJournalEntryCommand(id)
         );
@@ -140,7 +138,6 @@ public sealed class JournalsController : InterfoldControllerBase
             Guid.NewGuid(),
             PrincipalId: PrincipalId,
             IdempotencyKey: GetIdempotencyKey(req.IdempotencyKey),
-            ExpectedVersion: req.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
             Payload: new AttachAlterToGlobalJournalCommand(id, alterId)
         );
@@ -160,7 +157,6 @@ public sealed class JournalsController : InterfoldControllerBase
             Guid.NewGuid(),
             PrincipalId: PrincipalId,
             IdempotencyKey: GetIdempotencyKey(req.IdempotencyKey),
-            ExpectedVersion: req.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
             Payload: new DetachAlterFromGlobalJournalCommand(id, alterId)
         );
@@ -176,7 +172,6 @@ public sealed class JournalsController : InterfoldControllerBase
             Guid.NewGuid(),
             PrincipalId: PrincipalId,
             IdempotencyKey: GetIdempotencyKey(req?.IdempotencyKey),
-            ExpectedVersion: req?.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
             Payload: new SetGlobalJournalLockedCommand(id, locked)
         );
@@ -192,7 +187,6 @@ public sealed class JournalsController : InterfoldControllerBase
             Guid.NewGuid(),
             PrincipalId: PrincipalId,
             IdempotencyKey: GetIdempotencyKey(req?.IdempotencyKey),
-            ExpectedVersion: req?.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
             Payload: new SetGlobalJournalPinnedCommand(id, pinned)
         );
@@ -201,33 +195,3 @@ public sealed class JournalsController : InterfoldControllerBase
         return result is OkObjectResult ? NoContent() : result;
     }
 }
-
-public sealed record CreateGlobalJournalRequest(
-    string Title,
-    string? IdempotencyKey = null,
-    long? ExpectedVersion = null
-);
-
-public sealed record UpdateGlobalJournalRequest(
-    string? Title = null,
-    string? Content = null,
-    string? Color = null,
-    string? IdempotencyKey = null,
-    long? ExpectedVersion = null
-);
-
-public sealed record DeleteGlobalJournalRequest(
-    string? IdempotencyKey = null,
-    long? ExpectedVersion = null
-);
-
-public sealed record JournalActionRequest(
-    string? IdempotencyKey = null,
-    long? ExpectedVersion = null
-);
-
-public sealed record JournalAlterRequest(
-    int? AlterId,
-    string? IdempotencyKey = null,
-    long? ExpectedVersion = null
-);

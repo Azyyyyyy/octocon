@@ -37,7 +37,7 @@ public interface IJournalRepository
 
     Task<AlterJournalReadModel?> GetAlterAsync(string systemId, string entryId, CancellationToken cancellationToken = default);
 
-    Task<IReadOnlyList<GlobalJournalReadModel>> ListGlobalAsync(string systemId, CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<JournalReadModel>> ListGlobalAsync(string systemId, CancellationToken cancellationToken = default);
 
-    Task<GlobalJournalReadModel?> GetGlobalAsync(string systemId, string entryId, CancellationToken cancellationToken = default);
+    Task<JournalReadModel?> GetGlobalAsync(string systemId, string entryId, CancellationToken cancellationToken = default);
 }

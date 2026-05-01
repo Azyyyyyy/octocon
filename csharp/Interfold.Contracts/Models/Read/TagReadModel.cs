@@ -25,3 +25,27 @@ public sealed record TagPublicReadModel(
     VisibilityLevel SecurityLevel,
     string? UserId
 );
+
+public sealed record CreateTagRequest(
+    string Name,
+    string? ParentTagId,
+    string? IdempotencyKey = null
+) : BaseRequest(IdempotencyKey);
+
+public sealed record UpdateTagRequest(
+    string? Name = null,
+    string? Color = null,
+    string? Description = null,
+    string? SecurityLevel = null,
+    string? IdempotencyKey = null
+) : BaseRequest(IdempotencyKey);
+
+public sealed record TagAlterRequest(
+    int? AlterId,
+    string? IdempotencyKey = null
+) : BaseRequest(IdempotencyKey);
+
+public sealed record SetParentRequest(
+    string? ParentTagId,
+    string? IdempotencyKey = null
+) : BaseRequest(IdempotencyKey);

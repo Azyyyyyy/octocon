@@ -1,9 +1,8 @@
 using Microsoft.AspNetCore.Mvc;
-using System.Text.Json.Serialization;
 using Interfold.Contracts.Operations;
 using Interfold.Domain.Polls;
-using System.Text.Json;
 using Interfold.Contracts.Models.Commands;
+using Interfold.Contracts.Models.Read;
 using Interfold.Domain.Abstractions.Repository;
 
 namespace Interfold.Api.Controllers;
@@ -54,7 +53,6 @@ public sealed class PollsController : InterfoldControllerBase
             Guid.NewGuid(),
             PrincipalId: principal,
             IdempotencyKey: GetIdempotencyKey(req.IdempotencyKey),
-            ExpectedVersion: req.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
             Payload: new CreatePollCommand(req.Title, req.Description, req.Type ?? "vote", req.TimeEnd)
         );
@@ -83,7 +81,6 @@ public sealed class PollsController : InterfoldControllerBase
             Guid.NewGuid(),
             PrincipalId: PrincipalId,
             IdempotencyKey: GetIdempotencyKey(req.IdempotencyKey),
-            ExpectedVersion: req.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
             Payload: new UpdatePollCommand(id, req.Title, req.Description, resolvedTimeEnd, req.HasTimeEnd, req.Data)
         );
@@ -93,14 +90,13 @@ public sealed class PollsController : InterfoldControllerBase
     }
 
     [HttpDelete("{id}")]
-    public async Task<IActionResult> Delete(string id, [FromBody] DeletePollRequest? req, CancellationToken ct)
+    public async Task<IActionResult> Delete(string id, [FromBody] BaseRequest? req, CancellationToken ct)
     {
         var envelope = new CommandEnvelope<DeletePollCommand>(
             OperationIds.PollDelete,
             Guid.NewGuid(),
             PrincipalId: PrincipalId,
             IdempotencyKey: GetIdempotencyKey(req?.IdempotencyKey),
-            ExpectedVersion: req?.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
             Payload: new DeletePollCommand(id)
         );
@@ -109,46 +105,3 @@ public sealed class PollsController : InterfoldControllerBase
         return result is OkObjectResult ? NoContent() : result;
     }
 }
-
-public sealed record CreatePollRequest(
-    string Title,
-    string? Description = null,
-    string? Type = null,
-    DateTime? TimeEnd = null,
-    string? IdempotencyKey = null,
-    long? ExpectedVersion = null
-);
-
-public sealed record UpdatePollRequest(
-    string? Title = null,
-    string? Description = null,
-    JsonElement TimeEnd = default,
-    JsonElement? Data = null,
-    string? IdempotencyKey = null,
-    long? ExpectedVersion = null
-)
-{
-    [JsonIgnore]
-    public bool HasTimeEnd => TimeEnd.ValueKind != JsonValueKind.Undefined;
-
-    public bool TryResolveTimeEnd(out DateTime? timeEnd)
-    {
-        timeEnd = null;
-
-        if (!HasTimeEnd || TimeEnd.ValueKind == JsonValueKind.Null)
-            return true;
-
-        if (TimeEnd.ValueKind == JsonValueKind.String && TimeEnd.TryGetDateTime(out var parsed))
-        {
-            timeEnd = parsed;
-            return true;
-        }
-
-        return false;
-    }
-}
-
-public sealed record DeletePollRequest(
-    string? IdempotencyKey = null,
-    long? ExpectedVersion = null
-);

@@ -1,4 +1,5 @@
 using Interfold.Contracts.Models.Commands;
+using Interfold.Contracts.Models.Read;
 using Microsoft.AspNetCore.Mvc;
 using Interfold.Contracts.Operations;
 using Interfold.Domain.Abstractions.Repository;
@@ -49,7 +50,6 @@ public sealed class TagsController : InterfoldControllerBase
             CommandId: Guid.NewGuid(),
             PrincipalId: principal,
             IdempotencyKey: GetIdempotencyKey(body.IdempotencyKey),
-            ExpectedVersion: body.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
             Payload: new CreateTagCommand(body.Name, body.ParentTagId)
         );
@@ -73,7 +73,6 @@ public sealed class TagsController : InterfoldControllerBase
            CommandId: Guid.NewGuid(),
            PrincipalId: PrincipalId,
            IdempotencyKey: GetIdempotencyKey(body.IdempotencyKey),
-           ExpectedVersion: body.ExpectedVersion,
            OccurredAt: DateTimeOffset.UtcNow,
            Payload: new UpdateTagCommand(id, body.Name, body.Color, body.Description, body.SecurityLevel)
        );
@@ -84,14 +83,13 @@ public sealed class TagsController : InterfoldControllerBase
 
    //TODO: To ensure route works as expected - check if we unattach alters and remove parent tag relationships when a tag is deleted
    [HttpDelete("{id}")]
-   public async Task<IActionResult> DeleteTag(string id, [FromBody] TagIdempotencyRequest? body, CancellationToken ct)
+   public async Task<IActionResult> DeleteTag(string id, [FromBody] BaseRequest? body, CancellationToken ct)
    {
        var command = new CommandEnvelope<DeleteTagCommand>(
            OperationId: OperationIds.TagDelete,
            CommandId: Guid.NewGuid(),
            PrincipalId: PrincipalId,
            IdempotencyKey: GetIdempotencyKey(body?.IdempotencyKey),
-           ExpectedVersion: body?.ExpectedVersion,
            OccurredAt: DateTimeOffset.UtcNow,
            Payload: new DeleteTagCommand(id)
        );
@@ -111,7 +109,6 @@ public sealed class TagsController : InterfoldControllerBase
            CommandId: Guid.NewGuid(),
            PrincipalId: PrincipalId,
            IdempotencyKey: GetIdempotencyKey(body.IdempotencyKey),
-           ExpectedVersion: body.ExpectedVersion,
            OccurredAt: DateTimeOffset.UtcNow,
            Payload: new AttachAlterToTagCommand(id, alterId)
        );
@@ -131,7 +128,6 @@ public sealed class TagsController : InterfoldControllerBase
            CommandId: Guid.NewGuid(),
            PrincipalId: PrincipalId,
            IdempotencyKey: GetIdempotencyKey(body.IdempotencyKey),
-           ExpectedVersion: body.ExpectedVersion,
            OccurredAt: DateTimeOffset.UtcNow,
            Payload: new DetachAlterFromTagCommand(id, alterId)
        );
@@ -152,7 +148,6 @@ public sealed class TagsController : InterfoldControllerBase
            CommandId: Guid.NewGuid(),
            PrincipalId: PrincipalId,
            IdempotencyKey: GetIdempotencyKey(body.IdempotencyKey),
-           ExpectedVersion: body.ExpectedVersion,
            OccurredAt: DateTimeOffset.UtcNow,
            Payload: new SetParentTagCommand(id, parentTagId)
        );
@@ -162,14 +157,13 @@ public sealed class TagsController : InterfoldControllerBase
    }
 
    [HttpDelete("{id}/parent")]
-   public async Task<IActionResult> RemoveParent(string id, [FromBody] TagIdempotencyRequest? body, CancellationToken ct)
+   public async Task<IActionResult> RemoveParent(string id, [FromBody] BaseRequest? body, CancellationToken ct)
    {
        var command = new CommandEnvelope<RemoveParentTagCommand>(
            OperationId: OperationIds.TagRemoveParent,
            CommandId: Guid.NewGuid(),
            PrincipalId: PrincipalId,
            IdempotencyKey: GetIdempotencyKey(body?.IdempotencyKey),
-           ExpectedVersion: body?.ExpectedVersion,
            OccurredAt: DateTimeOffset.UtcNow,
            Payload: new RemoveParentTagCommand(id)
        );
@@ -178,36 +172,3 @@ public sealed class TagsController : InterfoldControllerBase
        return result is OkObjectResult ? NoContent() : result;
    }
 }
-
-public sealed record CreateTagRequest(
-    string Name,
-    string? ParentTagId,
-    string? IdempotencyKey = null,
-    long? ExpectedVersion = null
-);
-
-public sealed record UpdateTagRequest(
-    string? Name = null,
-    string? Color = null,
-    string? Description = null,
-    string? SecurityLevel = null,
-    string? IdempotencyKey = null,
-    long? ExpectedVersion = null
-);
-
-public sealed record TagIdempotencyRequest(
-    string? IdempotencyKey = null,
-    long? ExpectedVersion = null
-);
-
-public sealed record TagAlterRequest(
-    int? AlterId,
-    string? IdempotencyKey = null,
-    long? ExpectedVersion = null
-);
-
-public sealed record SetParentRequest(
-    string? ParentTagId,
-    string? IdempotencyKey = null,
-    long? ExpectedVersion = null
-);

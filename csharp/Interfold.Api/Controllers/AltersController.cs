@@ -4,6 +4,7 @@ using Microsoft.Net.Http.Headers;
 using System.Text;
 using Interfold.Api.Services;
 using Interfold.Contracts.Models.Commands;
+using Interfold.Contracts.Models.Read;
 using Interfold.Contracts.Operations;
 using Interfold.Domain.Abstractions.Repository;
 using Interfold.Domain.Alters;
@@ -62,7 +63,6 @@ public sealed class AltersController : InterfoldControllerBase
             OperationIds.AlterCreate, Guid.NewGuid(),
             PrincipalId: principal,
             IdempotencyKey: GetIdempotencyKey(req.IdempotencyKey),
-            ExpectedVersion: req.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
             Payload: new CreateAlterCommand(req.Name)
         );
@@ -104,7 +104,6 @@ public sealed class AltersController : InterfoldControllerBase
             OperationIds.AlterUpdate, Guid.NewGuid(),
             PrincipalId: PrincipalId,
             IdempotencyKey: GetIdempotencyKey(req.IdempotencyKey),
-            ExpectedVersion: req.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
             Payload: payload
         );
@@ -115,14 +114,13 @@ public sealed class AltersController : InterfoldControllerBase
 
     //TODO: To ensure route works as expected - check if we delete alter journal entries, unattach from gobal journals when an alter is deleted and delete them from polls
     [HttpDelete("{alterId:int}")]
-    public async Task<IActionResult> Delete(int alterId, [FromBody] DeleteAlterRequest? req, CancellationToken ct)
+    public async Task<IActionResult> Delete(int alterId, [FromBody] BaseRequest? req, CancellationToken ct)
     {
         await CheckAlterId(alterId);
         var envelope = new CommandEnvelope<DeleteAlterCommand>(
             OperationIds.AlterDelete, Guid.NewGuid(),
             PrincipalId: PrincipalId,
             IdempotencyKey: GetIdempotencyKey(req?.IdempotencyKey),
-            ExpectedVersion: req?.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
             Payload: new DeleteAlterCommand(alterId)
         );
@@ -192,7 +190,6 @@ public sealed class AltersController : InterfoldControllerBase
             Guid.NewGuid(),
             PrincipalId: principal,
             IdempotencyKey: GetIdempotencyKey(upload.IdempotencyKey),
-            ExpectedVersion: upload.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
             Payload: payload
         );
@@ -218,11 +215,10 @@ public sealed class AltersController : InterfoldControllerBase
     private async Task<AvatarUploadPayload> ResolveMultipartUploadAsync(CancellationToken ct)
     {
         string? idempotencyKey = null;
-        long? expectedVersion = null;
         var emptyFilePart = false;
 
         if (Request.Body is null)
-            return new AvatarUploadPayload(null, idempotencyKey, expectedVersion, emptyFilePart);
+            return new AvatarUploadPayload(null, idempotencyKey, emptyFilePart);
 
         Request.EnableBuffering();
 
@@ -233,12 +229,12 @@ public sealed class AltersController : InterfoldControllerBase
             || !mediaType.MediaType.HasValue
             || !mediaType.MediaType.Value.StartsWith("multipart/", StringComparison.OrdinalIgnoreCase))
         {
-            return new AvatarUploadPayload(null, idempotencyKey, expectedVersion, emptyFilePart);
+            return new AvatarUploadPayload(null, idempotencyKey, emptyFilePart);
         }
 
         var boundary = HeaderUtilities.RemoveQuotes(mediaType.Boundary).Value;
         if (string.IsNullOrWhiteSpace(boundary))
-            return new AvatarUploadPayload(null, idempotencyKey, expectedVersion, emptyFilePart);
+            return new AvatarUploadPayload(null, idempotencyKey, emptyFilePart);
 
         try
         {
@@ -266,7 +262,7 @@ public sealed class AltersController : InterfoldControllerBase
                     }
 
                     payload.Position = 0;
-                    return new AvatarUploadPayload(payload, idempotencyKey, expectedVersion, emptyFilePart);
+                    return new AvatarUploadPayload(payload, idempotencyKey, emptyFilePart);
                 }
 
                 if (string.IsNullOrWhiteSpace(fieldName))
@@ -276,23 +272,18 @@ public sealed class AltersController : InterfoldControllerBase
                 var value = (await readerText.ReadToEndAsync()).Trim();
                 if (fieldName.Equals("idempotencyKey", StringComparison.OrdinalIgnoreCase))
                     idempotencyKey = string.IsNullOrWhiteSpace(value) ? null : value;
-                else if (fieldName.Equals("expectedVersion", StringComparison.OrdinalIgnoreCase)
-                         && long.TryParse(value, out var parsed))
-                    expectedVersion = parsed;
             }
         }
         catch (IOException)
         {
-            return new AvatarUploadPayload(null, idempotencyKey, expectedVersion, emptyFilePart);
+            return new AvatarUploadPayload(null, idempotencyKey, emptyFilePart);
         }
 
-        return new AvatarUploadPayload(null, idempotencyKey, expectedVersion, emptyFilePart);
+        return new AvatarUploadPayload(null, idempotencyKey, emptyFilePart);
     }
 
-    private sealed record AvatarUploadPayload(Stream? Stream, string? IdempotencyKey, long? ExpectedVersion, bool EmptyFilePart = false);
-
     [HttpDelete("{alterId:int}/avatar")]
-    public async Task<IActionResult> DeleteAvatar(int alterId, [FromBody] DeleteAlterRequest? req, CancellationToken ct)
+    public async Task<IActionResult> DeleteAvatar(int alterId, [FromBody] BaseRequest? req, CancellationToken ct)
     {
         await CheckAlterId(alterId);
         var principal = PrincipalId;
@@ -322,7 +313,6 @@ public sealed class AltersController : InterfoldControllerBase
             Guid.NewGuid(),
             PrincipalId: principal,
             IdempotencyKey: GetIdempotencyKey(req?.IdempotencyKey),
-            ExpectedVersion: req?.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
             Payload: payload
         );
@@ -344,36 +334,3 @@ public sealed class AltersController : InterfoldControllerBase
         return result is OkObjectResult ? NoContent() : result;
     }
 }
-
-public sealed record CreateAlterRequest(
-    string Name,
-    string? IdempotencyKey = null,
-    long? ExpectedVersion = null
-);
-
-public sealed record UpdateAlterRequest(
-    string? Name = null,
-    string? Description = null,
-    string? AvatarUrl = null,
-    string? Color = null,
-    string? Pronouns = null,
-    string? SecurityLevel = null,
-    string? ProxyName = null,
-    string? Alias = null,
-    bool? Untracked = null,
-    bool? Archived = null,
-    bool? Pinned = null,
-    IReadOnlyList<UpdateAlterFieldRequest>? Fields = null,
-    string? IdempotencyKey = null,
-    long? ExpectedVersion = null
-);
-
-public sealed record UpdateAlterFieldRequest(
-    string Id,
-    string? Value
-);
-
-public sealed record DeleteAlterRequest(
-    string? IdempotencyKey = null,
-    long? ExpectedVersion = null
-);

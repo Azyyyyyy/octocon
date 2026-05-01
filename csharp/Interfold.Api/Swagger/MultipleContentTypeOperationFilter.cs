@@ -52,12 +52,6 @@ public class MultipleContentTypeOperationFilter : IDocumentFilter
                             {
                                 Type = "string",
                                 Nullable = true
-                            },
-                            ["expectedVersion"] = new OpenApiSchema
-                            {
-                                Type = "integer",
-                                Format = "int64",
-                                Nullable = true
                             }
                         }
                     }

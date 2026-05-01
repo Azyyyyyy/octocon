@@ -1,4 +1,5 @@
 using Interfold.Contracts.Models.Commands;
+using Interfold.Contracts.Models.Read;
 using Microsoft.AspNetCore.Mvc;
 using Interfold.Contracts.Operations;
 using Interfold.Domain.Abstractions.Repository;
@@ -57,7 +58,7 @@ public sealed class FriendRequestsController : InterfoldControllerBase
     }
 
     [HttpPut("{id}")]
-    public async Task<IActionResult> Send(string id, [FromBody] FriendRequestActionRequest? req, CancellationToken ct)
+    public async Task<IActionResult> Send(string id, [FromBody] BaseRequest? req, CancellationToken ct)
     {
         var principal = PrincipalId;
         if (string.Equals(principal, id, StringComparison.Ordinal))
@@ -74,7 +75,6 @@ public sealed class FriendRequestsController : InterfoldControllerBase
             Guid.NewGuid(),
             PrincipalId: principal,
             IdempotencyKey: GetIdempotencyKey(req?.IdempotencyKey),
-            ExpectedVersion: req?.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
             Payload: new SendFriendRequestCommand(id));
 
@@ -83,7 +83,7 @@ public sealed class FriendRequestsController : InterfoldControllerBase
     }
 
     [HttpDelete("{id}")]
-    public async Task<IActionResult> Cancel(string id, [FromBody] FriendRequestActionRequest? req, CancellationToken ct)
+    public async Task<IActionResult> Cancel(string id, [FromBody] BaseRequest? req, CancellationToken ct)
     {
         var principal = PrincipalId;
         if (string.Equals(principal, id, StringComparison.Ordinal))
@@ -100,7 +100,6 @@ public sealed class FriendRequestsController : InterfoldControllerBase
             Guid.NewGuid(),
             PrincipalId: principal,
             IdempotencyKey: GetIdempotencyKey(req?.IdempotencyKey),
-            ExpectedVersion: req?.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
             Payload: new CancelFriendRequestCommand(id));
 
@@ -109,7 +108,7 @@ public sealed class FriendRequestsController : InterfoldControllerBase
     }
 
     [HttpPost("{id}/accept")]
-    public async Task<IActionResult> Accept(string id, [FromBody] FriendRequestActionRequest? req, CancellationToken ct)
+    public async Task<IActionResult> Accept(string id, [FromBody] BaseRequest? req, CancellationToken ct)
     {
         var principal = PrincipalId;
         if (string.Equals(principal, id, StringComparison.Ordinal))
@@ -126,7 +125,6 @@ public sealed class FriendRequestsController : InterfoldControllerBase
             Guid.NewGuid(),
             PrincipalId: principal,
             IdempotencyKey: GetIdempotencyKey(req?.IdempotencyKey),
-            ExpectedVersion: req?.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
             Payload: new AcceptFriendRequestCommand(id));
 
@@ -135,7 +133,7 @@ public sealed class FriendRequestsController : InterfoldControllerBase
     }
 
     [HttpPost("{id}/reject")]
-    public async Task<IActionResult> Reject(string id, [FromBody] FriendRequestActionRequest? req, CancellationToken ct)
+    public async Task<IActionResult> Reject(string id, [FromBody] BaseRequest? req, CancellationToken ct)
     {
         var principal = PrincipalId;
         if (string.Equals(principal, id, StringComparison.Ordinal))
@@ -152,7 +150,6 @@ public sealed class FriendRequestsController : InterfoldControllerBase
             Guid.NewGuid(),
             PrincipalId: principal,
             IdempotencyKey: GetIdempotencyKey(req?.IdempotencyKey),
-            ExpectedVersion: req?.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
             Payload: new RejectFriendRequestCommand(id));
 
@@ -160,7 +157,3 @@ public sealed class FriendRequestsController : InterfoldControllerBase
         return result is OkObjectResult ? NoContent() : result;
     }
 }
-
-public sealed record FriendRequestActionRequest(
-    string? IdempotencyKey = null,
-    long? ExpectedVersion = null);

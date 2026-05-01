@@ -3,7 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 
 namespace Interfold.Api.Controllers;
 
-[Route("api/systems")]
+[Route("api/systems/{systemId}")]
 public sealed class PublicSystemsController : InterfoldControllerBase
 {
     private readonly IAccountRepository _accounts;
@@ -26,7 +26,7 @@ public sealed class PublicSystemsController : InterfoldControllerBase
         _friendships = friendships;
     }
 
-    [HttpGet("{systemId}")]
+    [HttpGet]
     public async Task<IActionResult> Show([FromRoute] string systemId, CancellationToken ct)
     {
         var profile = await _accounts.GetPublicProfileAsync(systemId, ct);
@@ -48,7 +48,7 @@ public sealed class PublicSystemsController : InterfoldControllerBase
     }
 
     //TODO: To ensure route works as expected
-    [HttpGet("{systemId}/alters")]
+    [HttpGet("alters")]
     public async Task<IActionResult> ListAlters([FromRoute] string systemId, CancellationToken ct)
     {
         if (!await SystemExistsAsync(systemId, ct))
@@ -61,7 +61,7 @@ public sealed class PublicSystemsController : InterfoldControllerBase
         return Ok(new { data = alters });
     }
 
-    [HttpGet("{systemId}/alters/{alterId}")]
+    [HttpGet("alters/{alterId:int}")]
     public async Task<IActionResult> ShowAlter([FromRoute] string systemId, [FromRoute] int alterId, CancellationToken ct)
     {
         await CheckAlterId(alterId);
@@ -71,14 +71,15 @@ public sealed class PublicSystemsController : InterfoldControllerBase
         }
 
         var alter = await _alters.GetGuardedAsync(systemId, alterId, PrincipalId, ct);
-        if (alter is not null) alter.AvatarUrl = QualifyUrl(alter.AvatarUrl);
+        alter?.AvatarUrl = QualifyUrl(alter.AvatarUrl);
+
         return alter is null
             ? NotFound(new { error = "Alter not found.", code = "alter_not_found" })
             : Ok(new { data = alter });
     }
 
     //TODO: To ensure route works as expected
-    [HttpGet("{systemId}/tags")]
+    [HttpGet("tags")]
     public async Task<IActionResult> ListTags([FromRoute] string systemId, CancellationToken ct)
     {
         if (!await SystemExistsAsync(systemId, ct))
@@ -90,22 +91,22 @@ public sealed class PublicSystemsController : InterfoldControllerBase
         return Ok(new { data = tags });
     }
 
-    [HttpGet("{systemId}/tags/{id}")]
-    public async Task<IActionResult> ShowTag([FromRoute] string systemId, [FromRoute] string id, CancellationToken ct)
+    [HttpGet("tags/{tagId}")]
+    public async Task<IActionResult> ShowTag([FromRoute] string systemId, [FromRoute] string tagId, CancellationToken ct)
     {
         if (!await SystemExistsAsync(systemId, ct))
         {
             return NotFound(new { error = "System not found.", code = "system_not_found" });
         }
 
-        var tag = await _tags.GetGuardedAsync(systemId, id, PrincipalId, ct);
+        var tag = await _tags.GetGuardedAsync(systemId, tagId, PrincipalId, ct);
         return tag is null
             ? NotFound(new { error = "Tag not found.", code = "tag_not_found" })
             : Ok(new { data = tag });
     }
 
     //TODO: To ensure route works as expected
-    [HttpGet("{systemId}/fronting")]
+    [HttpGet("fronting")]
     public async Task<IActionResult> ListFronting([FromRoute] string systemId, CancellationToken ct)
     {
         if (!await SystemExistsAsync(systemId, ct))
@@ -117,7 +118,7 @@ public sealed class PublicSystemsController : InterfoldControllerBase
         return Ok(new { data = fronts });
     }
 
-    [HttpGet("{systemId}/batch")]
+    [HttpGet("batch")]
     public async Task<IActionResult> Batch([FromRoute] string systemId, CancellationToken ct)
     {
         if (!await SystemExistsAsync(systemId, ct))

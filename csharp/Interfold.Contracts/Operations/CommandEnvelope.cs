@@ -7,7 +7,6 @@ public sealed record CommandEnvelope<TPayload>(
     Guid CommandId,
     string PrincipalId,
     string IdempotencyKey,
-    long? ExpectedVersion,
     DateTimeOffset? OccurredAt,
     TPayload Payload,
     HttpStatusCode? SuccessStatusCode = null

@@ -63,7 +63,7 @@ public sealed class FriendsController : InterfoldControllerBase
     }
 
     [HttpDelete("{id}")]
-    public async Task<IActionResult> Delete(string id, [FromBody] FriendActionRequest? req, CancellationToken ct)
+    public async Task<IActionResult> Delete(string id, [FromBody] BaseRequest? req, CancellationToken ct)
     {
         var principal = PrincipalId;
         if (string.Equals(principal, id, StringComparison.Ordinal))
@@ -80,7 +80,6 @@ public sealed class FriendsController : InterfoldControllerBase
             Guid.NewGuid(),
             PrincipalId: principal,
             IdempotencyKey: GetIdempotencyKey(req?.IdempotencyKey),
-            ExpectedVersion: req?.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
             Payload: new RemoveFriendshipCommand(id));
 
@@ -89,11 +88,11 @@ public sealed class FriendsController : InterfoldControllerBase
     }
 
     [HttpPost("{id}/trust")]
-    public async Task<IActionResult> Trust(string id, [FromBody] FriendActionRequest? req, CancellationToken ct)
+    public async Task<IActionResult> Trust(string id, [FromBody] BaseRequest? req, CancellationToken ct)
         => await SetTrustInternal(id, true, OperationIds.FriendTrust, "cannot_trust_self", req, ct);
 
     [HttpPost("{id}/untrust")]
-    public async Task<IActionResult> Untrust(string id, [FromBody] FriendActionRequest? req, CancellationToken ct)
+    public async Task<IActionResult> Untrust(string id, [FromBody] BaseRequest? req, CancellationToken ct)
         => await SetTrustInternal(id, false, OperationIds.FriendUntrust, "cannot_untrust_self", req, ct);
 
     private async Task<IActionResult> SetTrustInternal(
@@ -101,7 +100,7 @@ public sealed class FriendsController : InterfoldControllerBase
         bool trusted,
         string operationId,
         string selfErrorCode,
-        FriendActionRequest? req,
+        BaseRequest? req,
         CancellationToken ct)
     {
         var principal = PrincipalId;
@@ -115,7 +114,6 @@ public sealed class FriendsController : InterfoldControllerBase
             Guid.NewGuid(),
             PrincipalId: principal,
             IdempotencyKey: GetIdempotencyKey(req?.IdempotencyKey),
-            ExpectedVersion: req?.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
             Payload: new SetFriendTrustCommand(id, trusted));
 
@@ -123,7 +121,3 @@ public sealed class FriendsController : InterfoldControllerBase
         return result is OkObjectResult ? NoContent() : result;
     }
 }
-
-public sealed record FriendActionRequest(
-    string? IdempotencyKey = null,
-    long? ExpectedVersion = null);

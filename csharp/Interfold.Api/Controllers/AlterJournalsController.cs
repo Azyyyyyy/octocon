@@ -1,6 +1,5 @@
 using System.Net;
 using Interfold.Api.Models;
-using Interfold.Contracts;
 using Interfold.Contracts.Models.Commands;
 using Interfold.Contracts.Models.Read;
 using Microsoft.AspNetCore.Mvc;
@@ -37,22 +36,22 @@ public sealed class AlterJournalsController : InterfoldControllerBase
     }
 
     [HttpGet("{alterId:int}/journals")]
-    public async Task<ActionResult<Response<IEnumerable<AlterJournalReadModel>>>> Index(int alterId, CancellationToken ct)
+    public async Task<Response<IEnumerable<AlterJournalReadModel>>> Index(int alterId, CancellationToken ct)
     {
         var principal = PrincipalId;
         await CheckAlterId(alterId, principal, ct);
 
         IEnumerable<AlterJournalReadModel> entries = await _journalRepository.ListAlterAsync(principal, alterId, ct) ?? [];
-        return new Response<IEnumerable<AlterJournalReadModel>>(entries);
+        return new SuccessResponse<IEnumerable<AlterJournalReadModel>>(entries);
     }
 
     [HttpGet("journals/{journalId}")]
-    public async Task<ActionResult<Response<AlterJournalReadModel>>> Show(string journalId, CancellationToken ct)
+    public async Task<Response<AlterJournalReadModel>> Show(string journalId, CancellationToken ct)
     {
         var entry = await _journalRepository.GetAlterAsync(PrincipalId, journalId, ct);
         return entry is null 
-            ? throw new InterfoldException("Journal entry not found", "journal_entry_not_found", HttpStatusCode.NotFound) 
-            : new Response<AlterJournalReadModel>(entry);
+            ? new ErrorResponse("Journal entry not found", "journal_entry_not_found", HttpStatusCode.NotFound) 
+            : new SuccessResponse<AlterJournalReadModel>(entry);
     }
 
     [HttpPost("{alterId:int}/journals")]
@@ -66,7 +65,6 @@ public sealed class AlterJournalsController : InterfoldControllerBase
             Guid.NewGuid(),
             PrincipalId: principal,
             IdempotencyKey: GetIdempotencyKey(req.IdempotencyKey),
-            ExpectedVersion: req.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
             Payload: new CreateAlterJournalEntryCommand(alterId, req.Title)
         );
@@ -90,7 +88,6 @@ public sealed class AlterJournalsController : InterfoldControllerBase
             Guid.NewGuid(),
             PrincipalId: PrincipalId,
             IdempotencyKey: GetIdempotencyKey(req.IdempotencyKey),
-            ExpectedVersion: req.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
             Payload: new UpdateAlterJournalEntryCommand(journalId, req.Title, req.Content, req.Color)
         );
@@ -100,14 +97,13 @@ public sealed class AlterJournalsController : InterfoldControllerBase
     }
 
     [HttpDelete("journals/{journalId}")]
-    public async Task<IActionResult> Delete(string journalId, [FromBody] AlterJournalActionRequest? req, CancellationToken ct)
+    public async Task<IActionResult> Delete(string journalId, [FromBody] BaseRequest? req, CancellationToken ct)
     {
         var envelope = new CommandEnvelope<DeleteAlterJournalEntryCommand>(
             OperationIds.JournalAlterDelete,
             Guid.NewGuid(),
             PrincipalId: PrincipalId,
             IdempotencyKey: GetIdempotencyKey(req?.IdempotencyKey),
-            ExpectedVersion: req?.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
             Payload: new DeleteAlterJournalEntryCommand(journalId)
         );
@@ -117,29 +113,28 @@ public sealed class AlterJournalsController : InterfoldControllerBase
     }
 
     [HttpPost("journals/{journalId}/lock")]
-    public async Task<IActionResult> Lock(string journalId, [FromBody] AlterJournalActionRequest? req, CancellationToken ct)
+    public async Task<IActionResult> Lock(string journalId, [FromBody] BaseRequest? req, CancellationToken ct)
         => await SetLockedInternal(journalId, true, OperationIds.JournalAlterLock, req, ct);
 
     [HttpPost("journals/{journalId}/unlock")]
-    public async Task<IActionResult> Unlock(string journalId, [FromBody] AlterJournalActionRequest? req, CancellationToken ct)
+    public async Task<IActionResult> Unlock(string journalId, [FromBody] BaseRequest? req, CancellationToken ct)
         => await SetLockedInternal(journalId, false, OperationIds.JournalAlterUnlock, req, ct);
 
     [HttpPost("journals/{journalId}/pin")]
-    public async Task<IActionResult> Pin(string journalId, [FromBody] AlterJournalActionRequest? req, CancellationToken ct)
+    public async Task<IActionResult> Pin(string journalId, [FromBody] BaseRequest? req, CancellationToken ct)
         => await SetPinnedInternal(journalId, true, OperationIds.JournalAlterPin, req, ct);
 
     [HttpPost("journals/{journalId}/unpin")]
-    public async Task<IActionResult> Unpin(string journalId, [FromBody] AlterJournalActionRequest? req, CancellationToken ct)
+    public async Task<IActionResult> Unpin(string journalId, [FromBody] BaseRequest? req, CancellationToken ct)
         => await SetPinnedInternal(journalId, false, OperationIds.JournalAlterUnpin, req, ct);
 
-    private async Task<IActionResult> SetLockedInternal(string journalId, bool locked, string operationId, AlterJournalActionRequest? req, CancellationToken ct)
+    private async Task<IActionResult> SetLockedInternal(string journalId, bool locked, string operationId, BaseRequest? req, CancellationToken ct)
     {
         var envelope = new CommandEnvelope<SetAlterJournalLockedCommand>(
             operationId,
             Guid.NewGuid(),
             PrincipalId: PrincipalId,
             IdempotencyKey: GetIdempotencyKey(req?.IdempotencyKey),
-            ExpectedVersion: req?.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
             Payload: new SetAlterJournalLockedCommand(journalId, locked)
         );
@@ -148,14 +143,13 @@ public sealed class AlterJournalsController : InterfoldControllerBase
         return result is OkObjectResult ? NoContent() : result;
     }
 
-    private async Task<IActionResult> SetPinnedInternal(string journalId, bool pinned, string operationId, AlterJournalActionRequest? req, CancellationToken ct)
+    private async Task<IActionResult> SetPinnedInternal(string journalId, bool pinned, string operationId, BaseRequest? req, CancellationToken ct)
     {
         var envelope = new CommandEnvelope<SetAlterJournalPinnedCommand>(
             operationId,
             Guid.NewGuid(),
             PrincipalId: PrincipalId,
             IdempotencyKey: GetIdempotencyKey(req?.IdempotencyKey),
-            ExpectedVersion: req?.ExpectedVersion,
             OccurredAt: DateTimeOffset.UtcNow,
             Payload: new SetAlterJournalPinnedCommand(journalId, pinned)
         );
@@ -164,22 +158,3 @@ public sealed class AlterJournalsController : InterfoldControllerBase
         return result is OkObjectResult ? NoContent() : result;
     }
 }
-
-public sealed record CreateAlterJournalRequest(
-    string Title,
-    string? IdempotencyKey = null,
-    long? ExpectedVersion = null
-);
-
-public sealed record UpdateAlterJournalRequest(
-    string? Title = null,
-    string? Content = null,
-    string? Color = null,
-    string? IdempotencyKey = null,
-    long? ExpectedVersion = null
-);
-
-public sealed record AlterJournalActionRequest(
-    string? IdempotencyKey = null,
-    long? ExpectedVersion = null
-);

@@ -1,4 +1,4 @@
-namespace Interfold.Api.Socket;
+namespace Interfold.Contracts;
 
 public static class SocketEventNames
 {

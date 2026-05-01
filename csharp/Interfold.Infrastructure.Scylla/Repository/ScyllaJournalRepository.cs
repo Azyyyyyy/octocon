@@ -551,7 +551,7 @@ public sealed class ScyllaJournalRepository : IJournalRepository
         }, _options, cancellationToken);
     }
 
-    public async Task<IReadOnlyList<GlobalJournalReadModel>> ListGlobalAsync(string systemId, CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<JournalReadModel>> ListGlobalAsync(string systemId, CancellationToken cancellationToken = default)
     {
         return await DatabaseTransientRetry.ExecuteScyllaAsync(async () =>
         {
@@ -565,7 +565,7 @@ public sealed class ScyllaJournalRepository : IJournalRepository
             );
             var entryRows = await session.ExecuteAsync(entriesQuery);
 
-            var result = new List<GlobalJournalReadModel>();
+            var result = new List<JournalReadModel>();
             foreach (var row in entryRows)
             {
                 var id = row.GetValue<Guid>("id");
@@ -577,7 +577,7 @@ public sealed class ScyllaJournalRepository : IJournalRepository
                 var alterRows = await session.ExecuteAsync(altersQuery);
                 var alterIds = alterRows.Select(r => (int)r.GetValue<short>("alter_id")).ToArray();
 
-                result.Add(new GlobalJournalReadModel(
+                result.Add(new JournalReadModel(
                     id.ToString("N"),
                     row.GetValue<string>("user_id"),
                     row.GetValue<string>("title"),
@@ -590,13 +590,13 @@ public sealed class ScyllaJournalRepository : IJournalRepository
                     alterIds));
             }
 
-            return (IReadOnlyList<GlobalJournalReadModel>)result
+            return (IReadOnlyList<JournalReadModel>)result
                 .OrderByDescending(e => e.Id)
                 .ToArray();
         }, _options, cancellationToken);
     }
 
-    public async Task<GlobalJournalReadModel?> GetGlobalAsync(string systemId, string entryId, CancellationToken cancellationToken = default)
+    public async Task<JournalReadModel?> GetGlobalAsync(string systemId, string entryId, CancellationToken cancellationToken = default)
     {
         return await DatabaseTransientRetry.ExecuteScyllaAsync(async () =>
         {
@@ -627,7 +627,7 @@ public sealed class ScyllaJournalRepository : IJournalRepository
                 .Select(r => (int)r.GetValue<short>("alter_id"))
                 .ToArray();
 
-            return new GlobalJournalReadModel(
+            return new JournalReadModel(
                 entryRow.GetValue<Guid>("id").ToString("N"),
                 entryRow.GetValue<string>("user_id"),
                 entryRow.GetValue<string>("title"),
