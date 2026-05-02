@@ -69,7 +69,7 @@ public sealed class EndFrontCommandHandler : ICommandHandler<EndFrontCommand, Fr
         var endedFrontWasPrimary = activeFronts.Any(front =>
             front.Alter.Id == command.Payload.AlterId && front.Primary);
 
-        var ended = await _frontingRepository.EndAsync(command.PrincipalId, command.Payload.AlterId, cancellationToken);
+        var ended = await _frontingRepository.EndAsync(command.PrincipalId, command.Payload.AlterId, DateTimeOffset.UtcNow, cancellationToken);
         if (!ended)
         {
             return RejectInvariant(command, "fronting:end_failed");

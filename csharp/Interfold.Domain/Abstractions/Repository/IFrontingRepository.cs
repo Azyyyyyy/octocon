@@ -6,9 +6,9 @@ public interface IFrontingRepository
 {
     Task<bool> IsFrontingAsync(string systemId, int alterId, CancellationToken cancellationToken = default);
 
-    Task<string?> StartAsync(string systemId, int alterId, string? comment, CancellationToken cancellationToken = default);
+    Task<string?> StartAsync(string systemId, int alterId, string? comment, DateTimeOffset startedAt, CancellationToken cancellationToken = default);
 
-    Task<bool> EndAsync(string systemId, int alterId, CancellationToken cancellationToken = default);
+    Task<bool> EndAsync(string systemId, int alterId, DateTimeOffset endedAt, CancellationToken cancellationToken = default);
 
     Task<bool> SetPrimaryAsync(string systemId, int? alterId, CancellationToken cancellationToken = default);
 

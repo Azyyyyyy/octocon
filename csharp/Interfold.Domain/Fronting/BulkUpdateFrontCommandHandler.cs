@@ -56,14 +56,14 @@ public sealed class BulkUpdateFrontCommandHandler : ICommandHandler<BulkUpdateFr
 
         foreach (var alterId in command.Payload.End)
         {
-            await _frontingRepository.EndAsync(command.PrincipalId, alterId, cancellationToken);
+            await _frontingRepository.EndAsync(command.PrincipalId, alterId, DateTimeOffset.UtcNow, cancellationToken);
         }
 
         foreach (var item in command.Payload.Start)
         {
             var alreadyFronting = await _frontingRepository.IsFrontingAsync(command.PrincipalId, item.AlterId, cancellationToken);
             if (!alreadyFronting)
-                await _frontingRepository.StartAsync(command.PrincipalId, item.AlterId, item.Comment, cancellationToken);
+                await _frontingRepository.StartAsync(command.PrincipalId, item.AlterId, item.Comment, DateTimeOffset.UtcNow, cancellationToken);
         }
 
         var result = new FrontCommandResult(command.PrincipalId, null, null, Replay: false);

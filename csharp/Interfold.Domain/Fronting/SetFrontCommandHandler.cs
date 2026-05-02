@@ -59,12 +59,13 @@ public sealed class SetFrontCommandHandler : ICommandHandler<SetFrontCommand, Fr
 
         var active = await _frontingRepository.ListActiveAsync(command.PrincipalId, cancellationToken);
         foreach (var front in active)
-            await _frontingRepository.EndAsync(command.PrincipalId, front.Front.AlterId, cancellationToken);
+            await _frontingRepository.EndAsync(command.PrincipalId, front.Front.AlterId, DateTimeOffset.UtcNow, cancellationToken);
 
         var frontId = await _frontingRepository.StartAsync(
             command.PrincipalId,
             command.Payload.AlterId,
             command.Payload.Comment,
+            DateTimeOffset.UtcNow,
             cancellationToken);
 
         if (string.IsNullOrWhiteSpace(frontId))

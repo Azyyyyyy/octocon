@@ -58,6 +58,7 @@ public sealed class InMemoryRegionalFrontingRepository : IFrontingRepository
         string systemId,
         int alterId,
         string? comment,
+        DateTimeOffset startedAt,
         CancellationToken cancellationToken = default
     )
     {
@@ -77,7 +78,7 @@ public sealed class InMemoryRegionalFrontingRepository : IFrontingRepository
                 FrontId = frontId,
                 AlterId = alterId,
                 Comment = comment,
-                StartedAt = DateTimeOffset.UtcNow
+                StartedAt = startedAt
             };
 
             var history = _historyBySystem.GetOrAdd(systemKey, _ => new List<FrontHistoryState>());
@@ -94,7 +95,7 @@ public sealed class InMemoryRegionalFrontingRepository : IFrontingRepository
         }
     }
 
-    public Task<bool> EndAsync(string systemId, int alterId, CancellationToken cancellationToken = default)
+    public Task<bool> EndAsync(string systemId, int alterId, DateTimeOffset endedAt, CancellationToken cancellationToken = default)
     {
         var systemKey = GetSystemKey(systemId);
 
@@ -118,7 +119,7 @@ public sealed class InMemoryRegionalFrontingRepository : IFrontingRepository
                          x.EndedAt is null);
                 if (historical is not null)
                 {
-                    historical.EndedAt = DateTimeOffset.UtcNow;
+                    historical.EndedAt = endedAt;
                 }
             }
 
@@ -253,7 +254,7 @@ public sealed class InMemoryRegionalFrontingRepository : IFrontingRepository
         if (found is null)
             return false;
 
-        return await EndAsync(systemId, found.Front.AlterId, cancellationToken);
+        return await EndAsync(systemId, found.Front.AlterId, DateTimeOffset.UtcNow, cancellationToken);
     }
 
     public Task<bool> DeleteFrontByIdAsync(string systemId, string frontId, CancellationToken cancellationToken = default)

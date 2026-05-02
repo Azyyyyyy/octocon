@@ -11,11 +11,13 @@ public sealed class ImportSpCommandHandler : ICommandHandler<ImportSpCommand, Se
 {
     private readonly IIdempotencyStore _idempotencyStore;
     private readonly IClusterEventBus _eventBus;
+    private readonly ISimplyPluralImportService _importService;
 
-    public ImportSpCommandHandler(IIdempotencyStore idempotencyStore, IClusterEventBus eventBus)
+    public ImportSpCommandHandler(IIdempotencyStore idempotencyStore, IClusterEventBus eventBus, ISimplyPluralImportService importService)
     {
         _idempotencyStore = idempotencyStore;
         _eventBus = eventBus;
+        _importService = importService;
     }
 
     public Task<CommandExecutionResult<SettingsCommandResult>> HandleAsync(CommandEnvelope<ImportSpCommand> command, CancellationToken cancellationToken = default)
@@ -33,13 +35,16 @@ public sealed class ImportSpCommandHandler : ICommandHandler<ImportSpCommand, Se
         CommandEnvelope<ImportSpCommand> command,
         CancellationToken cancellationToken)
     {
-        //TODO: Implement        
         var result = await SettingsCommandHelper.ExecuteAsync(
             command,
             "sp_imported",
             "settings:import:sp",
             _idempotencyStore,
-            _ => Task.FromResult(true),
+            async ct =>
+            {
+                var importResult = await _importService.ImportAsync(command.PrincipalId, command.Payload.Token, ct);
+                return importResult.Success;
+            },
             cancellationToken);
 
         if (result is { Accepted: true, Result.Replay: false })

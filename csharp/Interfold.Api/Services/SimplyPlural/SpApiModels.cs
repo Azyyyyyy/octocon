@@ -1,0 +1,167 @@
+using System.Text.Json.Serialization;
+
+namespace Interfold.Api.Services.SimplyPlural;
+
+// --- Wrapper: every SP API entity comes as { "id": "...", "content": { ... } } ---
+
+internal sealed class SpEntity<TContent>
+{
+    [JsonPropertyName("id")]
+    public string Id { get; set; } = string.Empty;
+
+    [JsonPropertyName("content")]
+    public TContent Content { get; set; } = default!;
+}
+
+// --- /me ---
+
+internal sealed class SpSystemContent
+{
+    [JsonPropertyName("desc")]
+    public string? Desc { get; set; }
+}
+
+// --- /customFields/{id} ---
+
+internal sealed class SpCustomFieldContent
+{
+    [JsonPropertyName("name")]
+    public string? Name { get; set; }
+
+    [JsonPropertyName("private")]
+    public bool Private { get; set; }
+
+    [JsonPropertyName("preventTrusted")]
+    public bool PreventTrusted { get; set; }
+}
+
+// --- /members/{id}  and  /customFronts/{id} ---
+
+internal sealed class SpMemberContent
+{
+    [JsonPropertyName("name")]
+    public string? Name { get; set; }
+
+    [JsonPropertyName("pronouns")]
+    public string? Pronouns { get; set; }
+
+    [JsonPropertyName("desc")]
+    public string? Desc { get; set; }
+
+    [JsonPropertyName("color")]
+    public string? Color { get; set; }
+
+    [JsonPropertyName("avatarUuid")]
+    public string? AvatarUuid { get; set; }
+
+    [JsonPropertyName("avatarUrl")]
+    public string? AvatarUrl { get; set; }
+
+    [JsonPropertyName("uid")]
+    public string? Uid { get; set; }
+
+    [JsonPropertyName("info")]
+    public Dictionary<string, string?>? Info { get; set; }
+
+    [JsonPropertyName("archived")]
+    public bool Archived { get; set; }
+
+    [JsonPropertyName("private")]
+    public bool Private { get; set; } = true;
+
+    [JsonPropertyName("preventTrusted")]
+    public bool PreventTrusted { get; set; } = true;
+}
+
+// --- /groups/{id} ---
+
+internal sealed class SpGroupContent
+{
+    [JsonPropertyName("name")]
+    public string? Name { get; set; }
+
+    [JsonPropertyName("desc")]
+    public string? Desc { get; set; }
+
+    [JsonPropertyName("color")]
+    public string? Color { get; set; }
+
+    [JsonPropertyName("parent")]
+    public string? Parent { get; set; }
+
+    [JsonPropertyName("members")]
+    public List<string>? Members { get; set; }
+
+    [JsonPropertyName("private")]
+    public bool Private { get; set; } = true;
+
+    [JsonPropertyName("preventTrusted")]
+    public bool PreventTrusted { get; set; } = true;
+}
+
+// --- /frontHistory/{id}  and  /fronters/ ---
+
+internal sealed class SpFrontContent
+{
+    [JsonPropertyName("member")]
+    public string? Member { get; set; }
+
+    [JsonPropertyName("startTime")]
+    public long StartTime { get; set; }
+
+    [JsonPropertyName("endTime")]
+    public long EndTime { get; set; }
+
+    [JsonPropertyName("customStatus")]
+    public string? CustomStatus { get; set; }
+}
+
+// --- /polls/{id} ---
+
+internal sealed class SpPollContent
+{
+    [JsonPropertyName("name")]
+    public string? Name { get; set; }
+
+    [JsonPropertyName("desc")]
+    public string? Desc { get; set; }
+
+    [JsonPropertyName("custom")]
+    public bool Custom { get; set; }
+
+    [JsonPropertyName("endTime")]
+    public long EndTime { get; set; }
+
+    [JsonPropertyName("allowAbstain")]
+    public bool AllowAbstain { get; set; }
+
+    [JsonPropertyName("allowVeto")]
+    public bool AllowVeto { get; set; }
+
+    [JsonPropertyName("options")]
+    public List<SpPollOption>? Options { get; set; }
+
+    [JsonPropertyName("votes")]
+    public List<SpPollVote>? Votes { get; set; }
+}
+
+internal sealed class SpPollOption
+{
+    [JsonPropertyName("name")]
+    public string? Name { get; set; }
+
+    [JsonPropertyName("color")]
+    public string? Color { get; set; }
+}
+
+internal sealed class SpPollVote
+{
+    [JsonPropertyName("id")]
+    public string? Id { get; set; }
+
+    [JsonPropertyName("vote")]
+    public string? Vote { get; set; }
+
+    [JsonPropertyName("comment")]
+    public string? Comment { get; set; }
+}

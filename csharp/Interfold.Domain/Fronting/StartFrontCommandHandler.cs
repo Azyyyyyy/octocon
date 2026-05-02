@@ -79,6 +79,7 @@ public sealed class StartFrontCommandHandler : ICommandHandler<StartFrontCommand
             command.PrincipalId,
             command.Payload.AlterId,
             command.Payload.Comment,
+            DateTimeOffset.UtcNow,
             cancellationToken
         );
 

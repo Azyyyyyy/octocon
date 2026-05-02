@@ -8,6 +8,7 @@ using Interfold.Api.Services;
 using Interfold.Api.Socket;
 using Interfold.Api.Swagger;
 using Interfold.Contracts.Configuration;
+using Interfold.Domain.Abstractions;
 using Interfold.Domain.Abstractions.Repository;
 using Interfold.Infrastructure.DependencyInjection;
 using Interfold.Infrastructure.InMemory;
@@ -76,6 +77,8 @@ builder.Services.AddSingleton<IAvatarStorage, LocalAvatarStorage>();
 builder.Services.AddHttpClient<GoogleOAuthService>();
 builder.Services.AddHttpClient<DiscordOAuthService>();
 builder.Services.AddHttpClient<AppleOAuthService>();
+builder.Services.AddHttpClient("SimplyPlural");
+builder.Services.AddSingleton<ISimplyPluralImportService, SimplyPluralImportService>();
 
 // --- Auth ---
 // Tokens are always self-issued by this backend after

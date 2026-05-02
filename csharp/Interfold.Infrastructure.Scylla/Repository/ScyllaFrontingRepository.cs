@@ -57,6 +57,7 @@ public sealed class ScyllaFrontingRepository : IFrontingRepository
         string systemId,
         int alterId,
         string? comment,
+        DateTimeOffset startedAt,
         CancellationToken cancellationToken = default
     )
     {
@@ -66,7 +67,6 @@ public sealed class ScyllaFrontingRepository : IFrontingRepository
             var normalizedSystemId = _keyspaceResolver.NormalizeSystemId(systemId);
             var keyspace = _keyspaceResolver.ResolveRegionalKeyspace(systemId);
             var frontGuid = Guid.NewGuid();
-            var startedAt = DateTimeOffset.UtcNow;
 
             var startBatch = new BatchStatement();
             startBatch.Add(new SimpleStatement(
@@ -94,7 +94,7 @@ public sealed class ScyllaFrontingRepository : IFrontingRepository
         }, _options, cancellationToken, _logger);
     }
 
-    public async Task<bool> EndAsync(string systemId, int alterId, CancellationToken cancellationToken = default)
+    public async Task<bool> EndAsync(string systemId, int alterId, DateTimeOffset endedAt, CancellationToken cancellationToken = default)
     {
         return await DatabaseTransientRetry.ExecuteScyllaAsync(async () =>
         {
@@ -113,8 +113,6 @@ public sealed class ScyllaFrontingRepository : IFrontingRepository
                 $"SELECT primary_front FROM {keyspace}.users WHERE id = ? LIMIT 1",
                 normalizedSystemId))).FirstOrDefault();
             var primaryAlterId = primaryRow?.GetValue<int?>("primary_front");
-
-            var endedAt = DateTimeOffset.UtcNow;
 
             var endBatch = new BatchStatement();
             endBatch.Add(new SimpleStatement(
