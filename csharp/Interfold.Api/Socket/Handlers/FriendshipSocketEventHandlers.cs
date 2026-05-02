@@ -23,8 +23,7 @@ public static class FriendshipSocketEventHandlers
                 [])
             : QualifyFriendship(friendship, context);
         
-        var payloadJson = WebSocketEvents.SerializeSocketJson(qualified);
-        await context.SendAsync(topic, joinRef, asArray, SocketEventNames.Friendships.Added, payloadJson);
+        await context.SendAsync(topic, joinRef, asArray, SocketEventNames.Friendships.Added, qualified);
     }
 
     public static Task HandleAsync(FriendshipRemovedEvent evt, SocketPushContext context)
@@ -84,19 +83,15 @@ public static class FriendshipSocketEventHandlers
             outgoing,
             context.CancellationToken);
 
-        var payloadJson = matched is null
-            ? WebSocketEvents.SerializeSocketJson(new
-            {
-                request = new FriendshipRequestModel(DateTimeOffset.UtcNow),
-                system = new FriendProfileReadModel(otherSystemId, string.Empty, string.Empty, string.Empty, string.Empty)
-            })
-            : WebSocketEvents.SerializeSocketJson(new
-            {
-                request = matched.Request,
-                system = matched.System with { AvatarUrl = AvatarUrlQualifier.Qualify(matched.System.AvatarUrl, context.RequestOrigin) }
-            });
+        var payload = matched is null
+            ? new FriendRequestSocketPayload(
+                new FriendshipRequestModel(DateTimeOffset.UtcNow),
+                new FriendProfileReadModel(otherSystemId, string.Empty, string.Empty, string.Empty, string.Empty))
+            : new FriendRequestSocketPayload(
+                matched.Request,
+                matched.System with { AvatarUrl = AvatarUrlQualifier.Qualify(matched.System.AvatarUrl, context.RequestOrigin) });
 
-        await context.SendAsync(topic, joinRef, asArray, eventName, payloadJson);
+        await context.SendAsync(topic, joinRef, asArray, eventName, payload);
     }
 
     private static async Task<FriendshipReadModel?> GetFriendshipWithRetryAsync(
@@ -178,12 +173,14 @@ public static class FriendshipSocketEventHandlers
             return;
         }
 
-        var payloadJson = WebSocketEvents.SerializeSocketJson(new Dictionary<string, object?>
+        ISocketPayload payload = payloadKey switch
         {
-            [payloadKey] = payloadValue
-        });
+            "friend_id" => new FriendIdSocketPayload(payloadValue),
+            "system_id" => new SystemIdSocketPayload(payloadValue),
+            _ => throw new InvalidOperationException($"Unrecognized socket payload key '{payloadKey}'.")
+        };
 
-        await context.SendAsync(topic, joinRef, asArray, eventName, payloadJson);
+        await context.SendAsync(topic, joinRef, asArray, eventName, payload);
     }
 
     private static FriendshipReadModel QualifyFriendship(FriendshipReadModel friendship, SocketPushContext context)

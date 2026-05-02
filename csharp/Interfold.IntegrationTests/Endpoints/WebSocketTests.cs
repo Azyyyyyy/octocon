@@ -314,15 +314,21 @@ public class WebSocketTests : BaseEndpointTest
                 if (TryReadId(response, out alterId))
                     return true;
 
-                if (response.TryGetProperty("body", out var bodyProp) &&
-                    bodyProp.ValueKind == JsonValueKind.String)
+                if (response.TryGetProperty("body", out var bodyProp))
                 {
-                    var body = bodyProp.GetString();
-                    if (!string.IsNullOrWhiteSpace(body))
+                    if (bodyProp.ValueKind == JsonValueKind.String)
                     {
-                        using var bodyDoc = JsonDocument.Parse(body);
-                        if (TryReadId(bodyDoc.RootElement, out alterId))
-                            return true;
+                        var body = bodyProp.GetString();
+                        if (!string.IsNullOrWhiteSpace(body))
+                        {
+                            using var bodyDoc = JsonDocument.Parse(body);
+                            if (TryReadId(bodyDoc.RootElement, out alterId))
+                                return true;
+                        }
+                    }
+                    else if (TryReadId(bodyProp, out alterId))
+                    {
+                        return true;
                     }
                 }
             }

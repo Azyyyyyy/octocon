@@ -1,45 +1,33 @@
 using System.Net.WebSockets;
-using System.Text;
 using System.Text.Json;
+using Interfold.Contracts;
 
 namespace Interfold.Api.Socket;
 
 public static class WebSocketEvents
 {
 
-public static async Task SendPhoenixPushAsync(
+public static async Task SendPhoenixPushAsync<TPayload>(
     WebSocket socket,
     string topic,
     string? joinReference,
     string eventName,
-    string payloadJson,
+    TPayload payload,
     bool replyAsArrayFrame,
     CancellationToken cancellationToken,
     SemaphoreSlim? sendGate = null)
 {
-    var escapedTopic = JsonSerializer.Serialize(topic);
-    var escapedJoinRef = joinReference is null ? "null" : JsonSerializer.Serialize(joinReference);
-    var escapedEvent = JsonSerializer.Serialize(eventName);
+    var bytes = replyAsArrayFrame
+        ? PhxArrayFrame.CreateBytes(joinReference, null, topic, eventName, payload)
+        : new PhxFrame<TPayload>
+        {
+            Topic = topic,
+            Event = eventName,
+            Payload = payload,
+            Ref = null,
+            JoinRef = joinReference
+        }.ToBytes();
 
-    var frame = replyAsArrayFrame
-        ?
-        "[" +
-        escapedJoinRef + "," +
-        "null," +
-        escapedTopic + "," +
-        escapedEvent + "," +
-        payloadJson +
-        "]"
-        :
-        "{" +
-        "\"topic\":" + escapedTopic + "," +
-        "\"event\":" + escapedEvent + "," +
-        "\"payload\":" + payloadJson + "," +
-        "\"ref\":null," +
-        "\"join_ref\":" + escapedJoinRef +
-        "}";
-
-    var bytes = Encoding.UTF8.GetBytes(frame);
     if (sendGate is not null)
     {
         await sendGate.WaitAsync(cancellationToken);
@@ -58,13 +46,6 @@ public static async Task SendPhoenixPushAsync(
     }
 }
 
-public static string SerializeSocketJson(this object value)
-{
-    var opts = new JsonSerializerOptions
-    {
-        PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower
-    };
-    return JsonSerializer.Serialize(value, opts);
-}
+public static string SerializeSocketJson<T>(this T value) => JsonSerializer.Serialize(value, SocketJson.Options);
 
 }

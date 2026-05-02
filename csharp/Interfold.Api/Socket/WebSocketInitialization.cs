@@ -1,5 +1,4 @@
 using System.Net.WebSockets;
-using System.Text.Json;
 using Interfold.Api.Helpers;
 using Interfold.Contracts;
 using Interfold.Contracts.Models;
@@ -15,47 +14,64 @@ public static async Task SendBatchedInitAsync(
     string topic,
     string? joinReference,
     bool replyAsArrayFrame,
-    string initJson,
+    SocketJoinInitPayload initPayload,
     CancellationToken cancellationToken,
     SemaphoreSlim? sendGate = null)
 {
-    using var initDoc = JsonDocument.Parse(initJson);
-    var root = initDoc.RootElement;
-
-    var alters = root.TryGetProperty("alters", out var altersEl) && altersEl.ValueKind == JsonValueKind.Array
-        ? altersEl.EnumerateArray().Select(x => x.GetRawText()).ToList()
-        : [];
-    var tags = root.TryGetProperty("tags", out var tagsEl) && tagsEl.ValueKind == JsonValueKind.Array
-        ? tagsEl.EnumerateArray().Select(x => x.GetRawText()).ToList()
-        : [];
-    var fronts = root.TryGetProperty("fronts", out var frontsEl) && frontsEl.ValueKind == JsonValueKind.Array
-        ? frontsEl.EnumerateArray().Select(x => x.GetRawText()).ToList()
-        : [];
-
-    await SendBatchedDataAsync(socket, topic, joinReference, replyAsArrayFrame, SocketEventNames.BatchedInit.Alters, "alters", 3000, alters, cancellationToken, sendGate);
-    await SendBatchedDataAsync(socket, topic, joinReference, replyAsArrayFrame, SocketEventNames.BatchedInit.Tags, "tags", 1000, tags, cancellationToken, sendGate);
-    await SendBatchedDataAsync(socket, topic, joinReference, replyAsArrayFrame, SocketEventNames.BatchedInit.Fronts, "fronts", 50, fronts, cancellationToken, sendGate);
+    await SendBatchedDataAsync(
+        socket,
+        topic,
+        joinReference,
+        replyAsArrayFrame,
+        SocketEventNames.BatchedInit.Alters,
+        3000,
+        initPayload.Alters,
+        (batchIndex, totalBatches, batch) => new SocketBatchedAltersPayload(batchIndex, totalBatches, batch),
+        cancellationToken,
+        sendGate);
+    await SendBatchedDataAsync(
+        socket,
+        topic,
+        joinReference,
+        replyAsArrayFrame,
+        SocketEventNames.BatchedInit.Tags,
+        1000,
+        initPayload.Tags,
+        (batchIndex, totalBatches, batch) => new SocketBatchedTagsPayload(batchIndex, totalBatches, batch),
+        cancellationToken,
+        sendGate);
+    await SendBatchedDataAsync(
+        socket,
+        topic,
+        joinReference,
+        replyAsArrayFrame,
+        SocketEventNames.BatchedInit.Fronts,
+        50,
+        initPayload.Fronts,
+        (batchIndex, totalBatches, batch) => new SocketBatchedFrontsPayload(batchIndex, totalBatches, batch),
+        cancellationToken,
+        sendGate);
 
     await WebSocketEvents.SendPhoenixPushAsync(
         socket,
         topic,
         joinReference,
         eventName: SocketEventNames.BatchedInit.Complete,
-        payloadJson: "{}",
+        payload: new EmptyPayload(),
         replyAsArrayFrame,
         cancellationToken,
         sendGate);
 }
 
-static async Task SendBatchedDataAsync(
+static async Task SendBatchedDataAsync<TItem, TPayload>(
     WebSocket socket,
     string topic,
     string? joinReference,
     bool replyAsArrayFrame,
     string eventName,
-    string dataName,
     int batchSize,
-    List<string> data,
+    IReadOnlyList<TItem> data,
+    Func<int, int, IReadOnlyList<TItem>, TPayload> payloadFactory,
     CancellationToken cancellationToken,
     SemaphoreSlim? sendGate = null)
 {
@@ -74,20 +90,14 @@ static async Task SendBatchedDataAsync(
 
         var start = i * batchSize;
         var count = Math.Min(batchSize, data.Count - start);
-        var batchItems = string.Join(",", data.GetRange(start, count));
-        var payloadJson =
-            "{" +
-            "\"batch_index\":" + (i + 1) + "," +
-            "\"total_batches\":" + totalBatches + "," +
-            "\"" + dataName + "\":[" + batchItems + "]" +
-            "}";
+        var batchItems = data.Skip(start).Take(count).ToArray();
 
         await WebSocketEvents.SendPhoenixPushAsync(
             socket,
             topic,
             joinReference,
             eventName,
-            payloadJson,
+            payloadFactory(i + 1, totalBatches, batchItems),
             replyAsArrayFrame,
             cancellationToken,
             sendGate);
@@ -121,7 +131,7 @@ FetchSocketInitDataAsync(
     return (profileTask.Result, altersTask.Result, frontsTask.Result, tagsTask.Result, fieldsTask.Result, encryptionTask.Result);
 }
 
-public static async Task<string> BuildJoinInitJsonAsync(
+public static async Task<SocketJoinInitPayload> BuildJoinInitPayloadAsync(
     HttpContext context,
     string systemId,
     CancellationToken ct)
@@ -139,60 +149,50 @@ public static async Task<string> BuildJoinInitJsonAsync(
         sp.GetRequiredService<IEncryptionStateRepository>(),
         ct);
 
-    var fields = settingsFields
-        .OrderBy(x => x.Index)
-        .Select(x => (object)new Dictionary<string, object?>
-        {
-            ["id"] = x.Id,
-            ["name"] = x.Name,
-            ["type"] = x.Type,
-            ["security_level"] = x.SecurityLevel,
-            ["locked"] = x.Locked,
-            ["index"] = x.Index
-        })
-        .ToArray();
-
-    var primaryFront = fronts.FirstOrDefault(x => x.Primary)?.Front.AlterId;
-
-    var qualifyUrl = (string? url) =>
-        AvatarUrlQualifier.Qualify(url, context.Request.Scheme, context.Request.Host);
-    var linkedFlag = (string? value) => string.IsNullOrWhiteSpace(value) ? null : "SET";
-
-    var system = new Dictionary<string, object?>
-    {
-        ["id"] = profile?.SystemId ?? systemId,
-        ["username"] = profile?.Username,
-        ["description"] = profile?.Description,
-        ["avatar_url"] = qualifyUrl(profile?.AvatarUrl),
-        ["discord_id"] = linkedFlag(profile?.DiscordId),
-        ["google_id"] = null,
-        ["apple_id"] = linkedFlag(profile?.AppleId),
-        ["email"] = linkedFlag(profile?.Email),
-        // Keep parity with Elixir's SystemJSON.data_me defaults.
-        ["autoproxy_mode"] = "off",
-        ["show_system_tag"] = false,
-        ["lifetime_alter_count"] = alters.Count,
-        ["primary_front"] = primaryFront,
-        ["fields"] = fields,
-        ["encryption_initialized"] = encryptionState?.Initialized ?? false
-    };
-
     foreach (var alter in alters)
-        alter.AvatarUrl = qualifyUrl(alter.AvatarUrl);
+        alter.AvatarUrl = AvatarUrlQualifier.Qualify(alter.AvatarUrl, context.Request.Scheme, context.Request.Host);
 
-    var initData = new
-    {
-        system,
+    return new SocketJoinInitPayload(
+        BuildSelfReadModel(
+            systemId,
+            profile,
+            alters,
+            fronts,
+            settingsFields,
+            encryptionState,
+            $"{context.Request.Scheme}://{context.Request.Host}"),
         alters,
         fronts,
-        tags
-    };
+        tags);
+}
 
-    var opts = new JsonSerializerOptions
-    {
-        PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower
-    };
-    return JsonSerializer.Serialize(initData, opts);
+public static SocketSelfReadModel BuildSelfReadModel(
+    string systemId,
+    AccountPublicProfileReadModel? profile,
+    IReadOnlyList<AlterReadModel> alters,
+    IReadOnlyList<FrontActiveReadModel> fronts,
+    IReadOnlyList<SettingsFieldReadModel> settingsFields,
+    EncryptionState? encryptionState,
+    string? requestOrigin)
+{
+    var primaryFront = fronts.FirstOrDefault(x => x.Primary)?.Front.AlterId;
+    var linkedFlag = (string? value) => string.IsNullOrWhiteSpace(value) ? null : "SET";
+
+    return new SocketSelfReadModel(
+        profile?.SystemId ?? systemId,
+        profile?.Username,
+        profile?.Description,
+        AvatarUrlQualifier.Qualify(profile?.AvatarUrl, requestOrigin),
+        linkedFlag(profile?.DiscordId),
+        null,
+        linkedFlag(profile?.AppleId),
+        linkedFlag(profile?.Email),
+        "off",
+        false,
+        alters.Count,
+        primaryFront,
+        settingsFields.OrderBy(x => x.Index).ToArray(),
+        encryptionState?.Initialized ?? false);
 }
 
 }

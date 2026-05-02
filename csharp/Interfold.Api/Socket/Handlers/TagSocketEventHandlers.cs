@@ -19,8 +19,7 @@ public static class TagSocketEventHandlers
             return;
         }
 
-        var payloadJson = WebSocketEvents.SerializeSocketJson(new Dictionary<string, object?> { ["tag_id"] = evt.TagId });
-        await context.SendAsync(topic, joinRef, asArray, SocketEventNames.Tags.Deleted, payloadJson);
+        await context.SendAsync(topic, joinRef, asArray, SocketEventNames.Tags.Deleted, new TagDeletedSocketPayload(evt.TagId));
     }
 
     private static async Task HandleUpsertAsync(string systemId, string tagId, string eventName, SocketPushContext context, ITagRepository tagRepository)
@@ -36,7 +35,6 @@ public static class TagSocketEventHandlers
             return;
         }
 
-        var payloadJson = WebSocketEvents.SerializeSocketJson(new { tag });
-        await context.SendAsync(topic, joinRef, asArray, eventName, payloadJson);
+        await context.SendAsync(topic, joinRef, asArray, eventName, new TagSocketPayload(tag));
     }
 }

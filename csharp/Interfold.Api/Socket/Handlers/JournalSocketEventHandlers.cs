@@ -19,8 +19,7 @@ public static class JournalSocketEventHandlers
             return;
         }
 
-        var payloadJson = WebSocketEvents.SerializeSocketJson(new { entry_id = evt.EntryId });
-        await context.SendAsync(topic, joinRef, asArray, SocketEventNames.Journals.GlobalDeleted, payloadJson);
+        await context.SendAsync(topic, joinRef, asArray, SocketEventNames.Journals.GlobalDeleted, new EntryDeletedSocketPayload(evt.EntryId));
     }
 
     public static async Task HandleAsync(AlterJournalEntryCreatedEvent evt, SocketPushContext context, IJournalRepository journalRepository)
@@ -36,8 +35,7 @@ public static class JournalSocketEventHandlers
             return;
         }
 
-        var payloadJson = WebSocketEvents.SerializeSocketJson(new { entry_id = evt.EntryId });
-        await context.SendAsync(topic, joinRef, asArray, SocketEventNames.Journals.AlterDeleted, payloadJson);
+        await context.SendAsync(topic, joinRef, asArray, SocketEventNames.Journals.AlterDeleted, new EntryDeletedSocketPayload(evt.EntryId));
     }
 
     private static async Task HandleGlobalUpsertAsync(string systemId, string entryId, string eventName, SocketPushContext context, IJournalRepository journalRepository)
@@ -53,8 +51,7 @@ public static class JournalSocketEventHandlers
             return;
         }
 
-        var payloadJson = WebSocketEvents.SerializeSocketJson(new { entry });
-        await context.SendAsync(topic, joinRef, asArray, eventName, payloadJson);
+        await context.SendAsync(topic, joinRef, asArray, eventName, new GlobalJournalSocketPayload(entry));
     }
 
     private static async Task HandleAlterUpsertAsync(string systemId, string entryId, string eventName, SocketPushContext context, IJournalRepository journalRepository)
@@ -70,7 +67,6 @@ public static class JournalSocketEventHandlers
             return;
         }
 
-        var payloadJson = WebSocketEvents.SerializeSocketJson(new { entry });
-        await context.SendAsync(topic, joinRef, asArray, eventName, payloadJson);
+        await context.SendAsync(topic, joinRef, asArray, eventName, new AlterJournalSocketPayload(entry));
     }
 }

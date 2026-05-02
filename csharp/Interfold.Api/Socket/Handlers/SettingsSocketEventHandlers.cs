@@ -1,4 +1,3 @@
-using Interfold.Api.Helpers;
 using Interfold.Contracts;
 using Interfold.Contracts.Events;
 using Interfold.Domain.Abstractions.Repository;
@@ -15,8 +14,7 @@ public static class SettingsSocketEventHandlers
         }
 
         var fields = await fieldRepository.ListAsync(evt.SystemId, context.CancellationToken).ConfigureAwait(false);
-        var payloadJson = WebSocketEvents.SerializeSocketJson(new { fields });
-        await context.SendAsync(topic, joinRef, asArray, SocketEventNames.Settings.FieldsUpdated, payloadJson);
+        await context.SendAsync(topic, joinRef, asArray, SocketEventNames.Settings.FieldsUpdated, new SettingsFieldsUpdatedPayload(fields));
     }
 
     public static async Task HandleAsync(
@@ -42,48 +40,21 @@ public static class SettingsSocketEventHandlers
 
         var profile = profileTask.Result;
 
-        var fields = fieldsTask.Result
-            .OrderBy(x => x.Index)
-            .Select(x => (object)new Dictionary<string, object?>
-            {
-                ["id"] = x.Id,
-                ["name"] = x.Name,
-                ["type"] = x.Type,
-                ["security_level"] = x.SecurityLevel,
-                ["locked"] = x.Locked,
-                ["index"] = x.Index
-            })
-            .ToArray();
-
-        var primaryFront = frontsTask.Result.FirstOrDefault(x => x.Primary)?.Front.AlterId;
-        var linkedFlag = (string? value) => string.IsNullOrWhiteSpace(value) ? null : "SET";
-
         if (evt.EmitUsernameUpdated && profile?.Username is not null)
         {
-            var usernamePayloadJson = WebSocketEvents.SerializeSocketJson(new { username = profile.Username });
-            await context.SendAsync(topic, joinRef, asArray, SocketEventNames.Settings.UsernameUpdated, usernamePayloadJson);
+            await context.SendAsync(topic, joinRef, asArray, SocketEventNames.Settings.UsernameUpdated, new SettingsUsernameUpdatedPayload(profile.Username));
         }
 
-        var selfData = new Dictionary<string, object?>
-        {
-            ["id"] = profile?.SystemId ?? evt.SystemId,
-            ["username"] = profile?.Username,
-            ["description"] = profile?.Description,
-            ["avatar_url"] = AvatarUrlQualifier.Qualify(profile?.AvatarUrl, context.RequestOrigin),
-            ["discord_id"] = linkedFlag(profile?.DiscordId),
-            ["google_id"] = null,
-            ["apple_id"] = linkedFlag(profile?.AppleId),
-            ["email"] = linkedFlag(profile?.Email),
-            ["autoproxy_mode"] = "off",
-            ["show_system_tag"] = false,
-            ["lifetime_alter_count"] = altersTask.Result.Count,
-            ["primary_front"] = primaryFront,
-            ["fields"] = fields,
-            ["encryption_initialized"] = encryptionTask.Result?.Initialized ?? false
-        };
+        var selfData = WebSocketInitialization.BuildSelfReadModel(
+            evt.SystemId,
+            profile,
+            altersTask.Result,
+            frontsTask.Result,
+            fieldsTask.Result,
+            encryptionTask.Result,
+            context.RequestOrigin);
 
-        var payloadJson = WebSocketEvents.SerializeSocketJson(new { data = selfData });
-        await context.SendAsync(topic, joinRef, asArray, SocketEventNames.Settings.SelfUpdated, payloadJson);
+        await context.SendAsync(topic, joinRef, asArray, SocketEventNames.Settings.SelfUpdated, new SettingsSelfUpdatedPayload(selfData));
     }
 
     public static Task HandleAsync(SettingsAccountDeletedSignalEvent evt, SocketPushContext context)
@@ -108,7 +79,7 @@ public static class SettingsSocketEventHandlers
             return;
         }
 
-        await context.SendAsync(topic, joinRef, asArray, eventName, "{}");
+        await context.SendAsync(topic, joinRef, asArray, eventName, new EmptyPayload());
     }
 
     public static async Task HandleAsync(SettingsAccountLinkedEvent evt, SocketPushContext context)
@@ -131,14 +102,14 @@ public static class SettingsSocketEventHandlers
             return;
         }
 
-        var payloadJson = evt.ProviderKey switch
+        ISocketPayload payload = evt.ProviderKey switch
         {
-            "discord" => WebSocketEvents.SerializeSocketJson(new { discord_id = evt.Identity }),
-            "google" => WebSocketEvents.SerializeSocketJson(new { email = evt.Identity }),
-            "apple" => WebSocketEvents.SerializeSocketJson(new { apple_id = evt.Identity }),
+            "discord" => new DiscordAccountLinkedPayload(evt.Identity),
+            "google" => new GoogleAccountLinkedPayload(evt.Identity),
+            "apple" => new AppleAccountLinkedPayload(evt.Identity),
             _ => throw new InvalidOperationException("Unrecognized provider key") //Should never hit due to the earlier check, but satisfies the compiler
         };
 
-        await context.SendAsync(topic, joinRef, asArray, eventName, payloadJson);
+        await context.SendAsync(topic, joinRef, asArray, eventName, payload);
     }
 }

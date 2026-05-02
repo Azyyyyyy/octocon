@@ -19,12 +19,12 @@ public sealed class PhxFrame<TPayload>
     public TPayload? Payload { get; init; }
 
     [JsonPropertyName("ref")]
-    public string Ref { get; init; } = string.Empty;
+    public string? Ref { get; init; }
 
     [JsonPropertyName("join_ref")]
-    public string JoinRef { get; init; } = string.Empty;
+    public string? JoinRef { get; init; }
 
-    public byte[] ToBytes() => Encoding.UTF8.GetBytes(JsonSerializer.Serialize(this));
+    public byte[] ToBytes() => Encoding.UTF8.GetBytes(JsonSerializer.Serialize(this, SocketJson.Options));
 }
 
 /// <summary>
@@ -117,9 +117,9 @@ public class BodyJson<T> : JsonConverter<T>
 public static class PhxArrayFrame
 {
     public static byte[] CreateBytes<TPayload>(
-        string joinRef, string @ref, string topic, string @event, TPayload payload)
+        string? joinRef, string? @ref, string topic, string @event, TPayload payload)
     {
         var array = new object?[] { joinRef, @ref, topic, @event, (object?)payload };
-        return Encoding.UTF8.GetBytes(JsonSerializer.Serialize(array));
+        return Encoding.UTF8.GetBytes(JsonSerializer.Serialize(array, SocketJson.Options));
     }
 }

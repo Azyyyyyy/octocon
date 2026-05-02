@@ -20,8 +20,7 @@ public static class AlterSocketEventHandlers
             return;
         }
 
-        var payloadJson = WebSocketEvents.SerializeSocketJson(new Dictionary<string, object?> { ["alter_id"] = evt.AlterId });
-        await context.SendAsync(topic, joinRef, asArray, SocketEventNames.Alters.Deleted, payloadJson);
+        await context.SendAsync(topic, joinRef, asArray, SocketEventNames.Alters.Deleted, new AlterDeletedSocketPayload(evt.AlterId));
     }
 
     private static async Task HandleUpsertAsync(string systemId, int alterId, string eventName, SocketPushContext context, IAlterRepository alterRepository)
@@ -38,7 +37,6 @@ public static class AlterSocketEventHandlers
         }
 
         alter.AvatarUrl = AvatarUrlQualifier.Qualify(alter.AvatarUrl, context.RequestOrigin);
-        var payloadJson = WebSocketEvents.SerializeSocketJson(new { alter });
-        await context.SendAsync(topic, joinRef, asArray, eventName, payloadJson);
+        await context.SendAsync(topic, joinRef, asArray, eventName, new AlterSocketPayload(alter));
     }
 }

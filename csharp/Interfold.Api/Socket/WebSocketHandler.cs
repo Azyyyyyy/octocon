@@ -7,6 +7,8 @@ using Microsoft.IdentityModel.Tokens;
 using System.Security.Claims;
 using System.Security.Cryptography;
 using Interfold.Api.Helpers;
+using Interfold.Api.Models;
+using Interfold.Contracts;
 using Interfold.Contracts.Configuration;
 using Interfold.Domain.Abstractions.Repository;
 using Microsoft.Extensions.Options;
@@ -124,7 +126,7 @@ public static async Task HandleUserSocketAsync(HttpContext context)
                 reference,
                 joinReference,
                 status: "ok",
-                responseJson: "{}",
+                response: new EmptyPayload(),
                 replyAsArrayFrame,
                 context.RequestAborted,
                 sendGate);
@@ -197,7 +199,7 @@ public static async Task HandleUserSocketAsync(HttpContext context)
                     reference,
                     joinReference,
                     status: "error",
-                    responseJson: "{\"reason\":\"unsupported_protocol_version\"}",
+                    response: new SocketReasonResponse("unsupported_protocol_version"),
                     replyAsArrayFrame,
                         context.RequestAborted,
                         sendGate);
@@ -214,7 +216,7 @@ public static async Task HandleUserSocketAsync(HttpContext context)
                         reference,
                         joinReference,
                         status: "error",
-                        responseJson: "{\"reason\":\"rate_limited\"}",
+                        response: new SocketReasonResponse("rate_limited"),
                         replyAsArrayFrame,
                         context.RequestAborted,
                         sendGate);
@@ -226,46 +228,35 @@ public static async Task HandleUserSocketAsync(HttpContext context)
                 topicReplyAsArrayFrame[topic] = replyAsArrayFrame;
                 topicJoinReference[topic] = joinReference;
 
-                var initJson = await WebSocketInitialization.BuildJoinInitJsonAsync(context, joinedSystemId, context.RequestAborted);
+                var initPayload = await WebSocketInitialization.BuildJoinInitPayloadAsync(context, joinedSystemId, context.RequestAborted);
                 var useBatchedInit = false;
 
                 if (!isReconnect)
                 {
-                    var estimatedEncodedBytes = (int)(Encoding.UTF8.GetByteCount(initJson) * 1.1);
+                    var estimatedEncodedBytes = (int)(Encoding.UTF8.GetByteCount(WebSocketEvents.SerializeSocketJson(initPayload)) * 1.1);
                     useBatchedInit = forceBatch
                         || (string.Equals(platform, "ios", StringComparison.OrdinalIgnoreCase)
                             && estimatedEncodedBytes > batchedInitThresholdBytes
                             && protocolVersion >= new Version(2, 0, 0));
                 }
 
-                string joinResponseJson;
+                object joinResponse;
                 if (isReconnect)
                 {
-                    using var reconnectDoc = JsonDocument.Parse(initJson);
-                    var reconnectSystemJson = reconnectDoc.RootElement.TryGetProperty("system", out var reconnectSystemEl)
-                        ? reconnectSystemEl.GetRawText()
-                        : "null";
-                    joinResponseJson = "{\"system\":" + reconnectSystemJson + "}";
+                    joinResponse = new SocketJoinReconnectPayload(initPayload.System);
                 }
                 else if (useBatchedInit)
                 {
-                    using var initDoc = JsonDocument.Parse(initJson);
-                    var systemJson = initDoc.RootElement.TryGetProperty("system", out var systemEl)
-                        ? systemEl.GetRawText()
-                        : "null";
-
-                    joinResponseJson =
-                        "{" +
-                        "\"batched\":true," +
-                        "\"system\":" + systemJson + "," +
-                        "\"alters\":null," +
-                        "\"fronts\":null," +
-                        "\"tags\":null" +
-                        "}";
+                    joinResponse = new SocketJoinBatchedPayload(
+                        Batched: true,
+                        System: initPayload.System,
+                        Alters: null,
+                        Fronts: null,
+                        Tags: null);
                 }
                 else
                 {
-                    joinResponseJson = initJson;
+                    joinResponse = initPayload;
                 }
 
                 await SendPhoenixReplyAsync(
@@ -274,7 +265,7 @@ public static async Task HandleUserSocketAsync(HttpContext context)
                     reference,
                     joinReference,
                     status: "ok",
-                    responseJson: joinResponseJson,
+                    response: joinResponse,
                     replyAsArrayFrame,
                     context.RequestAborted,
                     sendGate);
@@ -286,7 +277,7 @@ public static async Task HandleUserSocketAsync(HttpContext context)
                         topic,
                         topicJoinReference[topic],
                         topicReplyAsArrayFrame[topic],
-                        initJson,
+                        initPayload,
                         context.RequestAborted,
                         sendGate);
                 }
@@ -300,7 +291,7 @@ public static async Task HandleUserSocketAsync(HttpContext context)
                     reference,
                     joinReference,
                     status: "error",
-                    responseJson: WebSocketEvents.SerializeSocketJson(new { reason = unauthorizedReason }),
+                    response: new SocketReasonResponse(unauthorizedReason),
                     replyAsArrayFrame,
                     context.RequestAborted,
                     sendGate);
@@ -320,7 +311,7 @@ public static async Task HandleUserSocketAsync(HttpContext context)
                     reference,
                     joinReference,
                     status: "error",
-                    responseJson: "{\"reason\":\"not_joined\"}",
+                    response: new SocketReasonResponse("not_joined"),
                     replyAsArrayFrame,
                     context.RequestAborted,
                     sendGate);
@@ -328,7 +319,6 @@ public static async Task HandleUserSocketAsync(HttpContext context)
             }
 
             var endpointResult = await HandleEndpointProxyAsync(context, payload, token, joinedSystemId);
-            var endpointResponseJson = JsonSerializer.Serialize(endpointResult);
 
             await SendPhoenixReplyAsync(
                 socket,
@@ -336,26 +326,27 @@ public static async Task HandleUserSocketAsync(HttpContext context)
                 reference,
                 joinReference,
                 status: "ok",
-                responseJson: endpointResponseJson,
+                response: endpointResult,
                 replyAsArrayFrame,
                 context.RequestAborted,
                 sendGate);
             continue;
         }
 
+        //TODO: Add phx_leave
         await SendPhoenixReplyAsync(
             socket,
             topic,
             reference,
             joinReference,
             status: "error",
-            responseJson: "{\"reason\":\"event_not_implemented\"}",
+            response: new SocketReasonResponse("event_not_implemented"),
             replyAsArrayFrame,
             context.RequestAborted,
             sendGate);
     }
 
-    pushCts.Cancel();
+    await pushCts.CancelAsync();
     try
     {
         await socketPushTask;
@@ -365,7 +356,7 @@ public static async Task HandleUserSocketAsync(HttpContext context)
         // Expected on socket shutdown.
     }
 
-    if (socket.State == WebSocketState.Open || socket.State == WebSocketState.CloseReceived)
+    if (socket.State is WebSocketState.Open or WebSocketState.CloseReceived)
     {
         await socket.CloseAsync(
             WebSocketCloseStatus.NormalClosure,
@@ -374,7 +365,7 @@ public static async Task HandleUserSocketAsync(HttpContext context)
     }
 }
 
-static async Task<object> HandleEndpointProxyAsync(
+static async Task<SocketEndpointProxyResponse> HandleEndpointProxyAsync(
     HttpContext websocketContext,
     JsonElement? payload,
     string socketToken,
@@ -382,11 +373,12 @@ static async Task<object> HandleEndpointProxyAsync(
 {
     if (payload is null || payload.Value.ValueKind != JsonValueKind.Object)
     {
-        return new
-        {
-            status = StatusCodes.Status400BadRequest,
-            body = "{\"error\":\"Invalid endpoint payload.\",\"code\":\"socket_endpoint_payload_invalid\"}"
-        };
+        return new SocketEndpointProxyResponse(
+            StatusCodes.Status400BadRequest,
+            ToJsonString(new ErrorResponse(
+                "Invalid endpoint payload.",
+                "socket_endpoint_payload_invalid",
+                System.Net.HttpStatusCode.BadRequest)));
     }
 
     var payloadObj = payload.Value;
@@ -402,20 +394,22 @@ static async Task<object> HandleEndpointProxyAsync(
 
     if (string.IsNullOrWhiteSpace(method) || string.IsNullOrWhiteSpace(path))
     {
-        return new
-        {
-            status = StatusCodes.Status400BadRequest,
-            body = "{\"error\":\"Endpoint payload must include method and path.\",\"code\":\"socket_endpoint_method_path_required\"}"
-        };
+        return new SocketEndpointProxyResponse(
+            StatusCodes.Status400BadRequest,
+            ToJsonString(new ErrorResponse(
+                "Endpoint payload must include method and path.",
+                "socket_endpoint_method_path_required",
+                System.Net.HttpStatusCode.BadRequest)));
     }
 
     if (!path.StartsWith("/api", StringComparison.OrdinalIgnoreCase))
     {
-        return new
-        {
-            status = StatusCodes.Status403Forbidden,
-            body = "{\"error\":\"Socket endpoint relay is restricted to /api paths.\",\"code\":\"socket_endpoint_path_forbidden\"}"
-        };
+        return new SocketEndpointProxyResponse(
+            StatusCodes.Status403Forbidden,
+            ToJsonString(new ErrorResponse(
+                "Socket endpoint relay is restricted to /api paths.",
+                "socket_endpoint_path_forbidden",
+                System.Net.HttpStatusCode.Forbidden)));
     }
 
     var targetUri = $"{websocketContext.Request.Scheme}://{websocketContext.Request.Host}{path}";
@@ -444,12 +438,11 @@ static async Task<object> HandleEndpointProxyAsync(
     using var response = await httpClient.SendAsync(request, websocketContext.RequestAborted);
     var responseBody = await response.Content.ReadAsStringAsync(websocketContext.RequestAborted);
 
-    return new
-    {
-        status = (int)response.StatusCode,
-        body = responseBody
-    };
+    return new SocketEndpointProxyResponse((int)response.StatusCode, responseBody);
 }
+
+static string ToJsonString<T>(T value)
+    => JsonSerializer.Serialize(value, SocketJson.Options);
 
 static async Task<(bool IsAuthorized, string? FailureReason)> IsSocketJoinTokenAuthorizedAsync(
     HttpContext context,
@@ -710,7 +703,7 @@ static string NormalizePem(string pem)
 
     // Normalize various line ending formats to actual newlines
     var normalized = pem
-        .Replace("\\r\\n", "\n", StringComparison.Ordinal)  // Escaped Windows (\r\n became \\r\\n)
+        .Replace(@"\r\n", "\n", StringComparison.Ordinal)  // Escaped Windows (\r\n became \\r\\n)
         .Replace("\\r", "\n", StringComparison.Ordinal)     // Escaped carriage return
         .Replace("\\n", "\n", StringComparison.Ordinal)     // Escaped newline
         .Replace("\r\n", "\n", StringComparison.Ordinal)    // Windows line endings
@@ -737,7 +730,7 @@ static bool TryParsePhoenixFrame(
 
     var trimmed = frame.TrimStart();
 
-    if (trimmed.StartsWith("[", StringComparison.Ordinal))
+    if (trimmed.StartsWith('['))
     {
         try
         {
@@ -829,50 +822,29 @@ static bool TryParsePhoenixFrame(
     }
 }
 
-static async Task SendPhoenixReplyAsync(
-    WebSocket socket,
-    string topic,
-    string? reference,
-    string? joinReference,
-    string status,
-    string responseJson,
-    bool replyAsArrayFrame,
-    CancellationToken cancellationToken,
-    SemaphoreSlim? sendGate = null)
-{
-    var escapedTopic = JsonSerializer.Serialize(topic);
-    // Preserve null so the client receives null rather than empty-string, which
-    // Phoenix clients use to distinguish heartbeat replies from channel pushes.
-    var escapedRef = reference is null ? "null" : JsonSerializer.Serialize(reference);
-    var escapedJoinRef = joinReference is null ? "null" : JsonSerializer.Serialize(joinReference);
-    var escapedStatus = JsonSerializer.Serialize(status);
-    var escapedEvent = JsonSerializer.Serialize("phx_reply");
+ static async Task SendPhoenixReplyAsync<TResponse>(
+     WebSocket socket,
+     string topic,
+     string? reference,
+     string? joinReference,
+     string status,
+     TResponse response,
+     bool replyAsArrayFrame,
+     CancellationToken cancellationToken,
+     SemaphoreSlim? sendGate = null)
+ {
+     var payload = new PhoenixReplyPayload<TResponse>(status, response);
+     var bytes = replyAsArrayFrame
+         ? PhxArrayFrame.CreateBytes(joinReference, reference, topic, "phx_reply", payload)
+         : new PhxFrame<PhoenixReplyPayload<TResponse>>
+         {
+             Topic = topic,
+             Event = "phx_reply",
+             Payload = payload,
+             Ref = reference,
+             JoinRef = joinReference
+         }.ToBytes();
 
-    var payloadJson =
-        "{" +
-        "\"status\":" + escapedStatus + "," +
-        "\"response\":" + responseJson +
-        "}";
-
-    var frame = replyAsArrayFrame
-        ?
-        "[" +
-        escapedJoinRef + "," +
-        escapedRef + "," +
-        escapedTopic + "," +
-        escapedEvent + "," +
-        payloadJson +
-        "]"
-        :
-        "{" +
-        "\"topic\":" + escapedTopic + "," +
-        "\"event\":\"phx_reply\"," +
-        "\"payload\":" + payloadJson + "," +
-        "\"ref\":" + escapedRef + "," +
-        "\"join_ref\":" + escapedJoinRef +
-        "}";
-
-    var bytes = Encoding.UTF8.GetBytes(frame);
     if (sendGate is not null)
     {
         await sendGate.WaitAsync(cancellationToken);

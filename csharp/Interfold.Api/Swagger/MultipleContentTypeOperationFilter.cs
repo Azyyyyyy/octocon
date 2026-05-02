@@ -18,7 +18,7 @@ public class MultipleContentTypeOperationFilter : IDocumentFilter
         foreach (var path in swaggerDoc.Paths)
         {
             var routeLower = path.Key.ToLowerInvariant();
-            if (!allowedConflicts.Any(allowed => routeLower.Contains(allowed)))
+            if (!allowedConflicts.Any(routeLower.Contains))
                 continue;
 
             foreach (var operation in path.Value.Operations.Values)

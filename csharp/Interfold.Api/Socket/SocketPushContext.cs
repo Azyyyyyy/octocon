@@ -86,13 +86,13 @@ public sealed class SocketPushContext
         return systemId[(separator + 1)..];
     }
 
-    public Task SendAsync(string topic, string? joinRef, bool asArray, string eventName, string payloadJson)
+    public Task SendAsync<TPayload>(string topic, string? joinRef, bool asArray, string eventName, TPayload payload)
         => WebSocketEvents.SendPhoenixPushAsync(
             Socket,
             topic,
             joinRef,
             eventName,
-            payloadJson,
+            payload,
             asArray,
             CancellationToken,
             SendGate);

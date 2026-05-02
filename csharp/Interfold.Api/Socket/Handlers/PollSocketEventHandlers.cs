@@ -19,8 +19,7 @@ public static class PollSocketEventHandlers
             return;
         }
 
-        var payloadJson = WebSocketEvents.SerializeSocketJson(new Dictionary<string, object?> { ["poll_id"] = evt.PollId });
-        await context.SendAsync(topic, joinRef, asArray, SocketEventNames.Polls.Deleted, payloadJson);
+        await context.SendAsync(topic, joinRef, asArray, SocketEventNames.Polls.Deleted, new PollDeletedSocketPayload(evt.PollId));
     }
 
     private static async Task HandleUpsertAsync(string systemId, string pollId, string eventName, SocketPushContext context, IPollRepository pollRepository)
@@ -36,7 +35,6 @@ public static class PollSocketEventHandlers
             return;
         }
 
-        var payloadJson = WebSocketEvents.SerializeSocketJson(new { poll });
-        await context.SendAsync(topic, joinRef, asArray, eventName, payloadJson);
+        await context.SendAsync(topic, joinRef, asArray, eventName, new PollSocketPayload(poll));
     }
 }
