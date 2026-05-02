@@ -1,3 +1,4 @@
+using Interfold.Api.Models;
 using Interfold.Contracts.Models.Commands;
 using Interfold.Contracts.Models.Read;
 using Microsoft.AspNetCore.Mvc;
@@ -63,16 +64,15 @@ public sealed class FriendsController : InterfoldControllerBase
     }
 
     [HttpDelete("{id}")]
-    public async Task<IActionResult> Delete(string id, [FromBody] BaseRequest? req, CancellationToken ct)
+    public async Task<Response> Delete(string id, [FromBody] BaseRequest? req, CancellationToken ct)
     {
         var principal = PrincipalId;
         if (string.Equals(principal, id, StringComparison.Ordinal))
         {
-            return BadRequest(new
-            {
-                error = "I'm pretty sure you don't count as your own friend. (Cannot delete friendship with self.)",
-                code = "cannot_delete_own_friendship"
-            });
+            return new ErrorResponse(
+                "I'm pretty sure you don't count as your own friend. (Cannot delete friendship with self.)",
+                "cannot_delete_own_friendship",
+                System.Net.HttpStatusCode.BadRequest);
         }
 
         var envelope = new CommandEnvelope<RemoveFriendshipCommand>(
@@ -83,19 +83,18 @@ public sealed class FriendsController : InterfoldControllerBase
             OccurredAt: DateTimeOffset.UtcNow,
             Payload: new RemoveFriendshipCommand(id));
 
-        var result = ToHttpResult(await _remove.HandleAsync(envelope, ct));
-        return result is OkObjectResult ? NoContent() : result;
+        return CommandNoContent(await _remove.HandleAsync(envelope, ct));
     }
 
     [HttpPost("{id}/trust")]
-    public async Task<IActionResult> Trust(string id, [FromBody] BaseRequest? req, CancellationToken ct)
+    public async Task<Response> Trust(string id, [FromBody] BaseRequest? req, CancellationToken ct)
         => await SetTrustInternal(id, true, OperationIds.FriendTrust, "cannot_trust_self", req, ct);
 
     [HttpPost("{id}/untrust")]
-    public async Task<IActionResult> Untrust(string id, [FromBody] BaseRequest? req, CancellationToken ct)
+    public async Task<Response> Untrust(string id, [FromBody] BaseRequest? req, CancellationToken ct)
         => await SetTrustInternal(id, false, OperationIds.FriendUntrust, "cannot_untrust_self", req, ct);
 
-    private async Task<IActionResult> SetTrustInternal(
+    private async Task<Response> SetTrustInternal(
         string id,
         bool trusted,
         string operationId,
@@ -106,7 +105,7 @@ public sealed class FriendsController : InterfoldControllerBase
         var principal = PrincipalId;
         if (string.Equals(principal, id, StringComparison.Ordinal))
         {
-            return BadRequest(new { code = selfErrorCode });
+            return new ErrorResponse("Cannot trust self.", selfErrorCode, System.Net.HttpStatusCode.BadRequest);
         }
 
         var envelope = new CommandEnvelope<SetFriendTrustCommand>(
@@ -117,7 +116,6 @@ public sealed class FriendsController : InterfoldControllerBase
             OccurredAt: DateTimeOffset.UtcNow,
             Payload: new SetFriendTrustCommand(id, trusted));
 
-        var result = ToHttpResult(await _setTrust.HandleAsync(envelope, ct));
-        return result is OkObjectResult ? NoContent() : result;
+        return CommandNoContent(await _setTrust.HandleAsync(envelope, ct));
     }
 }

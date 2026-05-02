@@ -68,3 +68,6 @@ public sealed record FrontCommentRequest(
     string Comment,
     string? IdempotencyKey = null
 ) : BaseRequest(IdempotencyKey);
+
+public sealed record FrontStartedResponse(string FrontId);
+

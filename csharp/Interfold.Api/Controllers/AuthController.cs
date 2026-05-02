@@ -11,7 +11,7 @@ using Interfold.Infrastructure;
 namespace Interfold.Api.Controllers;
 
 [Route("auth")]
-public sealed class AuthController : ControllerBase
+public sealed class AuthController : InterfoldControllerBase
 {
     private const string MetadataCookieName = "octocon_auth_metadata";
 

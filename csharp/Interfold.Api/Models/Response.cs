@@ -1,8 +1,29 @@
-﻿using Microsoft.AspNetCore.Mvc;
+﻿using System.Net;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Infrastructure;
 using OneOf;
 
 namespace Interfold.Api.Models;
+
+public class Response : Response<NoContent>
+{
+    public Response() : base(new SuccessResponse<NoContent>(new NoContent(), HttpStatusCode.NoContent))
+    {
+    }
+    
+    public Response(ErrorResponse response) : base(response)
+    {
+    }
+    
+    /// <summary>
+    /// Implicitly converts the specified <paramref name="error"/> to an <see cref="Response{TValue}"/>.
+    /// </summary>
+    /// <param name="error">The error to convert.</param>
+    public static implicit operator Response(ErrorResponse error)
+    {
+        return new Response(error);
+    }
+}
 
 [GenerateOneOf]
 public class Response<TValue> : OneOfBase<SuccessResponse<TValue>, ErrorResponse>, IConvertToActionResult
@@ -40,10 +61,23 @@ public class Response<TValue> : OneOfBase<SuccessResponse<TValue>, ErrorResponse
     
     public IActionResult Convert()
     {
-        return new ObjectResult(Value)
+        if (IsT0)
         {
-            DeclaredType = IsT0 ? typeof(SuccessResponse<TValue>) : typeof(ErrorResponse),
-            StatusCode = IsT0 ? 200 : (int)AsT1.StatusCode
+            var statusCode = (int)AsT0.StatusCode;
+            if (statusCode == 204)
+                return new StatusCodeResult(204);
+
+            return new ObjectResult(AsT0)
+            {
+                DeclaredType = typeof(SuccessResponse<TValue>),
+                StatusCode = statusCode
+            };
+        }
+
+        return new ObjectResult(AsT1)
+        {
+            DeclaredType = typeof(ErrorResponse),
+            StatusCode = (int)AsT1.StatusCode
         };
     }
 }

@@ -275,7 +275,7 @@ public sealed class ScyllaAlterRepository : IAlterRepository
             }
 
             // Handle primary_front update if needed
-            if (primaryFrontRow?.GetValue<short?>("primary_front") == alterIdShort)
+            if (primaryFrontRow?.GetValue<int?>("primary_front").GetValueOrDefault(-1) == alterIdShort)
             {
                 await session.ExecuteAsync(new SimpleStatement(
                     $"UPDATE {keyspace}.users SET primary_front = null WHERE id = ?",

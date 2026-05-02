@@ -49,7 +49,7 @@ public class FrontingControllerTests : BaseEndpointTest
         var alter = await CreateAlterAsync(client, principal, "test alter");
 
         var started = await SendFrontStartAsync(client, alterId: alter, comment: "phase3-history", principal);
-        var startedFrontId = ReadStringField(started.Body, "front_id");
+        var startedFrontId = ReadNestedStringField(started.Body, "data", "front_id");
         using (Assert.Multiple())
         {
             await Assert.That(started.StatusCode).IsEqualTo(HttpStatusCode.Created);

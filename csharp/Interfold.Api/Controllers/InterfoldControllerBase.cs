@@ -1,6 +1,8 @@
 using System.Diagnostics;
+using System.Net;
 using Interfold.Api.Helpers;
 using Interfold.Api.Middleware;
+using Interfold.Api.Models;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Interfold.Contracts.Operations;
@@ -114,11 +116,6 @@ public abstract class InterfoldControllerBase : ControllerBase
 
         Response.Headers["X-Interfold-Command-Id"] = envelope.CommandId.ToString("N");
 
-        return ToHttpResult(result);
-    }
-
-    protected IActionResult ToHttpResult<T>(CommandExecutionResult<T> result)
-    {
         if (result.Accepted)
             return Ok(result.Result);
 
@@ -127,6 +124,45 @@ public abstract class InterfoldControllerBase : ControllerBase
             ConflictCode.ConflictDuplicate    => Conflict(result.Conflict),
             ConflictCode.ConflictInvariant    => UnprocessableEntity(result.Conflict),
             _                                 => StatusCode(500, new { Code = "unknown_error" })
+        };
+    }
+
+    /// <summary>
+    /// Maps a <see cref="CommandExecutionResult{T}"/> to a 204 No Content <see cref="Response{NoContent}"/>
+    /// on success, or an <see cref="ErrorResponse"/> on failure.
+    /// </summary>
+    protected Response CommandNoContent<T>(CommandExecutionResult<T> result)
+    {
+        if (result.Accepted)
+            return new Response();
+
+        return ConflictToError(result.Conflict!);
+    }
+
+    /// <summary>
+    /// Maps a <see cref="CommandExecutionResult{T}"/> to a 201 Created <see cref="Response{TData}"/>
+    /// carrying the mapped <paramref name="dataSelector"/> result, or an <see cref="ErrorResponse"/> on failure.
+    /// </summary>
+    protected Response<TData> CommandCreated<T, TData>(CommandExecutionResult<T> result, Func<T, TData> dataSelector, Func<T?, bool?>? replaySelector = null)
+    {
+        if (result.Accepted)
+            return new SuccessResponse<TData>(dataSelector(result.Result!), HttpStatusCode.Created, replaySelector?.Invoke(result.Result));
+
+        return ConflictToError(result.Conflict!);
+    }
+
+    protected ErrorResponse ConflictToError(Interfold.Contracts.Operations.ConflictResult conflict)
+    {
+        this.Response.Headers["X-Interfold-OperationId"] = conflict.OperationId;
+        
+        return conflict.Code switch
+        {
+            ConflictCode.ConflictDuplicate => new ErrorResponse(
+                "A duplicate conflict occurred.", conflict.ResolutionHint, HttpStatusCode.Conflict, conflict.EntityRef),
+            ConflictCode.ConflictInvariant => new ErrorResponse(
+                "The request could not be processed due to a conflict.", conflict.ResolutionHint,
+                HttpStatusCode.UnprocessableEntity, conflict.EntityRef),
+            _ => new ErrorResponse("An unknown error occurred.", "unknown_error", HttpStatusCode.InternalServerError, conflict.EntityRef)
         };
     }
 }

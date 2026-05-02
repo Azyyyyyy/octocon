@@ -21,7 +21,7 @@ internal static class DatabaseTransientRetry
         PersistenceConfiguration options,
         CancellationToken cancellationToken = default,
         ILogger? logger = null
-    ) => ExecuteAsync(operation, options, IsScyllaTransient, cancellationToken, logger);
+    ) => ExecuteAsync(operation, options, IsScyllaTransient, logger, cancellationToken);
 
     public static Task ExecutePostgresAsync(
         Func<Task> operation,
@@ -35,7 +35,7 @@ internal static class DatabaseTransientRetry
         PersistenceConfiguration options,
         CancellationToken cancellationToken = default,
         ILogger? logger = null
-    ) => ExecuteAsync(operation, options, IsPostgresTransient, cancellationToken, logger);
+    ) => ExecuteAsync(operation, options, IsPostgresTransient, logger, cancellationToken);
 
     private static async Task ExecuteAsync(
         Func<Task> operation,
@@ -49,16 +49,14 @@ internal static class DatabaseTransientRetry
         {
             await operation();
             return true;
-        }, options, isTransient, cancellationToken, logger);
+        }, options, isTransient, logger, cancellationToken);
     }
 
-    private static async Task<T> ExecuteAsync<T>(
-        Func<Task<T>> operation,
+    private static async Task<T> ExecuteAsync<T>(Func<Task<T>> operation,
         PersistenceConfiguration options,
         Func<Exception, bool> isTransient,
-        CancellationToken cancellationToken,
-        ILogger? logger
-    )
+        ILogger? logger,
+        CancellationToken cancellationToken)
     {
         var attempts = Math.Max(1, options.DbRetryAttempts);
         var initialDelayMs = Math.Max(1, options.DbRetryInitialDelayMs);

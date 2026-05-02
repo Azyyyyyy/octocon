@@ -10,8 +10,7 @@
       "idempotencyKey": "replay-front-alter-create-001",
       "body": { "name": "FrontTestAlter" },
       "expectedStatus": 201,
-      "expectedReplay": false,
-      "captureAs": { "alterId": "alterId" }
+      "captureAs": { "alterId": "id" }
     },
     {
       "name": "start front",

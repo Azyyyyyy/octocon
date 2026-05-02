@@ -108,7 +108,7 @@ public class BaseEndpointTest
         return FindStringContaining(doc.RootElement, expectedSubstring) ?? string.Empty;
     }
 
-    internal static string? FindStringContaining(JsonElement element, string expectedSubstring)
+    private static string? FindStringContaining(JsonElement element, string expectedSubstring)
     {
         if (element.ValueKind == JsonValueKind.String)
         {

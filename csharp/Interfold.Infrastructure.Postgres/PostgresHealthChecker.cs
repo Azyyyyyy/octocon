@@ -7,11 +7,11 @@ namespace Interfold.Infrastructure.Postgres;
 
 public sealed class PostgresHealthChecker : IHealthCheck
 {
-    private readonly IPostgresConnectionFactory? _postgresConnectionFactory;
+    private readonly IPostgresConnectionFactory _postgresConnectionFactory;
     private readonly PersistenceConfiguration _options;
 
     public PostgresHealthChecker(
-        IPostgresConnectionFactory? postgresConnectionFactory,
+        IPostgresConnectionFactory postgresConnectionFactory,
         PersistenceConfiguration options
     )
     {
@@ -21,11 +21,6 @@ public sealed class PostgresHealthChecker : IHealthCheck
 
     public async Task<HealthCheckResult> CheckHealthAsync(HealthCheckContext context, CancellationToken cancellationToken = new CancellationToken())
     {
-        if (_options.CompatibilityMode || _postgresConnectionFactory is null)
-        {
-            return new HealthCheckResult(HealthStatus.Healthy, "Skipped in compatibility mode.");
-        }
-
         try
         {
             await DatabaseTransientRetry.ExecutePostgresAsync(async () =>

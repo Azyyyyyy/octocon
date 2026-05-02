@@ -1,3 +1,4 @@
+using Interfold.Api.Models;
 using Interfold.Contracts.Models.Commands;
 using Interfold.Contracts.Models.Read;
 using Microsoft.AspNetCore.Mvc;
@@ -58,16 +59,15 @@ public sealed class FriendRequestsController : InterfoldControllerBase
     }
 
     [HttpPut("{id}")]
-    public async Task<IActionResult> Send(string id, [FromBody] BaseRequest? req, CancellationToken ct)
+    public async Task<Response> Send(string id, [FromBody] BaseRequest? req, CancellationToken ct)
     {
         var principal = PrincipalId;
         if (string.Equals(principal, id, StringComparison.Ordinal))
         {
-            return BadRequest(new
-            {
-                error = "You cannot send a friend request to yourself.",
-                code = "cannot_send_self"
-            });
+            return new ErrorResponse(
+                "You cannot send a friend request to yourself.",
+                "cannot_send_self",
+                System.Net.HttpStatusCode.BadRequest);
         }
 
         var envelope = new CommandEnvelope<SendFriendRequestCommand>(
@@ -78,21 +78,19 @@ public sealed class FriendRequestsController : InterfoldControllerBase
             OccurredAt: DateTimeOffset.UtcNow,
             Payload: new SendFriendRequestCommand(id));
 
-        var result = ToHttpResult(await _send.HandleAsync(envelope, ct));
-        return result is OkObjectResult ? NoContent() : result;
+        return CommandNoContent(await _send.HandleAsync(envelope, ct));
     }
 
     [HttpDelete("{id}")]
-    public async Task<IActionResult> Cancel(string id, [FromBody] BaseRequest? req, CancellationToken ct)
+    public async Task<Response> Cancel(string id, [FromBody] BaseRequest? req, CancellationToken ct)
     {
         var principal = PrincipalId;
         if (string.Equals(principal, id, StringComparison.Ordinal))
         {
-            return BadRequest(new
-            {
-                error = "You cannot cancel a friend request to yourself.",
-                code = "cannot_cancel_self"
-            });
+            return new ErrorResponse(
+                "You cannot cancel a friend request to yourself.",
+                "cannot_cancel_self",
+                System.Net.HttpStatusCode.BadRequest);
         }
 
         var envelope = new CommandEnvelope<CancelFriendRequestCommand>(
@@ -103,21 +101,19 @@ public sealed class FriendRequestsController : InterfoldControllerBase
             OccurredAt: DateTimeOffset.UtcNow,
             Payload: new CancelFriendRequestCommand(id));
 
-        var result = ToHttpResult(await _cancel.HandleAsync(envelope, ct));
-        return result is OkObjectResult ? NoContent() : result;
+        return CommandNoContent(await _cancel.HandleAsync(envelope, ct));
     }
 
     [HttpPost("{id}/accept")]
-    public async Task<IActionResult> Accept(string id, [FromBody] BaseRequest? req, CancellationToken ct)
+    public async Task<Response> Accept(string id, [FromBody] BaseRequest? req, CancellationToken ct)
     {
         var principal = PrincipalId;
         if (string.Equals(principal, id, StringComparison.Ordinal))
         {
-            return BadRequest(new
-            {
-                error = "You cannot accept a friend request from yourself.",
-                code = "cannot_accept_self"
-            });
+            return new ErrorResponse(
+                "You cannot accept a friend request from yourself.",
+                "cannot_accept_self",
+                System.Net.HttpStatusCode.BadRequest);
         }
 
         var envelope = new CommandEnvelope<AcceptFriendRequestCommand>(
@@ -128,21 +124,19 @@ public sealed class FriendRequestsController : InterfoldControllerBase
             OccurredAt: DateTimeOffset.UtcNow,
             Payload: new AcceptFriendRequestCommand(id));
 
-        var result = ToHttpResult(await _accept.HandleAsync(envelope, ct));
-        return result is OkObjectResult ? NoContent() : result;
+        return CommandNoContent(await _accept.HandleAsync(envelope, ct));
     }
 
     [HttpPost("{id}/reject")]
-    public async Task<IActionResult> Reject(string id, [FromBody] BaseRequest? req, CancellationToken ct)
+    public async Task<Response> Reject(string id, [FromBody] BaseRequest? req, CancellationToken ct)
     {
         var principal = PrincipalId;
         if (string.Equals(principal, id, StringComparison.Ordinal))
         {
-            return BadRequest(new
-            {
-                error = "You cannot reject a friend request from yourself.",
-                code = "cannot_reject_self"
-            });
+            return new ErrorResponse(
+                "You cannot reject a friend request from yourself.",
+                "cannot_reject_self",
+                System.Net.HttpStatusCode.BadRequest);
         }
 
         var envelope = new CommandEnvelope<RejectFriendRequestCommand>(
@@ -153,7 +147,6 @@ public sealed class FriendRequestsController : InterfoldControllerBase
             OccurredAt: DateTimeOffset.UtcNow,
             Payload: new RejectFriendRequestCommand(id));
 
-        var result = ToHttpResult(await _reject.HandleAsync(envelope, ct));
-        return result is OkObjectResult ? NoContent() : result;
+        return CommandNoContent(await _reject.HandleAsync(envelope, ct));
     }
 }

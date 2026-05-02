@@ -1,3 +1,4 @@
+using Interfold.Api.Models;
 using Interfold.Contracts.Models.Commands;
 using Interfold.Contracts.Models.Read;
 using Microsoft.AspNetCore.Mvc;
@@ -40,7 +41,7 @@ public sealed class TagsController : InterfoldControllerBase
     }
 
     [HttpPost]
-    public async Task<IActionResult> CreateTag(
+    public async Task<Response<TagReadModel>> CreateTag(
         [FromBody] CreateTagRequest body,
         CancellationToken cancellationToken)
     {
@@ -54,121 +55,117 @@ public sealed class TagsController : InterfoldControllerBase
             Payload: new CreateTagCommand(body.Name, body.ParentTagId)
         );
 
-       var execution = await _create.HandleAsync(command, cancellationToken);
-       if (!execution.Accepted)
-       {
-           return ToHttpResult(execution);
-       }
+        var execution = await _create.HandleAsync(command, cancellationToken);
+        if (!execution.Accepted)
+        {
+            return ConflictToError(execution.Conflict!);
+        }
 
-       var tag = await _tagRepository.GetAsync(principal, execution.Result!.TagId, cancellationToken);
-       object data = tag is not null ? tag : execution.Result;
-       return StatusCode(StatusCodes.Status201Created, new { data, replay = execution.Result.Replay });
+        var tag = await _tagRepository.GetAsync(principal, execution.Result!.TagId, cancellationToken);
+        if (tag is null)
+            return new ErrorResponse("An unknown error occurred.", "unknown_error", System.Net.HttpStatusCode.InternalServerError);
+
+        return new SuccessResponse<TagReadModel>(tag, System.Net.HttpStatusCode.Created, execution.Result.Replay);
     }
 
-   [HttpPatch("{id}")]
-   public async Task<IActionResult> UpdateTag(string id, [FromBody] UpdateTagRequest body, CancellationToken ct)
-   {
-       var command = new CommandEnvelope<UpdateTagCommand>(
-           OperationId: OperationIds.TagUpdate,
-           CommandId: Guid.NewGuid(),
-           PrincipalId: PrincipalId,
-           IdempotencyKey: GetIdempotencyKey(body.IdempotencyKey),
-           OccurredAt: DateTimeOffset.UtcNow,
-           Payload: new UpdateTagCommand(id, body.Name, body.Color, body.Description, body.SecurityLevel)
-       );
+    [HttpPatch("{id}")]
+    public async Task<Response> UpdateTag(string id, [FromBody] UpdateTagRequest body, CancellationToken ct)
+    {
+        var command = new CommandEnvelope<UpdateTagCommand>(
+            OperationId: OperationIds.TagUpdate,
+            CommandId: Guid.NewGuid(),
+            PrincipalId: PrincipalId,
+            IdempotencyKey: GetIdempotencyKey(body.IdempotencyKey),
+            OccurredAt: DateTimeOffset.UtcNow,
+            Payload: new UpdateTagCommand(id, body.Name, body.Color, body.Description, body.SecurityLevel)
+        );
 
-        var result = ToHttpResult(await _update.HandleAsync(command, ct));
-       return result is OkObjectResult ? NoContent() : result;
-   }
+        return CommandNoContent(await _update.HandleAsync(command, ct));
+    }
 
-   //TODO: To ensure route works as expected - check if we unattach alters and remove parent tag relationships when a tag is deleted
-   [HttpDelete("{id}")]
-   public async Task<IActionResult> DeleteTag(string id, [FromBody] BaseRequest? body, CancellationToken ct)
-   {
-       var command = new CommandEnvelope<DeleteTagCommand>(
-           OperationId: OperationIds.TagDelete,
-           CommandId: Guid.NewGuid(),
-           PrincipalId: PrincipalId,
-           IdempotencyKey: GetIdempotencyKey(body?.IdempotencyKey),
-           OccurredAt: DateTimeOffset.UtcNow,
-           Payload: new DeleteTagCommand(id)
-       );
+    //TODO: To ensure route works as expected - check if we unattach alters and remove parent tag relationships when a tag is deleted
+    [HttpDelete("{id}")]
+    public async Task<Response> DeleteTag(string id, [FromBody] BaseRequest? body, CancellationToken ct)
+    {
+        var command = new CommandEnvelope<DeleteTagCommand>(
+            OperationId: OperationIds.TagDelete,
+            CommandId: Guid.NewGuid(),
+            PrincipalId: PrincipalId,
+            IdempotencyKey: GetIdempotencyKey(body?.IdempotencyKey),
+            OccurredAt: DateTimeOffset.UtcNow,
+            Payload: new DeleteTagCommand(id)
+        );
 
-    var result = ToHttpResult(await _delete.HandleAsync(command, ct));
-    return result is OkObjectResult ? NoContent() : result;
-   }
+        return CommandNoContent(await _delete.HandleAsync(command, ct));
+    }
 
-   [HttpPost("{id}/alter")]
-   public async Task<IActionResult> AttachAlter(string id, [FromBody] TagAlterRequest body, CancellationToken ct)
-   {
-       var alterId = body.AlterId ?? 0;
-       await CheckAlterId(alterId);
+    [HttpPost("{id}/alter")]
+    public async Task<Response> AttachAlter(string id, [FromBody] TagAlterRequest body, CancellationToken ct)
+    {
+        var alterId = body.AlterId ?? 0;
+        await CheckAlterId(alterId);
 
-       var command = new CommandEnvelope<AttachAlterToTagCommand>(
-           OperationId: OperationIds.TagAttachAlter,
-           CommandId: Guid.NewGuid(),
-           PrincipalId: PrincipalId,
-           IdempotencyKey: GetIdempotencyKey(body.IdempotencyKey),
-           OccurredAt: DateTimeOffset.UtcNow,
-           Payload: new AttachAlterToTagCommand(id, alterId)
-       );
+        var command = new CommandEnvelope<AttachAlterToTagCommand>(
+            OperationId: OperationIds.TagAttachAlter,
+            CommandId: Guid.NewGuid(),
+            PrincipalId: PrincipalId,
+            IdempotencyKey: GetIdempotencyKey(body.IdempotencyKey),
+            OccurredAt: DateTimeOffset.UtcNow,
+            Payload: new AttachAlterToTagCommand(id, alterId)
+        );
 
-    var result = ToHttpResult(await _attachAlter.HandleAsync(command, ct));
-    return result is OkObjectResult ? NoContent() : result;
-   }
+        return CommandNoContent(await _attachAlter.HandleAsync(command, ct));
+    }
 
-   [HttpDelete("{id}/alter")]
-   public async Task<IActionResult> DetachAlter(string id, [FromBody] TagAlterRequest body, CancellationToken ct)
-   {
-       var alterId = body.AlterId ?? 0;
-       await CheckAlterId(alterId);
+    [HttpDelete("{id}/alter")]
+    public async Task<Response> DetachAlter(string id, [FromBody] TagAlterRequest body, CancellationToken ct)
+    {
+        var alterId = body.AlterId ?? 0;
+        await CheckAlterId(alterId);
 
-       var command = new CommandEnvelope<DetachAlterFromTagCommand>(
-           OperationId: OperationIds.TagDetachAlter,
-           CommandId: Guid.NewGuid(),
-           PrincipalId: PrincipalId,
-           IdempotencyKey: GetIdempotencyKey(body.IdempotencyKey),
-           OccurredAt: DateTimeOffset.UtcNow,
-           Payload: new DetachAlterFromTagCommand(id, alterId)
-       );
+        var command = new CommandEnvelope<DetachAlterFromTagCommand>(
+            OperationId: OperationIds.TagDetachAlter,
+            CommandId: Guid.NewGuid(),
+            PrincipalId: PrincipalId,
+            IdempotencyKey: GetIdempotencyKey(body.IdempotencyKey),
+            OccurredAt: DateTimeOffset.UtcNow,
+            Payload: new DetachAlterFromTagCommand(id, alterId)
+        );
 
-    var result = ToHttpResult(await _detachAlter.HandleAsync(command, ct));
-    return result is OkObjectResult ? NoContent() : result;
-   }
+        return CommandNoContent(await _detachAlter.HandleAsync(command, ct));
+    }
 
-   [HttpPost("{id}/parent")]
-   public async Task<IActionResult> SetParent(string id, [FromBody] SetParentRequest body, CancellationToken ct)
-   {
-       var parentTagId = body.ParentTagId;
-       if (string.IsNullOrWhiteSpace(parentTagId))
-           return BadRequest(new { error = "Invalid parent tag ID.", code = "invalid_parent_tag_id" });
+    [HttpPost("{id}/parent")]
+    public async Task<Response> SetParent(string id, [FromBody] SetParentRequest body, CancellationToken ct)
+    {
+        var parentTagId = body.ParentTagId;
+        if (string.IsNullOrWhiteSpace(parentTagId))
+            return new ErrorResponse("Invalid parent tag ID.", "invalid_parent_tag_id", System.Net.HttpStatusCode.BadRequest);
 
-       var command = new CommandEnvelope<SetParentTagCommand>(
-           OperationId: OperationIds.TagSetParent,
-           CommandId: Guid.NewGuid(),
-           PrincipalId: PrincipalId,
-           IdempotencyKey: GetIdempotencyKey(body.IdempotencyKey),
-           OccurredAt: DateTimeOffset.UtcNow,
-           Payload: new SetParentTagCommand(id, parentTagId)
-       );
+        var command = new CommandEnvelope<SetParentTagCommand>(
+            OperationId: OperationIds.TagSetParent,
+            CommandId: Guid.NewGuid(),
+            PrincipalId: PrincipalId,
+            IdempotencyKey: GetIdempotencyKey(body.IdempotencyKey),
+            OccurredAt: DateTimeOffset.UtcNow,
+            Payload: new SetParentTagCommand(id, parentTagId)
+        );
 
-    var result = ToHttpResult(await _setParent.HandleAsync(command, ct));
-    return result is OkObjectResult ? NoContent() : result;
-   }
+        return CommandNoContent(await _setParent.HandleAsync(command, ct));
+    }
 
-   [HttpDelete("{id}/parent")]
-   public async Task<IActionResult> RemoveParent(string id, [FromBody] BaseRequest? body, CancellationToken ct)
-   {
-       var command = new CommandEnvelope<RemoveParentTagCommand>(
-           OperationId: OperationIds.TagRemoveParent,
-           CommandId: Guid.NewGuid(),
-           PrincipalId: PrincipalId,
-           IdempotencyKey: GetIdempotencyKey(body?.IdempotencyKey),
-           OccurredAt: DateTimeOffset.UtcNow,
-           Payload: new RemoveParentTagCommand(id)
-       );
+    [HttpDelete("{id}/parent")]
+    public async Task<Response> RemoveParent(string id, [FromBody] BaseRequest? body, CancellationToken ct)
+    {
+        var command = new CommandEnvelope<RemoveParentTagCommand>(
+            OperationId: OperationIds.TagRemoveParent,
+            CommandId: Guid.NewGuid(),
+            PrincipalId: PrincipalId,
+            IdempotencyKey: GetIdempotencyKey(body?.IdempotencyKey),
+            OccurredAt: DateTimeOffset.UtcNow,
+            Payload: new RemoveParentTagCommand(id)
+        );
 
-       var result = ToHttpResult(await _removeParent.HandleAsync(command, ct));
-       return result is OkObjectResult ? NoContent() : result;
-   }
+        return CommandNoContent(await _removeParent.HandleAsync(command, ct));
+    }
 }

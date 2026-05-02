@@ -41,7 +41,7 @@ public sealed class AlterJournalsController : InterfoldControllerBase
         var principal = PrincipalId;
         await CheckAlterId(alterId, principal, ct);
 
-        IEnumerable<AlterJournalReadModel> entries = await _journalRepository.ListAlterAsync(principal, alterId, ct) ?? [];
+        IEnumerable<AlterJournalReadModel> entries = await _journalRepository.ListAlterAsync(principal, alterId, ct);
         return new SuccessResponse<IEnumerable<AlterJournalReadModel>>(entries);
     }
 
@@ -55,7 +55,7 @@ public sealed class AlterJournalsController : InterfoldControllerBase
     }
 
     [HttpPost("{alterId:int}/journals")]
-    public async Task<IActionResult> Create(int alterId, [FromBody] CreateAlterJournalRequest req, CancellationToken ct)
+    public async Task<Response<AlterJournalReadModel>> Create(int alterId, [FromBody] CreateAlterJournalRequest req, CancellationToken ct)
     {
         var principal = PrincipalId;
         await CheckAlterId(alterId);
@@ -72,16 +72,18 @@ public sealed class AlterJournalsController : InterfoldControllerBase
         var execution = await _create.HandleAsync(envelope, ct);
         if (!execution.Accepted)
         {
-            return ToHttpResult(execution);
+            return ConflictToError(execution.Conflict!);
         }
 
         var entry = await _journalRepository.GetAlterAsync(principal, execution.Result!.EntryId, ct);
-        object data = entry is not null ? entry : execution.Result;
-        return StatusCode(StatusCodes.Status201Created, new { data, replay = execution.Result.Replay });
+        if (entry is null)
+            return new ErrorResponse("An unknown error occurred.", "unknown_error", HttpStatusCode.InternalServerError);
+
+        return new SuccessResponse<AlterJournalReadModel>(entry, HttpStatusCode.Created, execution.Result.Replay);
     }
 
     [HttpPatch("journals/{journalId}")]
-    public async Task<IActionResult> Update(string journalId, [FromBody] UpdateAlterJournalRequest req, CancellationToken ct)
+    public async Task<Response> Update(string journalId, [FromBody] UpdateAlterJournalRequest req, CancellationToken ct)
     {
         var envelope = new CommandEnvelope<UpdateAlterJournalEntryCommand>(
             OperationIds.JournalAlterUpdate,
@@ -92,12 +94,11 @@ public sealed class AlterJournalsController : InterfoldControllerBase
             Payload: new UpdateAlterJournalEntryCommand(journalId, req.Title, req.Content, req.Color)
         );
 
-        var result = ToHttpResult(await _update.HandleAsync(envelope, ct));
-        return result is OkObjectResult ? NoContent() : result;
+        return CommandNoContent(await _update.HandleAsync(envelope, ct));
     }
 
     [HttpDelete("journals/{journalId}")]
-    public async Task<IActionResult> Delete(string journalId, [FromBody] BaseRequest? req, CancellationToken ct)
+    public async Task<Response> Delete(string journalId, [FromBody] BaseRequest? req, CancellationToken ct)
     {
         var envelope = new CommandEnvelope<DeleteAlterJournalEntryCommand>(
             OperationIds.JournalAlterDelete,
@@ -108,27 +109,26 @@ public sealed class AlterJournalsController : InterfoldControllerBase
             Payload: new DeleteAlterJournalEntryCommand(journalId)
         );
 
-        var result = ToHttpResult(await _delete.HandleAsync(envelope, ct));
-        return result is OkObjectResult ? NoContent() : result;
+        return CommandNoContent(await _delete.HandleAsync(envelope, ct));
     }
 
     [HttpPost("journals/{journalId}/lock")]
-    public async Task<IActionResult> Lock(string journalId, [FromBody] BaseRequest? req, CancellationToken ct)
+    public async Task<Response> Lock(string journalId, [FromBody] BaseRequest? req, CancellationToken ct)
         => await SetLockedInternal(journalId, true, OperationIds.JournalAlterLock, req, ct);
 
     [HttpPost("journals/{journalId}/unlock")]
-    public async Task<IActionResult> Unlock(string journalId, [FromBody] BaseRequest? req, CancellationToken ct)
+    public async Task<Response> Unlock(string journalId, [FromBody] BaseRequest? req, CancellationToken ct)
         => await SetLockedInternal(journalId, false, OperationIds.JournalAlterUnlock, req, ct);
 
     [HttpPost("journals/{journalId}/pin")]
-    public async Task<IActionResult> Pin(string journalId, [FromBody] BaseRequest? req, CancellationToken ct)
+    public async Task<Response> Pin(string journalId, [FromBody] BaseRequest? req, CancellationToken ct)
         => await SetPinnedInternal(journalId, true, OperationIds.JournalAlterPin, req, ct);
 
     [HttpPost("journals/{journalId}/unpin")]
-    public async Task<IActionResult> Unpin(string journalId, [FromBody] BaseRequest? req, CancellationToken ct)
+    public async Task<Response> Unpin(string journalId, [FromBody] BaseRequest? req, CancellationToken ct)
         => await SetPinnedInternal(journalId, false, OperationIds.JournalAlterUnpin, req, ct);
 
-    private async Task<IActionResult> SetLockedInternal(string journalId, bool locked, string operationId, BaseRequest? req, CancellationToken ct)
+    private async Task<Response> SetLockedInternal(string journalId, bool locked, string operationId, BaseRequest? req, CancellationToken ct)
     {
         var envelope = new CommandEnvelope<SetAlterJournalLockedCommand>(
             operationId,
@@ -139,11 +139,10 @@ public sealed class AlterJournalsController : InterfoldControllerBase
             Payload: new SetAlterJournalLockedCommand(journalId, locked)
         );
 
-        var result = ToHttpResult(await _setLocked.HandleAsync(envelope, ct));
-        return result is OkObjectResult ? NoContent() : result;
+        return CommandNoContent(await _setLocked.HandleAsync(envelope, ct));
     }
 
-    private async Task<IActionResult> SetPinnedInternal(string journalId, bool pinned, string operationId, BaseRequest? req, CancellationToken ct)
+    private async Task<Response> SetPinnedInternal(string journalId, bool pinned, string operationId, BaseRequest? req, CancellationToken ct)
     {
         var envelope = new CommandEnvelope<SetAlterJournalPinnedCommand>(
             operationId,
@@ -154,7 +153,6 @@ public sealed class AlterJournalsController : InterfoldControllerBase
             Payload: new SetAlterJournalPinnedCommand(journalId, pinned)
         );
 
-        var result = ToHttpResult(await _setPinned.HandleAsync(envelope, ct));
-        return result is OkObjectResult ? NoContent() : result;
+        return CommandNoContent(await _setPinned.HandleAsync(envelope, ct));
     }
 }

@@ -2,7 +2,9 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.Net.Http.Headers;
 using System.Text;
+using Interfold.Api.Models;
 using Interfold.Api.Services;
+using Interfold.Contracts.Models;
 using Interfold.Contracts.Models.Commands;
 using Interfold.Contracts.Models.Read;
 using Interfold.Contracts.Operations;
@@ -56,7 +58,7 @@ public sealed class AltersController : InterfoldControllerBase
     }
 
     [HttpPost]
-    public async Task<IActionResult> Create([FromBody] CreateAlterRequest req, CancellationToken ct)
+    public async Task<Response<AlterReadModel>> Create([FromBody] CreateAlterRequest req, CancellationToken ct)
     {
         var principal = PrincipalId;
         var envelope = new CommandEnvelope<CreateAlterCommand>(
@@ -70,17 +72,19 @@ public sealed class AltersController : InterfoldControllerBase
         var execution = await _createHandler.HandleAsync(envelope, ct);
         if (!execution.Accepted)
         {
-            return ToHttpResult(execution);
+            return ConflictToError(execution.Conflict!);
         }
 
         var alter = await _alterRepository.GetAsync(principal, execution.Result!.AlterId, ct);
-        object data = alter is not null ? alter : execution.Result;
+        if (alter is null)
+            return new ErrorResponse("An unknown error occurred.", "unknown_error", System.Net.HttpStatusCode.InternalServerError);
+
         Response.Headers.Location = $"/api/systems/me/alters/{execution.Result.AlterId}";
-        return StatusCode(StatusCodes.Status201Created, new { data, replay = execution.Result.Replay });
+        return new SuccessResponse<AlterReadModel>(alter, System.Net.HttpStatusCode.Created, execution.Result.Replay);
     }
 
     [HttpPatch("{alterId:int}")]
-    public async Task<IActionResult> Update(int alterId, [FromBody] UpdateAlterRequest req, CancellationToken ct)
+    public async Task<Response> Update(int alterId, [FromBody] UpdateAlterRequest req, CancellationToken ct)
     {
         await CheckAlterId(alterId);
         var fields = req.Fields?.Select(f => new AlterFieldCommand(f.Id, f.Value)).ToList();
@@ -108,13 +112,12 @@ public sealed class AltersController : InterfoldControllerBase
             Payload: payload
         );
 
-        var result = ToHttpResult(await _updateHandler.HandleAsync(envelope, ct));
-        return result is OkObjectResult ? NoContent() : result;
+        return CommandNoContent(await _updateHandler.HandleAsync(envelope, ct));
     }
 
     //TODO: To ensure route works as expected - check if we delete alter journal entries, unattach from gobal journals when an alter is deleted and delete them from polls
     [HttpDelete("{alterId:int}")]
-    public async Task<IActionResult> Delete(int alterId, [FromBody] BaseRequest? req, CancellationToken ct)
+    public async Task<Response> Delete(int alterId, [FromBody] BaseRequest? req, CancellationToken ct)
     {
         await CheckAlterId(alterId);
         var envelope = new CommandEnvelope<DeleteAlterCommand>(
@@ -124,13 +127,12 @@ public sealed class AltersController : InterfoldControllerBase
             OccurredAt: DateTimeOffset.UtcNow,
             Payload: new DeleteAlterCommand(alterId)
         );
-        var result = ToHttpResult(await _deleteHandler.HandleAsync(envelope, ct));
-        return result is OkObjectResult ? NoContent() : result;
+        return CommandNoContent(await _deleteHandler.HandleAsync(envelope, ct));
     }
 
     [HttpPut("{alterId:int}/avatar")]
     [Consumes("multipart/form-data")]
-    public async Task<IActionResult> UploadAvatarMultipart(int alterId, CancellationToken ct)
+    public async Task<Response> UploadAvatarMultipart(int alterId, CancellationToken ct)
     {
         await CheckAlterId(alterId);
         var principal = PrincipalId;
@@ -140,9 +142,9 @@ public sealed class AltersController : InterfoldControllerBase
         if (avatarStream is null)
         {
             if (upload.EmptyFilePart)
-                return BadRequest(new { error = "Avatar file is empty.", code = "avatar_file_empty" });
+                return new ErrorResponse("Avatar file is empty.", "avatar_file_empty", System.Net.HttpStatusCode.BadRequest);
 
-            return BadRequest(new { error = "No avatar file provided.", code = "avatar_file_required" });
+            return new ErrorResponse("No avatar file provided.", "avatar_file_required", System.Net.HttpStatusCode.BadRequest);
         }
 
         string avatarUrl;
@@ -155,7 +157,7 @@ public sealed class AltersController : InterfoldControllerBase
         }
         catch
         {
-            return StatusCode(500, new { error = "An error occurred while uploading the file.", code = "unknown_error" });
+            return new ErrorResponse("An error occurred while uploading the file.", "unknown_error", System.Net.HttpStatusCode.InternalServerError);
         }
 
         string? currentAvatarUrl = null;
@@ -194,8 +196,8 @@ public sealed class AltersController : InterfoldControllerBase
             Payload: payload
         );
 
-        var result = ToHttpResult(await _updateHandler.HandleAsync(envelope, ct));
-        if (result is not OkObjectResult) 
+        var result = CommandNoContent(await _updateHandler.HandleAsync(envelope, ct));
+        if (!result.IsT0) 
         {
             return result;
         }
@@ -209,7 +211,7 @@ public sealed class AltersController : InterfoldControllerBase
             // Alter metadata update succeeded; tolerate storage cleanup failures.
         }
 
-        return NoContent();
+        return result;
     }
 
     private async Task<AvatarUploadPayload> ResolveMultipartUploadAsync(CancellationToken ct)
@@ -283,7 +285,7 @@ public sealed class AltersController : InterfoldControllerBase
     }
 
     [HttpDelete("{alterId:int}/avatar")]
-    public async Task<IActionResult> DeleteAvatar(int alterId, [FromBody] BaseRequest? req, CancellationToken ct)
+    public async Task<Response> DeleteAvatar(int alterId, [FromBody] BaseRequest? req, CancellationToken ct)
     {
         await CheckAlterId(alterId);
         var principal = PrincipalId;
@@ -322,7 +324,7 @@ public sealed class AltersController : InterfoldControllerBase
         {
             try
             {
-                await _avatarStorage.DeleteByUrlAsync(currentAvatarUrl, ct);
+                 await _avatarStorage.DeleteByUrlAsync(currentAvatarUrl, ct);
             }
             catch
             {
@@ -330,7 +332,6 @@ public sealed class AltersController : InterfoldControllerBase
             }
         }
 
-        var result = ToHttpResult(execution);
-        return result is OkObjectResult ? NoContent() : result;
+        return CommandNoContent(execution);
     }
 }

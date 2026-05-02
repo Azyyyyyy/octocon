@@ -14,7 +14,7 @@ namespace Interfold.Api.Controllers;
 
 [AllowAnonymous]
 [Route("auth/link")]
-public sealed class AuthLinkController : ControllerBase
+public sealed class AuthLinkController : InterfoldControllerBase
 {
     private const string LinkTokenCookieName = "octocon_link_token";
 

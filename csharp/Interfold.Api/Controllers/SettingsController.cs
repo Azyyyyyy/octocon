@@ -4,8 +4,10 @@ using Microsoft.Net.Http.Headers;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using Interfold.Api.Models;
 using Interfold.Api.Services;
 using Interfold.Contracts;
+using Interfold.Contracts.Configuration;
 using Interfold.Contracts.Models.Commands;
 using Interfold.Contracts.Models.Read;
 using Interfold.Contracts.Operations;
@@ -21,6 +23,8 @@ public sealed class SettingsController : InterfoldControllerBase
 {
     private readonly IAccountRepository _accountRepository;
     private readonly ISingletonTaskOwner _singletonTaskOwner;
+    private readonly IAvatarStorage _avatarStorage;
+
     private readonly UpdateUsernameCommandHandler _usernameHandler;
     private readonly UpdateDescriptionCommandHandler _descriptionHandler;
     private readonly AddPushTokenCommandHandler _addPushTokenHandler;
@@ -29,7 +33,6 @@ public sealed class SettingsController : InterfoldControllerBase
     private readonly RecoverEncryptionCommandHandler _recoverEncryptionHandler;
     private readonly ResetEncryptionCommandHandler _resetEncryptionHandler;
     private readonly UploadAvatarCommandHandler _uploadAvatarHandler;
-    private readonly IAvatarStorage _avatarStorage;
     private readonly DeleteAvatarCommandHandler _deleteAvatarHandler;
     private readonly ImportPkCommandHandler _importPkHandler;
     private readonly ImportSpCommandHandler _importSpHandler;
@@ -116,7 +119,7 @@ public sealed class SettingsController : InterfoldControllerBase
     }
 
     [HttpPost("username")]
-    public async Task<IActionResult> UpdateUsername([FromBody] SettingsUsernameRequest req, CancellationToken ct)
+    public async Task<Response> UpdateUsername([FromBody] SettingsUsernameRequest req, CancellationToken ct)
     {
         var principal = PrincipalId;
         var envelope = new CommandEnvelope<UpdateUsernameCommand>(
@@ -127,12 +130,11 @@ public sealed class SettingsController : InterfoldControllerBase
             Payload: new UpdateUsernameCommand(req.Username)
         );
 
-        var result = ToHttpResult(await _usernameHandler.HandleAsync(envelope, ct));
-        return result is OkObjectResult ? NoContent() : result;
+        return CommandNoContent(await _usernameHandler.HandleAsync(envelope, ct));
     }
 
     [HttpPost("description")]
-    public async Task<IActionResult> UpdateDescription([FromBody] SettingsDescriptionRequest req, CancellationToken ct)
+    public async Task<Response> UpdateDescription([FromBody] SettingsDescriptionRequest req, CancellationToken ct)
     {
         var envelope = new CommandEnvelope<UpdateDescriptionCommand>(
             OperationIds.SettingsDescriptionUpdate,
@@ -143,16 +145,15 @@ public sealed class SettingsController : InterfoldControllerBase
             Payload: new UpdateDescriptionCommand(req.Description)
         );
 
-        var result = ToHttpResult(await _descriptionHandler.HandleAsync(envelope, ct));
-        return result is OkObjectResult ? NoContent() : result;
+        return CommandNoContent(await _descriptionHandler.HandleAsync(envelope, ct));
     }
 
     [HttpPost("push-token")]
-    public async Task<IActionResult> AddPushToken([FromBody] SettingsPushTokenRequest req, CancellationToken ct)
+    public async Task<Response> AddPushToken([FromBody] SettingsPushTokenRequest req, CancellationToken ct)
     {
         var pushToken = req.Token;
         if (string.IsNullOrWhiteSpace(pushToken))
-            return BadRequest(new { error = "Invalid push token.", code = "invalid_push_token" });
+            return new ErrorResponse("Invalid push token.", "invalid_push_token", System.Net.HttpStatusCode.BadRequest);
 
         var envelope = new CommandEnvelope<AddPushTokenCommand>(
             OperationIds.SettingsPushTokenAdd,
@@ -163,16 +164,15 @@ public sealed class SettingsController : InterfoldControllerBase
             Payload: new AddPushTokenCommand(pushToken)
         );
 
-        var result = ToHttpResult(await _addPushTokenHandler.HandleAsync(envelope, ct));
-        return result is OkObjectResult ? NoContent() : result;
+        return CommandNoContent(await _addPushTokenHandler.HandleAsync(envelope, ct));
     }
 
     [HttpDelete("push-token")]
-    public async Task<IActionResult> RemovePushToken([FromBody] SettingsPushTokenRequest req, CancellationToken ct)
+    public async Task<Response> RemovePushToken([FromBody] SettingsPushTokenRequest req, CancellationToken ct)
     {
         var pushToken = req.Token;
         if (string.IsNullOrWhiteSpace(pushToken))
-            return BadRequest(new { error = "Invalid push token.", code = "invalid_push_token" });
+            return new ErrorResponse("Invalid push token.", "invalid_push_token", System.Net.HttpStatusCode.BadRequest);
 
         var envelope = new CommandEnvelope<RemovePushTokenCommand>(
             OperationIds.SettingsPushTokenRemove,
@@ -183,15 +183,14 @@ public sealed class SettingsController : InterfoldControllerBase
             Payload: new RemovePushTokenCommand(pushToken)
         );
 
-        var result = ToHttpResult(await _removePushTokenHandler.HandleAsync(envelope, ct));
-        return result is OkObjectResult ? NoContent() : result;
+        return CommandNoContent(await _removePushTokenHandler.HandleAsync(envelope, ct));
     }
 
     [HttpPost("setup-encryption")]
-    public async Task<IActionResult> SetupEncryption([FromBody] SettingsEncryptionRequest req, CancellationToken ct)
+    public async Task<Response<EncryptionKeyResponse>> SetupEncryption([FromBody] SettingsEncryptionRequest req, CancellationToken ct)
     {
         if (!TryResolveRecoveryCode(req.RecoveryCode, out var recoveryCode, out var decryptionErrorCode))
-            return BadRequest(new { error = "Failed to decrypt recovery code.", code = decryptionErrorCode });
+            return new ErrorResponse("Failed to decrypt recovery code.", decryptionErrorCode, System.Net.HttpStatusCode.BadRequest);
 
         var envelope = new CommandEnvelope<SetupEncryptionCommand>(
             OperationIds.SettingsEncryptionSetup,
@@ -204,16 +203,16 @@ public sealed class SettingsController : InterfoldControllerBase
 
         var execution = await _setupEncryptionHandler.HandleAsync(envelope, ct);
         if (execution.Accepted)
-            return Ok(new { data = new { key = execution.Result!.Key } });
+            return new SuccessResponse<EncryptionKeyResponse>(new EncryptionKeyResponse(execution.Result!.Key));
 
-        return ToHttpResult(execution);
+        return ConflictToError(execution.Conflict!);
     }
 
     [HttpPost("recover-encryption")]
-    public async Task<IActionResult> RecoverEncryption([FromBody] SettingsEncryptionRequest req, CancellationToken ct)
+    public async Task<Response<EncryptionKeyResponse>> RecoverEncryption([FromBody] SettingsEncryptionRequest req, CancellationToken ct)
     {
         if (!TryResolveRecoveryCode(req.RecoveryCode, out var recoveryCode, out var decryptionErrorCode))
-            return BadRequest(new { error = "Failed to decrypt recovery code.", code = decryptionErrorCode });
+            return new ErrorResponse("Failed to decrypt recovery code.", decryptionErrorCode, System.Net.HttpStatusCode.BadRequest);
 
         var envelope = new CommandEnvelope<RecoverEncryptionCommand>(
             OperationIds.SettingsEncryptionRecover,
@@ -226,15 +225,15 @@ public sealed class SettingsController : InterfoldControllerBase
 
         var execution = await _recoverEncryptionHandler.HandleAsync(envelope, ct);
         if (execution.Accepted)
-            return Ok(new { data = new { key = execution.Result!.Key } });
+            return new SuccessResponse<EncryptionKeyResponse>(new EncryptionKeyResponse(execution.Result!.Key));
 
         //TODO: To ensure route works as expected
-        return ToHttpResult(execution);
+        return ConflictToError(execution.Conflict!);
     }
 
     //TODO: To ensure route works as expected - does not delete journal entries currently which need adding
     [HttpPost("reset-encryption")]
-    public async Task<IActionResult> ResetEncryption([FromBody] BaseRequest? req, CancellationToken ct)
+    public async Task<Response> ResetEncryption([FromBody] BaseRequest? req, CancellationToken ct)
     {
         var envelope = new CommandEnvelope<ResetEncryptionCommand>(
             OperationIds.SettingsEncryptionReset,
@@ -245,13 +244,12 @@ public sealed class SettingsController : InterfoldControllerBase
             Payload: new ResetEncryptionCommand()
         );
 
-        var result = ToHttpResult(await _resetEncryptionHandler.HandleAsync(envelope, ct));
-        return result is OkObjectResult ? NoContent() : result;
+        return CommandNoContent(await _resetEncryptionHandler.HandleAsync(envelope, ct));
     }
 
     [HttpPut("avatar")]
     [Consumes("multipart/form-data")]
-    public async Task<IActionResult> UploadAvatarMultipart(CancellationToken ct)
+    public async Task<Response> UploadAvatarMultipart(CancellationToken ct)
     {
         var principal = PrincipalId;
         var upload = await ResolveMultipartUploadAsync(ct);
@@ -259,9 +257,9 @@ public sealed class SettingsController : InterfoldControllerBase
         if (avatarStream is null)
         {
             if (upload.EmptyFilePart)
-                return BadRequest(new { error = "Avatar file is empty.", code = "avatar_file_empty" });
+                return new ErrorResponse("Avatar file is empty.", "avatar_file_empty", System.Net.HttpStatusCode.BadRequest);
 
-            return BadRequest(new { error = "No avatar file provided.", code = "avatar_file_required" });
+            return new ErrorResponse("No avatar file provided.", "avatar_file_required", System.Net.HttpStatusCode.BadRequest);
         }
 
         string avatarUrl;
@@ -274,7 +272,7 @@ public sealed class SettingsController : InterfoldControllerBase
         }
         catch
         {
-            return StatusCode(500, new { error = "An error occurred while uploading the file.", code = "unknown_error" });
+            return new ErrorResponse("An error occurred while uploading the file.", "unknown_error", System.Net.HttpStatusCode.InternalServerError);
         }
 
         string? currentAvatarUrl = null;
@@ -296,9 +294,9 @@ public sealed class SettingsController : InterfoldControllerBase
             Payload: new UploadAvatarCommand(avatarUrl)
         );
 
-        var result = ToHttpResult(await _uploadAvatarHandler.HandleAsync(envelope, ct));
+        var result = CommandNoContent(await _uploadAvatarHandler.HandleAsync(envelope, ct));
 
-        if (result is not OkObjectResult)
+        if (!result.IsT0)
         {
             return result;
         }
@@ -312,11 +310,11 @@ public sealed class SettingsController : InterfoldControllerBase
             // Avatar metadata was updated successfully; tolerate storage cleanup failures.
         }
 
-        return NoContent();
+        return result;
     }
 
     [HttpDelete("avatar")]
-    public async Task<IActionResult> DeleteAvatar([FromBody] BaseRequest? req, CancellationToken ct)
+    public async Task<Response> DeleteAvatar([FromBody] BaseRequest? req, CancellationToken ct)
     {
         var principal = PrincipalId;
         var currentProfile = await _accountRepository.GetPublicProfileAsync(principal, ct);
@@ -344,13 +342,12 @@ public sealed class SettingsController : InterfoldControllerBase
             }
         }
 
-        var result = ToHttpResult(execution);
-        return result is OkObjectResult ? NoContent() : result;
+        return CommandNoContent(execution);
     }
 
     //TODO: To ensure route works as expected
     [HttpPost("import-pk")]
-    public async Task<IActionResult> ImportPk([FromBody] SettingsImportRequest req, CancellationToken ct)
+    public async Task<Response> ImportPk([FromBody] SettingsImportRequest req, CancellationToken ct)
     {
         var envelope = new CommandEnvelope<ImportPkCommand>(
             OperationIds.SettingsImportPk,
@@ -361,13 +358,12 @@ public sealed class SettingsController : InterfoldControllerBase
             Payload: new ImportPkCommand(req.Token)
         );
 
-        var result = ToHttpResult(await _importPkHandler.HandleAsync(envelope, ct));
-        return result is OkObjectResult ? NoContent() : result;
+        return CommandNoContent(await _importPkHandler.HandleAsync(envelope, ct));
     }
 
     //TODO: To ensure route works as expected
     [HttpPost("import-sp")]
-    public async Task<IActionResult> ImportSp([FromBody] SettingsImportRequest req, CancellationToken ct)
+    public async Task<Response> ImportSp([FromBody] SettingsImportRequest req, CancellationToken ct)
     {
         var envelope = new CommandEnvelope<ImportSpCommand>(
             OperationIds.SettingsImportSp,
@@ -378,12 +374,11 @@ public sealed class SettingsController : InterfoldControllerBase
             Payload: new ImportSpCommand(req.Token)
         );
 
-        var result = ToHttpResult(await _importSpHandler.HandleAsync(envelope, ct));
-        return result is OkObjectResult ? NoContent() : result;
+        return CommandNoContent(await _importSpHandler.HandleAsync(envelope, ct));
     }
 
     [HttpPost("unlink_discord")]
-    public async Task<IActionResult> UnlinkDiscord([FromBody] BaseRequest? req, CancellationToken ct)
+    public async Task<Response> UnlinkDiscord([FromBody] BaseRequest? req, CancellationToken ct)
     {
         var envelope = new CommandEnvelope<UnlinkDiscordCommand>(
             OperationIds.SettingsAuthUnlinkDiscord,
@@ -394,12 +389,11 @@ public sealed class SettingsController : InterfoldControllerBase
             Payload: new UnlinkDiscordCommand()
         );
 
-        var result = ToHttpResult(await _unlinkDiscordHandler.HandleAsync(envelope, ct));
-        return result is OkObjectResult ? NoContent() : result;
+        return CommandNoContent(await _unlinkDiscordHandler.HandleAsync(envelope, ct));
     }
 
     [HttpPost("unlink_email")]
-    public async Task<IActionResult> UnlinkEmail([FromBody] BaseRequest? req, CancellationToken ct)
+    public async Task<Response> UnlinkEmail([FromBody] BaseRequest? req, CancellationToken ct)
     {
         var envelope = new CommandEnvelope<UnlinkEmailCommand>(
             OperationIds.SettingsAuthUnlinkEmail,
@@ -410,13 +404,12 @@ public sealed class SettingsController : InterfoldControllerBase
             Payload: new UnlinkEmailCommand()
         );
 
-        var result = ToHttpResult(await _unlinkEmailHandler.HandleAsync(envelope, ct));
-        return result is OkObjectResult ? NoContent() : result;
+        return CommandNoContent(await _unlinkEmailHandler.HandleAsync(envelope, ct));
     }
 
     //TODO: To ensure route works as expected - other ones work but this one needs testing to ensure the command handler is correctly implemented
     [HttpPost("unlink_apple")]
-    public async Task<IActionResult> UnlinkApple([FromBody] BaseRequest? req, CancellationToken ct)
+    public async Task<Response> UnlinkApple([FromBody] BaseRequest? req, CancellationToken ct)
     {
         var envelope = new CommandEnvelope<UnlinkAppleCommand>(
             OperationIds.SettingsAuthUnlinkApple,
@@ -427,13 +420,12 @@ public sealed class SettingsController : InterfoldControllerBase
             Payload: new UnlinkAppleCommand()
         );
 
-        var result = ToHttpResult(await _unlinkAppleHandler.HandleAsync(envelope, ct));
-        return result is OkObjectResult ? NoContent() : result;
+        return CommandNoContent(await _unlinkAppleHandler.HandleAsync(envelope, ct));
     }
 
     //TODO: To ensure route works as expected
     [HttpPost("delete-account")]
-    public async Task<IActionResult> DeleteAccount([FromBody] BaseRequest? req, CancellationToken ct)
+    public async Task<Response> DeleteAccount([FromBody] BaseRequest? req, CancellationToken ct)
     {
         var envelope = new CommandEnvelope<DeleteAccountCommand>(
             OperationIds.SettingsAccountDelete,
@@ -444,12 +436,11 @@ public sealed class SettingsController : InterfoldControllerBase
             Payload: new DeleteAccountCommand()
         );
 
-        var result = ToHttpResult(await _deleteAccountHandler.HandleAsync(envelope, ct));
-        return result is OkObjectResult ? NoContent() : result;
+        return CommandNoContent(await _deleteAccountHandler.HandleAsync(envelope, ct));
     }
 
     [HttpPost("wipe-alters")]
-    public async Task<IActionResult> WipeAlters([FromBody] BaseRequest? req, CancellationToken ct)
+    public async Task<Response> WipeAlters([FromBody] BaseRequest? req, CancellationToken ct)
     {
         var envelope = new CommandEnvelope<WipeAltersCommand>(
             OperationIds.SettingsAltersWipe,
@@ -460,12 +451,11 @@ public sealed class SettingsController : InterfoldControllerBase
             Payload: new WipeAltersCommand()
         );
 
-        var result = ToHttpResult(await _wipeAltersHandler.HandleAsync(envelope, ct));
-        return result is OkObjectResult ? NoContent() : result;
+        return CommandNoContent(await _wipeAltersHandler.HandleAsync(envelope, ct));
     }
 
     [HttpPost("fields")]
-    public async Task<IActionResult> CreateField([FromBody] SettingsCreateFieldRequest req, CancellationToken ct)
+    public async Task<Response<FieldCreatedResponse>> CreateField([FromBody] SettingsCreateFieldRequest req, CancellationToken ct)
     {
         var envelope = new CommandEnvelope<CreateFieldCommand>(
             OperationIds.SettingsFieldCreate,
@@ -478,20 +468,13 @@ public sealed class SettingsController : InterfoldControllerBase
 
         var execution = await _createFieldHandler.HandleAsync(envelope, ct);
         if (!execution.Accepted)
-            return ToHttpResult(execution);
+            return ConflictToError(execution.Conflict!);
 
-        return StatusCode(StatusCodes.Status201Created, new
-        {
-            data = new
-            {
-                id = execution.Result!.FieldId
-            },
-            replay = execution.Result.Replay
-        });
+        return new SuccessResponse<FieldCreatedResponse>(new FieldCreatedResponse(execution.Result!.FieldId), System.Net.HttpStatusCode.Created, execution.Result.Replay);
     }
 
     [HttpPatch("fields/{id}")]
-    public async Task<IActionResult> UpdateField([FromRoute] string id, [FromBody] SettingsUpdateFieldRequest req, CancellationToken ct)
+    public async Task<Response> UpdateField([FromRoute] string id, [FromBody] SettingsUpdateFieldRequest req, CancellationToken ct)
     {
         var envelope = new CommandEnvelope<UpdateFieldCommand>(
             OperationIds.SettingsFieldUpdate,
@@ -502,12 +485,11 @@ public sealed class SettingsController : InterfoldControllerBase
             Payload: new UpdateFieldCommand(id, req.Name, req.SecurityLevel, req.Locked)
         );
 
-        var result = ToHttpResult(await _updateFieldHandler.HandleAsync(envelope, ct));
-        return result is OkObjectResult ? NoContent() : result;
+        return CommandNoContent(await _updateFieldHandler.HandleAsync(envelope, ct));
     }
 
     [HttpDelete("fields/{id}")]
-    public async Task<IActionResult> DeleteField([FromRoute] string id, [FromBody] BaseRequest? req, CancellationToken ct)
+    public async Task<Response> DeleteField([FromRoute] string id, [FromBody] BaseRequest? req, CancellationToken ct)
     {
         var envelope = new CommandEnvelope<DeleteFieldCommand>(
             OperationIds.SettingsFieldDelete,
@@ -518,12 +500,11 @@ public sealed class SettingsController : InterfoldControllerBase
             Payload: new DeleteFieldCommand(id)
         );
 
-        var result = ToHttpResult(await _deleteFieldHandler.HandleAsync(envelope, ct));
-        return result is OkObjectResult ? NoContent() : result;
+        return CommandNoContent(await _deleteFieldHandler.HandleAsync(envelope, ct));
     }
 
     [HttpPost("fields/{id}/relocate")]
-    public async Task<IActionResult> RelocateField([FromRoute] string id, [FromBody] SettingsRelocateFieldRequest req, CancellationToken ct)
+    public async Task<Response> RelocateField([FromRoute] string id, [FromBody] SettingsRelocateFieldRequest req, CancellationToken ct)
     {
         var envelope = new CommandEnvelope<RelocateFieldCommand>(
             OperationIds.SettingsFieldRelocate,
@@ -534,8 +515,7 @@ public sealed class SettingsController : InterfoldControllerBase
             Payload: new RelocateFieldCommand(id, req.Index)
         );
 
-        var result = ToHttpResult(await _relocateFieldHandler.HandleAsync(envelope, ct));
-        return result is OkObjectResult ? NoContent() : result;
+        return CommandNoContent(await _relocateFieldHandler.HandleAsync(envelope, ct));
     }
 
     private async Task<AvatarUploadPayload> ResolveMultipartUploadAsync(CancellationToken ct)
@@ -608,29 +588,28 @@ public sealed class SettingsController : InterfoldControllerBase
         return new AvatarUploadPayload(null, idempotencyKey, emptyFilePart);
     }
     
-    private static bool TryResolveRecoveryCode(string candidate, out string recoveryCode, out string errorCode)
+    private bool TryResolveRecoveryCode(string candidate, out string recoveryCode, out string errorCode)
     {
-        recoveryCode = string.Empty;
-        errorCode = "decryption_error";
-
+        recoveryCode = "";
         if (string.IsNullOrWhiteSpace(candidate))
         {
-            errorCode = "recovery_code_invalid";
+            errorCode = "recovery_code_not_provided";
             return false;
         }
-
         if (!LooksLikeCompactJwe(candidate))
         {
-            recoveryCode = candidate;
-            return true;
+            errorCode = "recovery_code_not_jwe";
+            return false;
         }
 
-        if (!TryLoadEncryptionPrivateKey(out var privateKeyPem))
+        if (!TryLoadEncryptionPrivateKey(out var privateKeyPem)
+            || !TryDecryptRecoveryCodeJwe(candidate, privateKeyPem, out recoveryCode))
+        {
+            errorCode = "decryption_error";
             return false;
+        }
 
-        if (!TryDecryptRecoveryCodeJwe(candidate, privateKeyPem, out recoveryCode))
-            return false;
-
+        errorCode = "";
         return !string.IsNullOrWhiteSpace(recoveryCode);
     }
 

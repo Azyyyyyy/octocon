@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
+using Interfold.Api.Models;
 using Interfold.Contracts.Operations;
 using Interfold.Domain.Polls;
 using Interfold.Contracts.Models.Commands;
@@ -45,7 +46,7 @@ public sealed class PollsController : InterfoldControllerBase
     }
 
     [HttpPost]
-    public async Task<IActionResult> Create([FromBody] CreatePollRequest req, CancellationToken ct)
+    public async Task<Response<PollReadModel>> Create([FromBody] CreatePollRequest req, CancellationToken ct)
     {
         var principal = PrincipalId;
         var envelope = new CommandEnvelope<CreatePollCommand>(
@@ -60,20 +61,22 @@ public sealed class PollsController : InterfoldControllerBase
         var execution = await _create.HandleAsync(envelope, ct);
         if (!execution.Accepted)
         {
-            return ToHttpResult(execution);
+            return ConflictToError(execution.Conflict!);
         }
 
         var poll = await _pollRepository.GetAsync(principal, execution.Result!.PollId, ct);
-        object data = poll is not null ? poll : execution.Result;
-        return StatusCode(StatusCodes.Status201Created, new { data, replay = execution.Result.Replay });
+        if (poll is null)
+            return new ErrorResponse("An unknown error occurred.", "unknown_error", System.Net.HttpStatusCode.InternalServerError);
+
+        return new SuccessResponse<PollReadModel>(poll, System.Net.HttpStatusCode.Created, execution.Result.Replay);
     }
 
     [HttpPatch("{id}")]
-    public async Task<IActionResult> Update(string id, [FromBody] UpdatePollRequest req, CancellationToken ct)
+    public async Task<Response> Update(string id, [FromBody] UpdatePollRequest req, CancellationToken ct)
     {
         if (!req.TryResolveTimeEnd(out var resolvedTimeEnd))
         {
-            return BadRequest(new { error = "Invalid time_end.", code = "poll_invalid_time_end" });
+            return new ErrorResponse("Invalid time_end.", "poll_invalid_time_end", System.Net.HttpStatusCode.BadRequest);
         }
 
         var envelope = new CommandEnvelope<UpdatePollCommand>(
@@ -85,12 +88,11 @@ public sealed class PollsController : InterfoldControllerBase
             Payload: new UpdatePollCommand(id, req.Title, req.Description, resolvedTimeEnd, req.HasTimeEnd, req.Data)
         );
 
-        var result = ToHttpResult(await _update.HandleAsync(envelope, ct));
-        return result is OkObjectResult ? NoContent() : result;
+        return CommandNoContent(await _update.HandleAsync(envelope, ct));
     }
 
     [HttpDelete("{id}")]
-    public async Task<IActionResult> Delete(string id, [FromBody] BaseRequest? req, CancellationToken ct)
+    public async Task<Response> Delete(string id, [FromBody] BaseRequest? req, CancellationToken ct)
     {
         var envelope = new CommandEnvelope<DeletePollCommand>(
             OperationIds.PollDelete,
@@ -101,7 +103,6 @@ public sealed class PollsController : InterfoldControllerBase
             Payload: new DeletePollCommand(id)
         );
 
-        var result = ToHttpResult(await _delete.HandleAsync(envelope, ct));
-        return result is OkObjectResult ? NoContent() : result;
+        return CommandNoContent(await _delete.HandleAsync(envelope, ct));
     }
 }
