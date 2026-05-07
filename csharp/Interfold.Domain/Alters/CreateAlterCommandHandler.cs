@@ -35,7 +35,8 @@ public sealed class CreateAlterCommandHandler : ICommandHandler<CreateAlterComma
             return RejectInvariant(command, "alter:name");
         }
 
-        var payloadJson = CommandSerialization.Serialize(command.Payload);
+        //We have to ignore CreatedAt in the payload when calculating the hash, since it is generated upon the endpoint being called.
+        var payloadJson = CommandSerialization.Serialize(command.Payload with { CreatedAt = default });
         var payloadHash = CommandSerialization.Hash(payloadJson);
 
         var previous = await _idempotencyStore.FindAsync(

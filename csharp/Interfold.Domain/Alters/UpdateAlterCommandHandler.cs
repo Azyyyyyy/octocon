@@ -40,7 +40,8 @@ public sealed class UpdateAlterCommandHandler : ICommandHandler<UpdateAlterComma
             return RejectInvariant(command, "alter:update:no_fields");
         }
 
-        var payloadJson = CommandSerialization.Serialize(command.Payload);
+        //We have to ignore UpdatedAt in the payload when calculating the hash, since it is generated upon the endpoint being called.
+        var payloadJson = CommandSerialization.Serialize(command.Payload with { UpdatedAt = default });
         var payloadHash = CommandSerialization.Hash(payloadJson);
 
         var previous = await _idempotencyStore.FindAsync(
