@@ -66,7 +66,7 @@ public sealed class AltersController : InterfoldControllerBase
             PrincipalId: principal,
             IdempotencyKey: GetIdempotencyKey(req.IdempotencyKey),
             OccurredAt: DateTimeOffset.UtcNow,
-            Payload: new CreateAlterCommand(req.Name)
+            Payload: new CreateAlterCommand(req.Name, DateTimeOffset.UtcNow)
         );
 
         var execution = await _createHandler.HandleAsync(envelope, ct);
@@ -101,7 +101,8 @@ public sealed class AltersController : InterfoldControllerBase
             Alias: req.Alias,
             Untracked: req.Untracked,
             Archived: req.Archived,
-            Pinned: req.Pinned
+            Pinned: req.Pinned,
+            UpdatedAt: DateTimeOffset.UtcNow
         );
 
         var envelope = new CommandEnvelope<UpdateAlterCommand>(
@@ -184,7 +185,8 @@ public sealed class AltersController : InterfoldControllerBase
             Alias: null,
             Untracked: null,
             Archived: null,
-            Pinned: null
+            Pinned: null,
+            UpdatedAt: DateTimeOffset.UtcNow
         );
 
         var envelope = new CommandEnvelope<UpdateAlterCommand>(
@@ -307,6 +309,7 @@ public sealed class AltersController : InterfoldControllerBase
             Untracked: null,
             Archived: null,
             Pinned: null,
+            UpdatedAt: DateTimeOffset.UtcNow,
             ClearAvatar: true
         );
 

@@ -361,7 +361,6 @@ public sealed class SettingsController : InterfoldControllerBase
         return CommandNoContent(await _importPkHandler.HandleAsync(envelope, ct));
     }
 
-    //TODO: To ensure route works as expected
     [HttpPost("import-sp")]
     public async Task<Response> ImportSp([FromBody] SettingsImportRequest req, CancellationToken ct)
     {
@@ -371,7 +370,7 @@ public sealed class SettingsController : InterfoldControllerBase
             PrincipalId: PrincipalId,
             IdempotencyKey: GetIdempotencyKey(req.IdempotencyKey),
             OccurredAt: DateTimeOffset.UtcNow,
-            Payload: new ImportSpCommand(req.Token)
+            Payload: new ImportSpCommand(req.Token, req.EncryptionKey)
         );
 
         return CommandNoContent(await _importSpHandler.HandleAsync(envelope, ct));
@@ -588,101 +587,6 @@ public sealed class SettingsController : InterfoldControllerBase
         return new AvatarUploadPayload(null, idempotencyKey, emptyFilePart);
     }
     
-    private bool TryResolveRecoveryCode(string candidate, out string recoveryCode, out string errorCode)
-    {
-        recoveryCode = "";
-        if (string.IsNullOrWhiteSpace(candidate))
-        {
-            errorCode = "recovery_code_not_provided";
-            return false;
-        }
-        if (!LooksLikeCompactJwe(candidate))
-        {
-            errorCode = "recovery_code_not_jwe";
-            return false;
-        }
-
-        if (!TryLoadEncryptionPrivateKey(out var privateKeyPem)
-            || !TryDecryptRecoveryCodeJwe(candidate, privateKeyPem, out recoveryCode))
-        {
-            errorCode = "decryption_error";
-            return false;
-        }
-
-        errorCode = "";
-        return !string.IsNullOrWhiteSpace(recoveryCode);
-    }
-
-    private static bool LooksLikeCompactJwe(string token) => token.Count(ch => ch == '.') == 4;
-
-    private static bool TryLoadEncryptionPrivateKey(out string privateKeyPem)
-    {
-        privateKeyPem = string.Empty;
-        var raw = Environment.GetEnvironmentVariable("ENCRYPTION_PRIVATE_KEY");
-
-        if (string.IsNullOrWhiteSpace(raw))
-            return false;
-
-        var normalized = raw.Trim();
-        if (normalized.Contains("BEGIN", StringComparison.Ordinal))
-        {
-            privateKeyPem = normalized.Replace("\\n", "\n", StringComparison.Ordinal);
-            return true;
-        }
-
-        try
-        {
-            var bytes = Convert.FromBase64String(normalized);
-            privateKeyPem = Encoding.UTF8.GetString(bytes);
-            return privateKeyPem.Contains("BEGIN", StringComparison.Ordinal);
-        }
-        catch (FormatException)
-        {
-            return false;
-        }
-    }
-
-    private static bool TryDecryptRecoveryCodeJwe(string compactJwe, string privateKeyPem, out string recoveryCode)
-    {
-        recoveryCode = string.Empty;
-
-        try
-        {
-            var parts = compactJwe.Split('.');
-            if (parts.Length != 5)
-                return false;
-
-            var headerJson = Encoding.UTF8.GetString(WebEncoders.Base64UrlDecode(parts[0]));
-            using var header = JsonDocument.Parse(headerJson);
-            var alg = header.RootElement.TryGetProperty("alg", out var algProp) ? algProp.GetString() : null;
-            var enc = header.RootElement.TryGetProperty("enc", out var encProp) ? encProp.GetString() : null;
-
-            if (!string.Equals(alg, "RSA-OAEP-256", StringComparison.Ordinal)
-                || !string.Equals(enc, "A256GCM", StringComparison.Ordinal))
-            {
-                return false;
-            }
-
-            var encryptedKey = WebEncoders.Base64UrlDecode(parts[1]);
-            var iv = WebEncoders.Base64UrlDecode(parts[2]);
-            var ciphertext = WebEncoders.Base64UrlDecode(parts[3]);
-            var tag = WebEncoders.Base64UrlDecode(parts[4]);
-            var aad = Encoding.ASCII.GetBytes(parts[0]);
-
-            using var rsa = RSA.Create();
-            rsa.ImportFromPem(privateKeyPem);
-            var cek = rsa.Decrypt(encryptedKey, RSAEncryptionPadding.OaepSHA256);
-
-            var plaintext = new byte[ciphertext.Length];
-            using var aes = new AesGcm(cek, tag.Length);
-            aes.Decrypt(iv, ciphertext, tag, plaintext, aad);
-
-            recoveryCode = Encoding.UTF8.GetString(plaintext);
-            return !string.IsNullOrWhiteSpace(recoveryCode);
-        }
-        catch (Exception)
-        {
-            return false;
-        }
-    }
+    private static bool TryResolveRecoveryCode(string candidate, out string recoveryCode, out string errorCode)
+        => Helpers.RecoveryCodeResolver.TryResolve(candidate, out recoveryCode, out errorCode);
 }

@@ -12,6 +12,14 @@ public sealed class ScyllaSettingsFieldRepository : ISettingsFieldRepository
     private const short TypeText = 0;
     private const short TypeNumber = 1;
     private const short TypeBoolean = 2;
+    private const short TypeDate = 3;
+    private const short TypeColour = 4;
+    private const short TypePlainText = 5;
+    private const short TypeMonth = 6;
+    private const short TypeYear = 7;
+    private const short TypeMonthYear = 8;
+    private const short TypeTimestamp = 9;
+    private const short TypeMonthDay = 10;
 
     private const short SecurityPublic = 0;
     private const short SecurityFriendsOnly = 1;
@@ -343,7 +351,33 @@ public sealed class ScyllaSettingsFieldRepository : ISettingsFieldRepository
             "text" => TypeText,
             "number" => TypeNumber,
             "boolean" => TypeBoolean,
+            "date" => TypeDate,
+            "colour" => TypeColour,
+            "plaintext" => TypePlainText,
+            "month" => TypeMonth,
+            "year" => TypeYear,
+            "month_year" => TypeMonthYear,
+            "timestamp" => TypeTimestamp,
+            "month_day" => TypeMonthDay,
             _ => TypeText
+        };
+    }
+
+    private static string ToDomainType(short type)
+    {
+        return type switch
+        {
+            TypeNumber => "number",
+            TypeBoolean => "boolean",
+            TypeDate => "date",
+            TypeColour => "colour",
+            TypePlainText => "plaintext",
+            TypeMonth => "month",
+            TypeYear => "year",
+            TypeMonthYear => "month_year",
+            TypeTimestamp => "timestamp",
+            TypeMonthDay => "month_day",            
+            _ => "text"
         };
     }
 
@@ -355,16 +389,6 @@ public sealed class ScyllaSettingsFieldRepository : ISettingsFieldRepository
             "friends_only" => SecurityFriendsOnly,
             "trusted_only" => SecurityTrustedOnly,
             _ => SecurityPrivate
-        };
-    }
-
-    private static string ToDomainType(short type)
-    {
-        return type switch
-        {
-            TypeNumber => "number",
-            TypeBoolean => "boolean",
-            _ => "text"
         };
     }
 

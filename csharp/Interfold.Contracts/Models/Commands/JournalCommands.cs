@@ -19,13 +19,18 @@ public sealed record AttachAlterToGlobalJournalCommand(string EntryId, int Alter
 
 public sealed record DetachAlterFromGlobalJournalCommand(string EntryId, int AlterId);
 
-public sealed record CreateAlterJournalEntryCommand(int AlterId, string Title);
+public sealed record CreateAlterJournalEntryCommand(
+    int AlterId,
+    string Title,
+    DateTimeOffset CreatedAt
+);
 
 public sealed record UpdateAlterJournalEntryCommand(
     string EntryId,
     string? Title,
     string? Content,
-    string? Color
+    string? Color,
+    DateTimeOffset UpdatedAt
 );
 
 public sealed record DeleteAlterJournalEntryCommand(string EntryId);

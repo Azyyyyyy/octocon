@@ -299,8 +299,10 @@ public sealed class ScyllaJournalRepository : IJournalRepository
             var keyspace = _keyspaceResolver.ResolveRegionalKeyspace(systemId);
             var entryId = Guid.NewGuid();
 
+            var timestamp = command.CreatedAt.ToUniversalTime();
+
             var insert = new SimpleStatement(
-                $"INSERT INTO {keyspace}.alter_journals (user_id, id, alter_id, title, content, color, pinned, locked, inserted_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, toTimestamp(now()), toTimestamp(now()))",
+                $"INSERT INTO {keyspace}.alter_journals (user_id, id, alter_id, title, content, color, pinned, locked, inserted_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 normalizedSystemId,
                 entryId,
                 (short)command.AlterId,
@@ -308,7 +310,9 @@ public sealed class ScyllaJournalRepository : IJournalRepository
                 null,
                 null,
                 false,
-                false
+                false,
+                timestamp,
+                timestamp
             );
 
             await session.ExecuteAsync(insert);
@@ -356,13 +360,16 @@ public sealed class ScyllaJournalRepository : IJournalRepository
             var normalizedSystemId = _keyspaceResolver.NormalizeSystemId(systemId);
             var keyspace = _keyspaceResolver.ResolveRegionalKeyspace(systemId);
 
+            var timestamp = command.UpdatedAt.ToUniversalTime();
+
             var updateBatch = new BatchStatement();
 
             if (command.Title is not null)
             {
                 var q = new SimpleStatement(
-                    $"UPDATE {keyspace}.alter_journals SET title = ?, updated_at = toTimestamp(now()) WHERE user_id = ? AND id = ? AND alter_id = ?",
+                    $"UPDATE {keyspace}.alter_journals SET title = ?, updated_at = ? WHERE user_id = ? AND id = ? AND alter_id = ?",
                     command.Title,
+                    timestamp,
                     normalizedSystemId,
                     entryGuid,
                     (short)reference.AlterId
@@ -373,8 +380,9 @@ public sealed class ScyllaJournalRepository : IJournalRepository
             if (command.Content is not null)
             {
                 var q = new SimpleStatement(
-                    $"UPDATE {keyspace}.alter_journals SET content = ?, updated_at = toTimestamp(now()) WHERE user_id = ? AND id = ? AND alter_id = ?",
+                    $"UPDATE {keyspace}.alter_journals SET content = ?, updated_at = ? WHERE user_id = ? AND id = ? AND alter_id = ?",
                     command.Content,
+                    timestamp,
                     normalizedSystemId,
                     entryGuid,
                     (short)reference.AlterId
@@ -385,8 +393,9 @@ public sealed class ScyllaJournalRepository : IJournalRepository
             if (command.Color is not null)
             {
                 var q = new SimpleStatement(
-                    $"UPDATE {keyspace}.alter_journals SET color = ?, updated_at = toTimestamp(now()) WHERE user_id = ? AND id = ? AND alter_id = ?",
+                    $"UPDATE {keyspace}.alter_journals SET color = ?, updated_at = ? WHERE user_id = ? AND id = ? AND alter_id = ?",
                     command.Color,
+                    timestamp,
                     normalizedSystemId,
                     entryGuid,
                     (short)reference.AlterId
@@ -492,7 +501,7 @@ public sealed class ScyllaJournalRepository : IJournalRepository
             var keyspace = _keyspaceResolver.ResolveRegionalKeyspace(systemId);
 
             var query = new SimpleStatement(
-                $"SELECT id, user_id, alter_id, title, content, color, pinned, locked, inserted_at, updated_at FROM {keyspace}.alter_journals_by_alter WHERE user_id = ? AND alter_id = ?",
+                $"SELECT id, user_id, alter_id, title, content, color, pinned, locked, inserted_at, updated_at FROM {keyspace}.alter_journals WHERE user_id = ? AND alter_id = ? ALLOW FILTERING",
                 normalizedSystemId,
                 (short)alterId
             );

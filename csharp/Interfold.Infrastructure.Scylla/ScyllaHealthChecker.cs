@@ -14,8 +14,7 @@ public class ScyllaHealthChecker : IHealthCheck
         "user_registry",
         "notification_tokens",
         "friendships",
-        "friend_requests",
-        "aggregate_versions_by_region"
+        "friend_requests"
     ];
 
     private static readonly string[] RequiredRegionalScyllaTables =

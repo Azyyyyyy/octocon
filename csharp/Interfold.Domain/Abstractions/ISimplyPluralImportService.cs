@@ -5,7 +5,11 @@ namespace Interfold.Domain.Abstractions;
 /// </summary>
 public interface ISimplyPluralImportService
 {
-    Task<SpImportResult> ImportAsync(string systemId, string spToken, CancellationToken cancellationToken = default);
+    Task<SpImportResult> ImportAsync(
+        string systemId,
+        string spToken,
+        string? encryptionKey,
+        CancellationToken cancellationToken = default);
 }
 
 public sealed record SpImportResult(bool Success, int AlterCount, string? Error = null);

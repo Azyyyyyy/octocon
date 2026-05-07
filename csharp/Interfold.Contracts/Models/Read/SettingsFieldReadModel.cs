@@ -30,6 +30,7 @@ public sealed record SettingsEncryptionRequest(
 
 public sealed record SettingsImportRequest(
     string Token,
+    string? EncryptionKey,
     string? IdempotencyKey = null
 ) : BaseRequest(IdempotencyKey);
 

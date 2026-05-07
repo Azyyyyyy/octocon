@@ -10,7 +10,7 @@ namespace Interfold.Domain.Settings;
 
 public sealed class CreateFieldCommandHandler : ICommandHandler<CreateFieldCommand, SettingsFieldCommandResult>
 {
-    private static readonly HashSet<string> AllowedTypes = ["text", "number", "boolean"];
+    private static readonly HashSet<string> AllowedTypes = ["text", "number", "boolean", "date", "colour", "plaintext", "month", "year", "month_year", "timestamp", "month_day"];
     private static readonly HashSet<string> AllowedSecurityLevels = ["public", "friends_only", "trusted_only", "private"];
     private readonly ISettingsFieldRepository _fieldRepository;
     private readonly IIdempotencyStore _idempotencyStore;

@@ -39,7 +39,7 @@ CREATE TYPE IF NOT EXISTS {{KEYSPACE}}.alter_field (
     value text
 );
 
-CREATE TYPE IF NOT EXISTS {{KEYSPACE}}.server_settings_data (
+CREATE TYPE IF NOT EXISTS nam.server_settings_data (
     log_channel text,
     force_system_tags boolean,
     proxy_disabled_users list<text>
@@ -102,13 +102,7 @@ CREATE TABLE IF NOT EXISTS {{KEYSPACE}}.alters (
     PRIMARY KEY (user_id, id)
 );
 
-CREATE MATERIALIZED VIEW IF NOT EXISTS {{KEYSPACE}}.alters_by_alias AS
-    SELECT user_id, id, alias, name, pronouns, description, avatar_url,
-           security_level, extra_images, color, discord_proxies, proxy_name,
-           fields, untracked, archived, pinned, last_fronted, inserted_at, updated_at
-    FROM {{KEYSPACE}}.alters
-    WHERE user_id IS NOT NULL AND alias IS NOT NULL AND id IS NOT NULL
-    PRIMARY KEY ((user_id), alias, id);
+CREATE INDEX IF NOT EXISTS alters_by_alias ON {{KEYSPACE}}.alters (alias);
 
 -- =====================
 -- TAGS TABLE
@@ -138,11 +132,7 @@ CREATE TABLE IF NOT EXISTS {{KEYSPACE}}.alter_tags (
     PRIMARY KEY (user_id, tag_id, alter_id)
 );
 
-CREATE MATERIALIZED VIEW IF NOT EXISTS {{KEYSPACE}}.alter_tags_by_alter AS
-    SELECT user_id, tag_id, alter_id, inserted_at, updated_at
-    FROM {{KEYSPACE}}.alter_tags
-    WHERE user_id IS NOT NULL AND alter_id IS NOT NULL AND tag_id IS NOT NULL
-    PRIMARY KEY ((user_id), alter_id, tag_id);
+CREATE INDEX IF NOT EXISTS alter_tags_by_alter ON {{KEYSPACE}}.alter_tags (alter_id);
 
 -- =====================
 -- POLLS TABLE
@@ -219,12 +209,7 @@ CREATE TABLE IF NOT EXISTS {{KEYSPACE}}.alter_journals (
     PRIMARY KEY (user_id, id, alter_id)
 );
 
-CREATE MATERIALIZED VIEW IF NOT EXISTS {{KEYSPACE}}.alter_journals_by_alter AS
-    SELECT user_id, id, alter_id, title, content, color, pinned, locked,
-           inserted_at, updated_at
-    FROM {{KEYSPACE}}.alter_journals
-    WHERE user_id IS NOT NULL AND alter_id IS NOT NULL AND id IS NOT NULL
-    PRIMARY KEY ((user_id), alter_id, id);
+CREATE INDEX IF NOT EXISTS alter_journals_by_alter ON {{KEYSPACE}}.alter_journals (alter_id);
 
 -- =====================
 -- FRONTS TABLE
@@ -264,9 +249,9 @@ CREATE MATERIALIZED VIEW IF NOT EXISTS {{KEYSPACE}}.fronts_by_end_time AS
 -- =====================
 -- SERVER_SETTINGS TABLE (Nam-specific)
 -- =====================
-CREATE TABLE IF NOT EXISTS {{KEYSPACE}}.server_settings (
+CREATE TABLE IF NOT EXISTS nam.server_settings (
     guild_id text,
-    data frozen<{{KEYSPACE}}.server_settings_data>,
+    data frozen<nam.server_settings_data>,
     inserted_at timestamp,
     updated_at timestamp,
     PRIMARY KEY (guild_id)
@@ -275,7 +260,7 @@ CREATE TABLE IF NOT EXISTS {{KEYSPACE}}.server_settings (
 -- =====================
 -- CHANNEL_BLACKLISTS TABLE (Nam-specific)
 -- =====================
-CREATE TABLE IF NOT EXISTS {{KEYSPACE}}.channel_blacklists (
+CREATE TABLE IF NOT EXISTS nam.channel_blacklists (
     channel_id text,
     guild_id text,
     inserted_at timestamp,
@@ -283,7 +268,7 @@ CREATE TABLE IF NOT EXISTS {{KEYSPACE}}.channel_blacklists (
     PRIMARY KEY (channel_id)
 );
 
-CREATE INDEX IF NOT EXISTS channel_blacklists_by_guild_id ON {{KEYSPACE}}.channel_blacklists (guild_id);
+CREATE INDEX IF NOT EXISTS channel_blacklists_by_guild_id ON nam.channel_blacklists (guild_id);
 
 -- =====================
 -- GLOBAL KEYSPACE TABLES
@@ -318,7 +303,7 @@ CREATE TABLE IF NOT EXISTS global.notification_tokens (
 CREATE INDEX IF NOT EXISTS notification_tokens_by_push_token ON global.notification_tokens (push_token);
 
 CREATE TABLE IF NOT EXISTS global.friendships (
-    user_id text,
+    user_id t   ext,
     friend_id text,
     level smallint,
     since timestamp,
@@ -339,14 +324,6 @@ CREATE TABLE IF NOT EXISTS global.friend_requests (
 );
 
 CREATE INDEX IF NOT EXISTS friend_requests_by_to_id ON global.friend_requests (to_id);
-
-CREATE TABLE IF NOT EXISTS global.aggregate_versions_by_region (
-    region_scope text,
-    aggregate_type text,
-    aggregate_id text,
-    version bigint,
-    PRIMARY KEY ((region_scope, aggregate_type), aggregate_id)
-);
 
 -- =====================
 -- METRICS KEYSPACE (nam_nt)

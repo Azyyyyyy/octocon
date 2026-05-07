@@ -1,6 +1,6 @@
 namespace Interfold.Contracts.Models.Commands;
 
-public sealed record CreateAlterCommand(string Name);
+public sealed record CreateAlterCommand(string Name, DateTimeOffset CreatedAt);
 
 public sealed record UpdateAlterCommand(
     int AlterId,
@@ -16,6 +16,7 @@ public sealed record UpdateAlterCommand(
     bool? Untracked,
     bool? Archived,
     bool? Pinned,
+    DateTimeOffset UpdatedAt,
     bool ClearAvatar = false
 );
 

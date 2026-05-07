@@ -28,6 +28,12 @@ internal sealed class SpCustomFieldContent
     [JsonPropertyName("name")]
     public string? Name { get; set; }
 
+    [JsonPropertyName("type")]
+    public int Type { get; set; }
+
+    [JsonPropertyName("supportMarkdown")]
+    public bool SupportMarkdown { get; set; }
+
     [JsonPropertyName("private")]
     public bool Private { get; set; }
 
@@ -59,6 +65,12 @@ internal sealed class SpMemberContent
 
     [JsonPropertyName("uid")]
     public string? Uid { get; set; }
+
+    [JsonPropertyName("date")]
+    public long Date { get; set; }
+
+    [JsonPropertyName("lastOperationTime")]
+    public long LastOperationTime { get; set; }
 
     [JsonPropertyName("info")]
     public Dictionary<string, string?>? Info { get; set; }
@@ -164,4 +176,30 @@ internal sealed class SpPollVote
 
     [JsonPropertyName("comment")]
     public string? Comment { get; set; }
+}
+
+// --- /notes/{systemId}/{memberId} ---
+
+internal sealed class SpNoteContent
+{
+    [JsonPropertyName("title")]
+    public string? Title { get; set; }
+
+    [JsonPropertyName("note")]
+    public string? Note { get; set; }
+
+    [JsonPropertyName("color")]
+    public string? Color { get; set; }
+
+    [JsonPropertyName("date")]
+    public long Date { get; set; }
+
+    [JsonPropertyName("member")]
+    public string? Member { get; set; }
+
+    [JsonPropertyName("supportMarkdown")]
+
+    public bool SupportMarkdown { get; set; }
+    [JsonPropertyName("lastOperationTime")]
+    public long LastOperationTime { get; set; }
 }

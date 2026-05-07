@@ -66,7 +66,7 @@ public sealed class AlterJournalsController : InterfoldControllerBase
             PrincipalId: principal,
             IdempotencyKey: GetIdempotencyKey(req.IdempotencyKey),
             OccurredAt: DateTimeOffset.UtcNow,
-            Payload: new CreateAlterJournalEntryCommand(alterId, req.Title)
+            Payload: new CreateAlterJournalEntryCommand(alterId, req.Title, DateTimeOffset.UtcNow)
         );
 
         var execution = await _create.HandleAsync(envelope, ct);
@@ -91,7 +91,7 @@ public sealed class AlterJournalsController : InterfoldControllerBase
             PrincipalId: PrincipalId,
             IdempotencyKey: GetIdempotencyKey(req.IdempotencyKey),
             OccurredAt: DateTimeOffset.UtcNow,
-            Payload: new UpdateAlterJournalEntryCommand(journalId, req.Title, req.Content, req.Color)
+            Payload: new UpdateAlterJournalEntryCommand(journalId, req.Title, req.Content, req.Color, DateTimeOffset.UtcNow)
         );
 
         return CommandNoContent(await _update.HandleAsync(envelope, ct));

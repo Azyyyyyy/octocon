@@ -53,13 +53,16 @@ public sealed class ScyllaAlterRepository : IAlterRepository
             var rows = await session.ExecuteAsync(nextIdQuery);
             var current = rows.FirstOrDefault()?.GetValue<short>("id") ?? (short)0;
             var next = (short)(current + 1);
+            var createdAt = command.CreatedAt.ToUniversalTime();
 
             var insert = new SimpleStatement(
-                $"INSERT INTO {keyspace}.alters (user_id, id, name, alias, inserted_at, updated_at) VALUES (?, ?, ?, ?, toTimestamp(now()), toTimestamp(now()))",
+                $"INSERT INTO {keyspace}.alters (user_id, id, name, alias, inserted_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
                 normalizedSystemId,
                 next,
                 command.Name,
-                null
+                null,
+                createdAt,
+                createdAt
             );
 
             await session.ExecuteAsync(insert);
@@ -93,6 +96,7 @@ public sealed class ScyllaAlterRepository : IAlterRepository
             var session = await _sessionProvider.GetSessionAsync(cancellationToken);
             var normalizedSystemId = _keyspaceResolver.NormalizeSystemId(systemId);
             var keyspace = _keyspaceResolver.ResolveRegionalKeyspace(systemId);
+            var updatedAt = command.UpdatedAt.ToUniversalTime();
 
             var batch = new BatchStatement();
 
@@ -102,24 +106,25 @@ public sealed class ScyllaAlterRepository : IAlterRepository
                 return false;
             }
 
-            UpdateIfNotNull(batch, keyspace, command, "name", command.Name, normalizedSystemId);
-            UpdateIfNotNull(batch, keyspace, command, "description", command.Description, normalizedSystemId);
+            UpdateIfNotNull(batch, keyspace, command, "name", command.Name, normalizedSystemId, updatedAt);
+            UpdateIfNotNull(batch, keyspace, command, "description", command.Description, normalizedSystemId, updatedAt);
             if (command.ClearAvatar)
             {
                 batch.Add(new SimpleStatement(
-                    $"UPDATE {keyspace}.alters SET avatar_url = ?, updated_at = toTimestamp(now()) WHERE user_id = ? AND id = ?",
+                    $"UPDATE {keyspace}.alters SET avatar_url = ?, updated_at = ? WHERE user_id = ? AND id = ?",
                     null,
+                    updatedAt,
                     normalizedSystemId,
                     (short)command.AlterId
                 ));
             }
             else
             {
-                UpdateIfNotNull(batch, keyspace, command, "avatar_url", command.AvatarUrl, normalizedSystemId);
+                UpdateIfNotNull(batch, keyspace, command, "avatar_url", command.AvatarUrl, normalizedSystemId, updatedAt);
             }
-            UpdateIfNotNull(batch, keyspace, command, "color", command.Color, normalizedSystemId);
-            UpdateIfNotNull(batch, keyspace, command, "pronouns", command.Pronouns, normalizedSystemId);
-            UpdateIfNotNull(batch, keyspace, command, "security_level", command.SecurityLevel == null ? null : ToSecurityLevel(command.SecurityLevel), normalizedSystemId);
+            UpdateIfNotNull(batch, keyspace, command, "color", command.Color, normalizedSystemId, updatedAt);
+            UpdateIfNotNull(batch, keyspace, command, "pronouns", command.Pronouns, normalizedSystemId, updatedAt);
+            UpdateIfNotNull(batch, keyspace, command, "security_level", command.SecurityLevel == null ? null : ToSecurityLevel(command.SecurityLevel), normalizedSystemId, updatedAt);
 
             if (command.Fields is not null)
             {
@@ -144,18 +149,19 @@ public sealed class ScyllaAlterRepository : IAlterRepository
                     .ToList();
 
                 batch.Add(new SimpleStatement(
-                    $"UPDATE {keyspace}.alters SET fields = ?, updated_at = toTimestamp(now()) WHERE user_id = ? AND id = ?",
+                    $"UPDATE {keyspace}.alters SET fields = ?, updated_at = ? WHERE user_id = ? AND id = ?",
                     udts,
+                    updatedAt,
                     normalizedSystemId,
                     (short)command.AlterId
                 ));
             }
 
-            UpdateIfNotNull(batch, keyspace, command, "proxy_name", command.ProxyName, normalizedSystemId);
-            UpdateIfNotNull(batch, keyspace, command, "alias", command.Alias, normalizedSystemId);
-            UpdateIfNotNull(batch, keyspace, command, "untracked", command.Untracked, normalizedSystemId);
-            UpdateIfNotNull(batch, keyspace, command, "archived", command.Archived, normalizedSystemId);
-            UpdateIfNotNull(batch, keyspace, command, "pinned", command.Pinned, normalizedSystemId);
+            UpdateIfNotNull(batch, keyspace, command, "proxy_name", command.ProxyName, normalizedSystemId, updatedAt);
+            UpdateIfNotNull(batch, keyspace, command, "alias", command.Alias, normalizedSystemId, updatedAt);
+            UpdateIfNotNull(batch, keyspace, command, "untracked", command.Untracked, normalizedSystemId, updatedAt);
+            UpdateIfNotNull(batch, keyspace, command, "archived", command.Archived, normalizedSystemId, updatedAt);
+            UpdateIfNotNull(batch, keyspace, command, "pinned", command.Pinned, normalizedSystemId, updatedAt);
 
             await session.ExecuteAsync(batch);
 
@@ -163,13 +169,14 @@ public sealed class ScyllaAlterRepository : IAlterRepository
         }, _options, cancellationToken, _logger);
     }
 
-    private void UpdateIfNotNull(BatchStatement batch, string keyspace, UpdateAlterCommand command, string field, object? value, string normalizedSystemId)
+    private void UpdateIfNotNull(BatchStatement batch, string keyspace, UpdateAlterCommand command, string field, object? value, string normalizedSystemId, DateTimeOffset updatedAt)
     {
         if (value is not null)
         {
             batch.Add(new SimpleStatement(
-                    $"UPDATE {keyspace}.alters SET {field} = ?, updated_at = toTimestamp(now()) WHERE user_id = ? AND id = ?",
+                    $"UPDATE {keyspace}.alters SET {field} = ?, updated_at = ? WHERE user_id = ? AND id = ?",
                     value,
+                    updatedAt,
                     normalizedSystemId,
                     (short)command.AlterId
                 ));
@@ -209,7 +216,7 @@ public sealed class ScyllaAlterRepository : IAlterRepository
                 alterIdShort));
 
             var journalEntriesTask = session.ExecuteAsync(new SimpleStatement(
-                $"SELECT id FROM {keyspace}.alter_journals_by_alter WHERE user_id = ? AND alter_id = ?",
+                $"SELECT id FROM {keyspace}.alter_journals WHERE user_id = ? AND alter_id = ? ALLOW FILTERING",
                 normalizedSystemId,
                 alterIdShort));
 
@@ -218,7 +225,7 @@ public sealed class ScyllaAlterRepository : IAlterRepository
                 normalizedSystemId));
 
             var tagsTask = session.ExecuteAsync(new SimpleStatement(
-                $"SELECT tag_id FROM {keyspace}.alter_tags_by_alter WHERE user_id = ? AND alter_id = ?",
+                $"SELECT tag_id FROM {keyspace}.alter_tags WHERE user_id = ? AND alter_id = ? ALLOW FILTERING",
                 normalizedSystemId,
                 alterIdShort));
 
