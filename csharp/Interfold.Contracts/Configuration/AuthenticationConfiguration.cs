@@ -51,12 +51,37 @@ public sealed class AuthenticationConfiguration
     /// Env: OCTOCON_AUTH_EC_PUBLIC_KEY_FILE
     /// </summary>
     public string? JwtEs256PublicKeyFile { get; set; }
-
     /// <summary>
     /// ES256 public/private verification keys (PEM) used for token validation.
     /// Env: OCTOCON_AUTH_EC_PUBLIC_KEY_PEM, OCTOCON_AUTH_EC_PUBLIC_KEYS
     /// </summary>
     public string[]? JwtEs256VerificationKeyPems { get; set; }
+
+    /// <summary>
+    /// RSA256 public key file path.
+    /// If this file does not exist and no public is provided, an exception was thrown.
+    /// Env: OCTOCON_AUTH_RSA_PUBLIC_KEY_FILE
+    /// </summary>
+    public string? Rsa256PublicKeyFile { get; set; }
+
+    /// <summary>
+    /// RSA256 public key.
+    /// Env: OCTOCON_AUTH_RSA_PUBLIC_KEY
+    /// </summary>
+    public string Rsa256PublicKey { get; set; } = null!;
+
+    /// <summary>
+    /// RSA256 private key file path.
+    /// If this file does not exist and no private is provided, an exception was thrown.
+    /// Env: OCTOCON_AUTH_RSA_PRIVATE_KEY_FILE
+    /// </summary>
+    public string? Rsa256PrivateKeyFile { get; set; }
+
+    /// <summary>
+    /// RSA256 private key.
+    /// Env: OCTOCON_AUTH_RSA_PRIVATE_KEY
+    /// </summary>
+    public string Rsa256PrivateKey { get; set; } = null!;
 
     /// <summary>
     /// Google OAuth 2.0 client ID for backend token exchange.

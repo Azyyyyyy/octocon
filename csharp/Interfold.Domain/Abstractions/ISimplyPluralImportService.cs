@@ -8,7 +8,6 @@ public interface ISimplyPluralImportService
     Task<SpImportResult> ImportAsync(
         string systemId,
         string spToken,
-        string? encryptionKey,
         CancellationToken cancellationToken = default);
 }
 

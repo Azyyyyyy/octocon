@@ -7,7 +7,7 @@ namespace Interfold.Api.Helpers;
 
 public static class RecoveryCodeResolver
 {
-    public static bool TryResolve(string candidate, out string recoveryCode, out string errorCode)
+    public static bool TryResolve(string candidate, string privateKeyPem, out string recoveryCode, out string errorCode)
     {
         recoveryCode = "";
         if (string.IsNullOrWhiteSpace(candidate))
@@ -21,7 +21,7 @@ public static class RecoveryCodeResolver
             return false;
         }
 
-        if (!TryLoadEncryptionPrivateKey(out var privateKeyPem)
+        if (!TryLoadEncryptionPrivateKey(ref privateKeyPem)
             || !TryDecryptJwe(candidate, privateKeyPem, out recoveryCode))
         {
             errorCode = "decryption_error";
@@ -34,31 +34,10 @@ public static class RecoveryCodeResolver
 
     private static bool LooksLikeCompactJwe(string token) => token.Count(ch => ch == '.') == 4;
 
-    private static bool TryLoadEncryptionPrivateKey(out string privateKeyPem)
+    private static bool TryLoadEncryptionPrivateKey(ref string privateKeyPem)
     {
-        privateKeyPem = string.Empty;
-        var raw = Environment.GetEnvironmentVariable("ENCRYPTION_PRIVATE_KEY");
-
-        if (string.IsNullOrWhiteSpace(raw))
-            return false;
-
-        var normalized = raw.Trim();
-        if (normalized.Contains("BEGIN", StringComparison.Ordinal))
-        {
-            privateKeyPem = normalized.Replace("\\n", "\n", StringComparison.Ordinal);
-            return true;
-        }
-
-        try
-        {
-            var bytes = Convert.FromBase64String(normalized);
-            privateKeyPem = Encoding.UTF8.GetString(bytes);
-            return privateKeyPem.Contains("BEGIN", StringComparison.Ordinal);
-        }
-        catch (FormatException)
-        {
-            return false;
-        }
+        privateKeyPem = privateKeyPem.Trim().Replace("\\n", "\n", StringComparison.Ordinal);
+        return privateKeyPem.Contains("BEGIN", StringComparison.Ordinal);
     }
 
     private static bool TryDecryptJwe(string compactJwe, string privateKeyPem, out string plaintext)

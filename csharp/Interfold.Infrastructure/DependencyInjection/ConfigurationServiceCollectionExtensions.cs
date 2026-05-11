@@ -106,17 +106,17 @@ public static class ConfigurationServiceCollectionExtensions
     /// </summary>
     public static TestingConfiguration BindTestingConfiguration(this IConfiguration config)
     {
-        var runApi  = bool.TryParse(config["OCTOCON_RUN_API_INTEGRATION"],  out var resultApi)  && resultApi;
+        var runApi = bool.TryParse(config["OCTOCON_RUN_API_INTEGRATION"], out var resultApi) && resultApi;
         var runLive = bool.TryParse(config["OCTOCON_RUN_LIVE_INTEGRATION"], out var resultLive) && resultLive;
 
         return new TestingConfiguration
         {
-            RunApiIntegration       = runApi,
-            RunLiveIntegration      = runLive,
+            RunApiIntegration = runApi,
+            RunLiveIntegration = runLive,
             TestScyllaContactPoints = config["OCTOCON_TEST_SCYLLA_CONTACT_POINTS"] ?? "127.0.0.1",
-            TestScyllaUsername      = config["OCTOCON_TEST_SCYLLA_USERNAME"] ?? "cassandra",
-            TestScyllaPassword      = config["OCTOCON_TEST_SCYLLA_PASSWORD"] ?? "cassandra",
-            TestRegion              = config["OCTOCON_TEST_REGION"] ?? "nam",
+            TestScyllaUsername = config["OCTOCON_TEST_SCYLLA_USERNAME"] ?? "cassandra",
+            TestScyllaPassword = config["OCTOCON_TEST_SCYLLA_PASSWORD"] ?? "cassandra",
+            TestRegion = config["OCTOCON_TEST_REGION"] ?? "nam",
         };
     }
 
@@ -155,20 +155,69 @@ public static class ConfigurationServiceCollectionExtensions
 
     private static void ApplyAuthentication(AuthenticationConfiguration opts, IConfiguration config)
     {
-        opts.CallbackBaseUrl         = config["OCTOCON_AUTH_CALLBACK_BASE_URL"];
-        opts.DeepLinkSecret          = config["OCTOCON_AUTH_DEEP_LINK_SECRET"];
-        opts.JwtAuthority            = config["OCTOCON_JWT_AUTHORITY"] ?? "octocon-local";
-        opts.JwtEs256PrivateKeyPem   = config["OCTOCON_AUTH_EC_PRIVATE_KEY_PEM"];
-        opts.JwtEs256PrivateKeyFile  = config["OCTOCON_AUTH_EC_PRIVATE_KEY_FILE"];
-        opts.JwtEs256PublicKeyFile   = config["OCTOCON_AUTH_EC_PUBLIC_KEY_FILE"];
-        opts.DiscordOAuthClientId    = config["OCTOCON_DISCORD_OAUTH_CLIENT_ID"];
+        opts.CallbackBaseUrl = config["OCTOCON_AUTH_CALLBACK_BASE_URL"];
+        opts.DeepLinkSecret = config["OCTOCON_AUTH_DEEP_LINK_SECRET"];
+        opts.JwtAuthority = config["OCTOCON_JWT_AUTHORITY"] ?? "octocon-local";
+        opts.JwtEs256PrivateKeyPem = config["OCTOCON_AUTH_EC_PRIVATE_KEY_PEM"];
+        opts.JwtEs256PrivateKeyFile = config["OCTOCON_AUTH_EC_PRIVATE_KEY_FILE"];
+        opts.JwtEs256PublicKeyFile = config["OCTOCON_AUTH_EC_PUBLIC_KEY_FILE"];
+        opts.Rsa256PublicKeyFile = config["OCTOCON_AUTH_RSA_PUBLIC_KEY_FILE"];
+        opts.Rsa256PublicKey = config["OCTOCON_AUTH_RSA_PUBLIC_KEY"]!;
+        opts.Rsa256PrivateKeyFile = config["OCTOCON_AUTH_RSA_PRIVATE_KEY_FILE"];
+        opts.Rsa256PrivateKey = config["OCTOCON_AUTH_RSA_PRIVATE_KEY"]!;
+        opts.DiscordOAuthClientId = config["OCTOCON_DISCORD_OAUTH_CLIENT_ID"];
         opts.DiscordOAuthClientSecret = config["OCTOCON_DISCORD_OAUTH_CLIENT_SECRET"];
-        opts.GoogleOAuthClientId     = config["OCTOCON_GOOGLE_OAUTH_CLIENT_ID"];
+        opts.GoogleOAuthClientId = config["OCTOCON_GOOGLE_OAUTH_CLIENT_ID"];
         opts.GoogleOAuthClientSecret = config["OCTOCON_GOOGLE_OAUTH_CLIENT_SECRET"];
-        opts.AppleOAuthClientId      = config["OCTOCON_APPLE_OAUTH_CLIENT_ID"];
-        opts.AppleOAuthClientSecret  = config["OCTOCON_APPLE_OAUTH_CLIENT_SECRET"];
+        opts.AppleOAuthClientId = config["OCTOCON_APPLE_OAUTH_CLIENT_ID"];
+        opts.AppleOAuthClientSecret = config["OCTOCON_APPLE_OAUTH_CLIENT_SECRET"];
 
+        //TODO: Check if it's Base64, undo if that's the case
+        if (string.IsNullOrWhiteSpace(opts.Rsa256PublicKey))
+        {
+            if (string.IsNullOrWhiteSpace(opts.Rsa256PublicKeyFile))
+            {
+                opts.Rsa256PublicKeyFile = Path.Combine(AppContext.BaseDirectory, "keys", "octocon-rsa256-public.pem");
+                var publicKeyDirectory = Path.GetDirectoryName(opts.Rsa256PublicKeyFile);
+                if (!string.IsNullOrWhiteSpace(publicKeyDirectory))
+                {
+                    Directory.CreateDirectory(publicKeyDirectory);
+                }
+            }
+
+            if (!File.Exists(opts.Rsa256PublicKeyFile))
+            {
+                throw new ArgumentException("No RSA public PEM or file was provided");
+            }
+
+            var pem = File.ReadAllText(opts.Rsa256PublicKeyFile);
+            opts.Rsa256PublicKey = pem;
+        }
+
+        //TODO: Check if it's Base64, undo if that's the case
+        if (string.IsNullOrWhiteSpace(opts.Rsa256PrivateKey))
+        {
+            if (string.IsNullOrWhiteSpace(opts.Rsa256PrivateKeyFile))
+            {
+                opts.Rsa256PrivateKeyFile = Path.Combine(AppContext.BaseDirectory, "keys", "octocon-rsa256-private.pem");
+                var privateKeyDirectory = Path.GetDirectoryName(opts.Rsa256PrivateKeyFile);
+                if (!string.IsNullOrWhiteSpace(privateKeyDirectory))
+                {
+                    Directory.CreateDirectory(privateKeyDirectory);
+                }
+            }
+
+            if (!File.Exists(opts.Rsa256PrivateKeyFile))
+            {
+                throw new ArgumentException("No RSA private PEM or file was provided");
+            }
+
+            var pem = File.ReadAllText(opts.Rsa256PrivateKeyFile);
+            opts.Rsa256PrivateKey = pem;
+        }
+        
         var es256VerificationKeys = new List<string>();
+
         AuthHelper.EnsureEs256KeyMaterial(opts);
         AddIfPresent(config["OCTOCON_AUTH_EC_PUBLIC_KEY_PEM"], es256VerificationKeys);
         AddIfPresent(config["OCTOCON_AUTH_EC_PRIVATE_KEY_PEM"], es256VerificationKeys);
@@ -253,7 +302,7 @@ public static class ConfigurationServiceCollectionExtensions
             target.Add(value);
         }
     }
-    
+
     internal static Dictionary<string, string>? ParseAuthParameters(string? paramsString)
     {
         if (string.IsNullOrWhiteSpace(paramsString))

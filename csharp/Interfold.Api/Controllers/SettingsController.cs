@@ -15,6 +15,8 @@ using Interfold.Domain.Abstractions;
 using Interfold.Domain.Abstractions.Repository;
 using Interfold.Domain.Accounts;
 using Interfold.Domain.Settings;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.Extensions.Options;
 
 namespace Interfold.Api.Controllers;
 
@@ -24,6 +26,7 @@ public sealed class SettingsController : InterfoldControllerBase
     private readonly IAccountRepository _accountRepository;
     private readonly ISingletonTaskOwner _singletonTaskOwner;
     private readonly IAvatarStorage _avatarStorage;
+    private readonly IOptionsMonitor<AuthenticationConfiguration> _authenticationConfiguration;
 
     private readonly UpdateUsernameCommandHandler _usernameHandler;
     private readonly UpdateDescriptionCommandHandler _descriptionHandler;
@@ -69,7 +72,8 @@ public sealed class SettingsController : InterfoldControllerBase
         CreateFieldCommandHandler createFieldHandler,
         UpdateFieldCommandHandler updateFieldHandler,
         DeleteFieldCommandHandler deleteFieldHandler,
-        RelocateFieldCommandHandler relocateFieldHandler)
+        RelocateFieldCommandHandler relocateFieldHandler,
+        IOptionsMonitor<AuthenticationConfiguration> authenticationConfiguration)
     {
         _accountRepository = accountRepository;
         _singletonTaskOwner = singletonTaskOwner;
@@ -94,6 +98,7 @@ public sealed class SettingsController : InterfoldControllerBase
         _updateFieldHandler = updateFieldHandler;
         _deleteFieldHandler = deleteFieldHandler;
         _relocateFieldHandler = relocateFieldHandler;
+        _authenticationConfiguration = authenticationConfiguration;
     }
 
     [HttpGet("link_token")]
@@ -370,7 +375,7 @@ public sealed class SettingsController : InterfoldControllerBase
             PrincipalId: PrincipalId,
             IdempotencyKey: GetIdempotencyKey(req.IdempotencyKey),
             OccurredAt: DateTimeOffset.UtcNow,
-            Payload: new ImportSpCommand(req.Token, req.EncryptionKey)
+            Payload: new ImportSpCommand(req.Token)
         );
 
         return CommandNoContent(await _importSpHandler.HandleAsync(envelope, ct));
@@ -517,6 +522,15 @@ public sealed class SettingsController : InterfoldControllerBase
         return CommandNoContent(await _relocateFieldHandler.HandleAsync(envelope, ct));
     }
 
+    /* New endpoints from here! */
+    [HttpGet("public-key")]
+    [AllowAnonymous]
+    public async Task<Response<string>> GetPublicKey(CancellationToken ct)
+    {
+        var authenticationConfiguration = _authenticationConfiguration.CurrentValue;
+        return authenticationConfiguration.Rsa256PublicKey;
+    }
+
     private async Task<AvatarUploadPayload> ResolveMultipartUploadAsync(CancellationToken ct)
     {
         string? idempotencyKey = null;
@@ -586,7 +600,7 @@ public sealed class SettingsController : InterfoldControllerBase
 
         return new AvatarUploadPayload(null, idempotencyKey, emptyFilePart);
     }
-    
-    private static bool TryResolveRecoveryCode(string candidate, out string recoveryCode, out string errorCode)
-        => Helpers.RecoveryCodeResolver.TryResolve(candidate, out recoveryCode, out errorCode);
+
+    private bool TryResolveRecoveryCode(string candidate, out string recoveryCode, out string errorCode)
+        => Helpers.RecoveryCodeResolver.TryResolve(candidate, _authenticationConfiguration.CurrentValue.Rsa256PrivateKey, out recoveryCode, out errorCode);
 }
