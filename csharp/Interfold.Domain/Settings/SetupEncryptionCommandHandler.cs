@@ -1,5 +1,8 @@
 using System.Security.Cryptography;
 using System.Text;
+using Konscious.Security.Cryptography;
+using Microsoft.Extensions.Options;
+using Interfold.Contracts.Configuration;
 using Interfold.Contracts;
 using Interfold.Contracts.Events;
 using Interfold.Contracts.Models;
@@ -15,15 +18,18 @@ public sealed class SetupEncryptionCommandHandler : ICommandHandler<SetupEncrypt
     private readonly IEncryptionStateRepository _repository;
     private readonly IIdempotencyStore _idempotencyStore;
     private readonly IClusterEventBus _eventBus;
+    private readonly IOptionsMonitor<AuthenticationConfiguration> _authOptions;
 
     public SetupEncryptionCommandHandler(
         IEncryptionStateRepository repository,
         IIdempotencyStore idempotencyStore,
-        IClusterEventBus eventBus)
+        IClusterEventBus eventBus,
+        IOptionsMonitor<AuthenticationConfiguration> authOptions)
     {
         _repository = repository;
         _idempotencyStore = idempotencyStore;
         _eventBus = eventBus;
+        _authOptions = authOptions;
     }
 
     public async Task<CommandExecutionResult<EncryptionCommandResult>> HandleAsync(
@@ -52,10 +58,19 @@ public sealed class SetupEncryptionCommandHandler : ICommandHandler<SetupEncrypt
                 return CommandExecutionResult<EncryptionCommandResult>.Success(replay with { Replay = true });
         }
         
-        var key = DeriveKey(command.PrincipalId, command.Payload.RecoveryCode);
+        var pepper = _authOptions.CurrentValue.EncryptionPepper;
+
+        var existing = await _repository.GetAsync(command.PrincipalId, cancellationToken);
+        if (string.IsNullOrWhiteSpace(existing?.Salt))
+        {
+            throw new InterfoldException("Salt must be provided.", "encryption_salt_required");
+        }
+
+        string salt = existing.Salt;
+        var key = DeriveKey(pepper, command.PrincipalId, command.Payload.RecoveryCode, salt);
         var checksum = DeriveChecksum(key);
 
-        var persisted = await _repository.UpsertAsync(command.PrincipalId, true, checksum, cancellationToken);
+        var persisted = await _repository.UpsertAsync(command.PrincipalId, true, checksum, salt, cancellationToken);
         if (!persisted)
             return RejectInvariant(command, "settings:encryption_setup_failed");
 
@@ -75,10 +90,22 @@ public sealed class SetupEncryptionCommandHandler : ICommandHandler<SetupEncrypt
         return CommandExecutionResult<EncryptionCommandResult>.Success(result);
     }
 
-    private static string DeriveKey(string systemId, string recoveryCode)
+    private static string DeriveKey(string pepper, string systemId, string recoveryCode, string salt)
     {
-        var input = Encoding.UTF8.GetBytes($"{systemId}:{recoveryCode}");
-        return Convert.ToBase64String(SHA256.HashData(input));
+        // Step 1: SHA256(pepper + user_id + recovery_code)
+        var hashInput = Encoding.UTF8.GetBytes(pepper + systemId + recoveryCode);
+        var sha256Hash = SHA256.HashData(hashInput);
+
+        // Step 2: Argon2id(sha256_hash, salt, t_cost=12, m_cost=65536, parallelism=1, hash_len=32)
+        var saltBytes = Convert.FromBase64String(salt);
+        using var argon2 = new Argon2id(sha256Hash);
+        argon2.Salt = saltBytes;
+        argon2.DegreeOfParallelism = 1;
+        argon2.MemorySize = 65536; // KB
+        argon2.Iterations = 12;
+
+        var keyBytes = argon2.GetBytes(32);
+        return Convert.ToBase64String(keyBytes);
     }
 
     private static string DeriveChecksum(string key)

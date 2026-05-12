@@ -131,25 +131,25 @@ public static class ConfigurationServiceCollectionExtensions
 
     internal static void ApplyPersistence(PersistenceConfiguration opts, IConfiguration config)
     {
-        var region           = config["OCTOCON_REGION"] ?? "nam";
+        var region = config["OCTOCON_REGION"] ?? "nam";
         var contactPointsStr = config["OCTOCON_SCYLLA_CONTACT_POINTS"];
         var compatibilityMode = bool.TryParse(config["OCTOCON_COMPATIBILITY_MODE"], out var parsedCompatibilityMode)
             && parsedCompatibilityMode;
-        opts.Mode                     = config["OCTOCON_PERSISTENCE"] ?? "scylla-postgres";
-        opts.DefaultRegion            = region;
-        opts.CompatibilityMode        = compatibilityMode;
+        opts.Mode = config["OCTOCON_PERSISTENCE"] ?? "scylla-postgres";
+        opts.DefaultRegion = region;
+        opts.CompatibilityMode = compatibilityMode;
         opts.PostgresConnectionString = config["OCTOCON_POSTGRES_CONNECTION"]
             ?? "Host=localhost;Port=5432;Database=octocon;Username=octocon;Password=octocon";
-        opts.ScyllaKeyspace           = config["OCTOCON_SCYLLA_KEYSPACE"] ?? region;
-        opts.ScyllaLocalDatacenter    = config["OCTOCON_SCYLLA_DATACENTER"] ?? "datacenter1";
-        opts.ScyllaContactPoints      = string.IsNullOrWhiteSpace(contactPointsStr)
+        opts.ScyllaKeyspace = config["OCTOCON_SCYLLA_KEYSPACE"] ?? region;
+        opts.ScyllaLocalDatacenter = config["OCTOCON_SCYLLA_DATACENTER"] ?? "datacenter1";
+        opts.ScyllaContactPoints = string.IsNullOrWhiteSpace(contactPointsStr)
             ? ["127.0.0.1"]
             : contactPointsStr.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        opts.ScyllaUsername           = config["OCTOCON_SCYLLA_USERNAME"];
-        opts.ScyllaPassword           = config["OCTOCON_SCYLLA_PASSWORD"];
-        opts.DbRetryAttempts          = TryParseInt(config["OCTOCON_DB_RETRY_ATTEMPTS"])         ?? 3;
-        opts.DbRetryInitialDelayMs    = TryParseInt(config["OCTOCON_DB_RETRY_INITIAL_DELAY_MS"]) ?? 100;
-        opts.DbRetryMaxDelayMs        = TryParseInt(config["OCTOCON_DB_RETRY_MAX_DELAY_MS"])     ?? 1500;
+        opts.ScyllaUsername = config["OCTOCON_SCYLLA_USERNAME"];
+        opts.ScyllaPassword = config["OCTOCON_SCYLLA_PASSWORD"];
+        opts.DbRetryAttempts = TryParseInt(config["OCTOCON_DB_RETRY_ATTEMPTS"]) ?? 3;
+        opts.DbRetryInitialDelayMs = TryParseInt(config["OCTOCON_DB_RETRY_INITIAL_DELAY_MS"]) ?? 100;
+        opts.DbRetryMaxDelayMs = TryParseInt(config["OCTOCON_DB_RETRY_MAX_DELAY_MS"]) ?? 1500;
         opts.HydrationMaxConcurrency = TryParseInt(config["OCTOCON_HYDRATION_MAX_CONCURRENCY"]) ?? 8;
     }
 
@@ -241,15 +241,15 @@ public static class ConfigurationServiceCollectionExtensions
             .Distinct(StringComparer.Ordinal)
             .ToArray();
 
-        opts.DiscordSchemeName  = config["OCTOCON_AUTH_CHALLENGE_DISCORD_SCHEME"] ?? "oauth-discord";
-        opts.DiscordEndpoint    = config["OCTOCON_AUTH_CHALLENGE_DISCORD_ENDPOINT"];
-        opts.DiscordParameters  = ParseAuthParameters(config["OCTOCON_AUTH_CHALLENGE_DISCORD_PARAMS"]);
-        opts.GoogleSchemeName   = config["OCTOCON_AUTH_CHALLENGE_GOOGLE_SCHEME"]  ?? "oauth-google";
-        opts.GoogleEndpoint     = config["OCTOCON_AUTH_CHALLENGE_GOOGLE_ENDPOINT"];
-        opts.GoogleParameters   = ParseAuthParameters(config["OCTOCON_AUTH_CHALLENGE_GOOGLE_PARAMS"]);
-        opts.AppleSchemeName    = config["OCTOCON_AUTH_CHALLENGE_APPLE_SCHEME"]   ?? "oauth-apple";
-        opts.AppleEndpoint      = config["OCTOCON_AUTH_CHALLENGE_APPLE_ENDPOINT"];
-        opts.AppleParameters    = ParseAuthParameters(config["OCTOCON_AUTH_CHALLENGE_APPLE_PARAMS"]);
+        opts.DiscordSchemeName = config["OCTOCON_AUTH_CHALLENGE_DISCORD_SCHEME"] ?? "oauth-discord";
+        opts.DiscordEndpoint = config["OCTOCON_AUTH_CHALLENGE_DISCORD_ENDPOINT"];
+        opts.DiscordParameters = ParseAuthParameters(config["OCTOCON_AUTH_CHALLENGE_DISCORD_PARAMS"]);
+        opts.GoogleSchemeName = config["OCTOCON_AUTH_CHALLENGE_GOOGLE_SCHEME"] ?? "oauth-google";
+        opts.GoogleEndpoint = config["OCTOCON_AUTH_CHALLENGE_GOOGLE_ENDPOINT"];
+        opts.GoogleParameters = ParseAuthParameters(config["OCTOCON_AUTH_CHALLENGE_GOOGLE_PARAMS"]);
+        opts.AppleSchemeName = config["OCTOCON_AUTH_CHALLENGE_APPLE_SCHEME"] ?? "oauth-apple";
+        opts.AppleEndpoint = config["OCTOCON_AUTH_CHALLENGE_APPLE_ENDPOINT"];
+        opts.AppleParameters = ParseAuthParameters(config["OCTOCON_AUTH_CHALLENGE_APPLE_PARAMS"]);
 
         if (!string.IsNullOrWhiteSpace(opts.DiscordOAuthClientId) && opts.DiscordParameters != null)
         {
@@ -260,13 +260,16 @@ public static class ConfigurationServiceCollectionExtensions
         {
             opts.AppleParameters["client_id"] = opts.AppleOAuthClientId;
         }
+
+        opts.EncryptionPepper = config["OCTOCON_ENCRYPTION_PEPPER"]
+            ?? throw new ArgumentException("OCTOCON_ENCRYPTION_PEPPER is required");
     }
 
     private static void ApplyApi(ApiConfiguration opts, IConfiguration config)
     {
-        opts.FrontendAddress     = config["OCTOCON_FRONTEND"];
+        opts.FrontendAddress = config["OCTOCON_FRONTEND"];
         opts.BetaFrontendAddress = config["OCTOCON_BETA_FRONTEND"];
-        opts.DeepLinkAddress     = config["OCTOCON_DEEPLINK_ADDRESS"];
+        opts.DeepLinkAddress = config["OCTOCON_DEEPLINK_ADDRESS"];
     }
 
     private static void ApplyObservability(ObservabilityConfiguration opts, IConfiguration config)
@@ -277,7 +280,7 @@ public static class ConfigurationServiceCollectionExtensions
     private static void ApplyStorage(StorageConfiguration opts, IConfiguration config)
     {
         opts.AvatarStorageRoot = config["OCTOCON_AVATAR_STORAGE_ROOT"];
-        opts.AvatarPublicBase  = config["OCTOCON_AVATAR_PUBLIC_BASE"];
+        opts.AvatarPublicBase = config["OCTOCON_AVATAR_PUBLIC_BASE"];
     }
 
     private static void ApplySocket(SocketConfiguration opts, IConfiguration config)

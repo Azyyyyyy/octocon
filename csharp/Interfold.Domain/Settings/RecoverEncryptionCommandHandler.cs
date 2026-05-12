@@ -1,5 +1,8 @@
 using System.Security.Cryptography;
 using System.Text;
+using Konscious.Security.Cryptography;
+using Microsoft.Extensions.Options;
+using Interfold.Contracts.Configuration;
 using Interfold.Contracts;
 using Interfold.Contracts.Models;
 using Interfold.Contracts.Models.Commands;
@@ -13,13 +16,16 @@ public sealed class RecoverEncryptionCommandHandler : ICommandHandler<RecoverEnc
 {
     private readonly IEncryptionStateRepository _repository;
     private readonly IIdempotencyStore _idempotencyStore;
+    private readonly IOptionsMonitor<AuthenticationConfiguration> _authOptions;
 
     public RecoverEncryptionCommandHandler(
         IEncryptionStateRepository repository,
-        IIdempotencyStore idempotencyStore)
+        IIdempotencyStore idempotencyStore,
+        IOptionsMonitor<AuthenticationConfiguration> authOptions)
     {
         _repository = repository;
         _idempotencyStore = idempotencyStore;
+        _authOptions = authOptions;
     }
 
     public async Task<CommandExecutionResult<EncryptionCommandResult>> HandleAsync(
@@ -49,10 +55,11 @@ public sealed class RecoverEncryptionCommandHandler : ICommandHandler<RecoverEnc
         }
 
         var state = await _repository.GetAsync(command.PrincipalId, cancellationToken);
-        if (state is null || !state.Initialized || string.IsNullOrWhiteSpace(state.KeyChecksum))
+        if (state is null || !state.Initialized || string.IsNullOrWhiteSpace(state.KeyChecksum) || string.IsNullOrWhiteSpace(state.Salt))
             return RejectInvariant(command, "settings:encryption_not_initialized");
 
-        var key = DeriveKey(command.PrincipalId, command.Payload.RecoveryCode);
+        var pepper = _authOptions.CurrentValue.EncryptionPepper;
+        var key = DeriveKey(pepper, command.PrincipalId, command.Payload.RecoveryCode, state.Salt);
         var checksum = DeriveChecksum(key);
 
         if (!string.Equals(checksum, state.KeyChecksum, StringComparison.Ordinal))
@@ -73,10 +80,20 @@ public sealed class RecoverEncryptionCommandHandler : ICommandHandler<RecoverEnc
         return CommandExecutionResult<EncryptionCommandResult>.Success(result);
     }
 
-    private static string DeriveKey(string systemId, string recoveryCode)
+    private static string DeriveKey(string pepper, string systemId, string recoveryCode, string salt)
     {
-        var input = Encoding.UTF8.GetBytes($"{systemId}:{recoveryCode}");
-        return Convert.ToBase64String(SHA256.HashData(input));
+        var hashInput = Encoding.UTF8.GetBytes(pepper + systemId + recoveryCode);
+        var sha256Hash = SHA256.HashData(hashInput);
+
+        var saltBytes = Convert.FromBase64String(salt);
+        using var argon2 = new Argon2id(sha256Hash);
+        argon2.Salt = saltBytes;
+        argon2.DegreeOfParallelism = 1;
+        argon2.MemorySize = 65536;
+        argon2.Iterations = 12;
+
+        var keyBytes = argon2.GetBytes(32);
+        return Convert.ToBase64String(keyBytes);
     }
 
     private static string DeriveChecksum(string key)

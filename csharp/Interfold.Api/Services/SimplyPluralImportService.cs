@@ -1,11 +1,10 @@
+using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text;
 using Interfold.Api.Services.SimplyPlural;
-using Interfold.Contracts.Configuration;
 using Interfold.Contracts.Models.Commands;
 using Interfold.Domain.Abstractions;
 using Interfold.Domain.Abstractions.Repository;
-using Microsoft.Extensions.Options;
 
 namespace Interfold.Api.Services;
 
@@ -38,7 +37,6 @@ public sealed class SimplyPluralImportService : ISimplyPluralImportService
     private readonly IAccountRepository _accountRepository;
     private readonly IPollRepository _pollRepository;
     private readonly IJournalRepository _journalRepository;
-    private readonly IEncryptionStateRepository _encryptionStateRepository;
     private readonly IAvatarStorage _avatarStorage;
     private readonly ILogger<SimplyPluralImportService> _logger;
 
@@ -51,7 +49,6 @@ public sealed class SimplyPluralImportService : ISimplyPluralImportService
         IAccountRepository accountRepository,
         IPollRepository pollRepository,
         IJournalRepository journalRepository,
-        IEncryptionStateRepository encryptionStateRepository,
         IAvatarStorage avatarStorage,
         ILogger<SimplyPluralImportService> logger)
     {
@@ -63,7 +60,6 @@ public sealed class SimplyPluralImportService : ISimplyPluralImportService
         _accountRepository = accountRepository;
         _pollRepository = pollRepository;
         _journalRepository = journalRepository;
-        _encryptionStateRepository = encryptionStateRepository;
         _avatarStorage = avatarStorage;
         _logger = logger;
     }
@@ -71,9 +67,13 @@ public sealed class SimplyPluralImportService : ISimplyPluralImportService
     public async Task<SpImportResult> ImportAsync(
         string systemId,
         string spToken,
+        string? encryptionKey,
         CancellationToken cancellationToken = default)
     {
         _logger.LogInformation("Starting Simply Plural import for system {SystemId}", systemId);
+
+        if (!string.IsNullOrWhiteSpace(encryptionKey))
+            encryptionKey = encryptionKey.Trim();
 
         using var httpClient = _httpClientFactory.CreateClient("SimplyPlural");
         httpClient.DefaultRequestHeaders.TryAddWithoutValidation("Authorization", spToken); // SP uses non-standard "Authorization: {token}" header
@@ -104,7 +104,10 @@ public sealed class SimplyPluralImportService : ISimplyPluralImportService
         await ImportPollsAsync(httpClient, spSystemId, systemId, alterAssociations, cancellationToken);
 
         // (optional) 7. Import notes per alter as alter journals
-        await ImportNotesAsync(httpClient, spSystemId, systemId, alterAssociations, cancellationToken);
+        if (!string.IsNullOrWhiteSpace(encryptionKey))
+        {
+            await ImportNotesAsync(httpClient, spSystemId, systemId, alterAssociations, encryptionKey, cancellationToken);
+        }
 
         // 8. Update account description if available
         if (!string.IsNullOrWhiteSpace(description))
@@ -462,7 +465,7 @@ public sealed class SimplyPluralImportService : ISimplyPluralImportService
 
     private async Task ImportNotesAsync(
         HttpClient httpClient, string spSystemId, string systemId,
-        Dictionary<string, int> alterAssociations, CancellationToken ct)
+        Dictionary<string, int> alterAssociations, string encryptionKey, CancellationToken ct)
     {
         foreach (var (spMemberId, alterId) in alterAssociations)
         {
@@ -489,7 +492,7 @@ public sealed class SimplyPluralImportService : ISimplyPluralImportService
                 if (entryId is null)
                     continue;
 
-                var content = PrepareNote(note.Content.Note, updatedAt, out var successful);
+                var content = PrepareNote(note.Content.Note, encryptionKey, out var successful);
                 var color = ParseColor(note.Content.Color);
 
                 if (!successful && color is null)
@@ -506,7 +509,7 @@ public sealed class SimplyPluralImportService : ISimplyPluralImportService
         }
     }
 
-    private static string? PrepareNote(string? content, DateTimeOffset updatedTime, out bool successful)
+    private static string? PrepareNote(string? content, string encryptionKey, out bool successful)
     {
         if (string.IsNullOrEmpty(content))
         {
@@ -518,7 +521,7 @@ public sealed class SimplyPluralImportService : ISimplyPluralImportService
             ? content[..MaxJournalContentLength]
             : content;
 
-        var encrypted = TryEncryptForClient(content, updatedTime);
+        var encrypted = TryEncryptForClient(content, encryptionKey);
         if (encrypted is null)
         {
             successful = false;
@@ -529,24 +532,26 @@ public sealed class SimplyPluralImportService : ISimplyPluralImportService
         return encrypted;
     }
 
-    private static string? TryEncryptForClient(string plaintext, DateTimeOffset updatedTime)
+    // Mirrors client encryptData: real AES-256-GCM with random IV, ciphertext and tag stored separately
+    private static string? TryEncryptForClient(string plaintext, string base64Key)
     {
         try
         {
-            var timestamp = updatedTime.ToUnixTimeMilliseconds().ToString();
-            var ivSource = (timestamp + plaintext).Substring(0, Math.Min(12, timestamp.Length + plaintext.Length));
-            if (ivSource.Length < 12)
-                ivSource = ivSource.PadRight(12, '0');
-            var iv = Encoding.UTF8.GetBytes(ivSource[..12]);
+            var key = Convert.FromBase64String(base64Key);
+            if (key.Length != 32)
+                return null;
 
-            // Base64-encode the plaintext (client does the same for decryption)
+            var iv = new byte[12];
+            RandomNumberGenerator.Fill(iv);
+
             var plainBytes = Encoding.UTF8.GetBytes(plaintext);
-            var plainBase64 = Convert.ToBase64String(plainBytes);
-
-            // Dummy tag (all zeros) - matches client expectation
+            var ciphertext = new byte[plainBytes.Length];
             var tag = new byte[16];
 
-            return $"enc|{Convert.ToBase64String(iv)}|{plainBase64}|{Convert.ToBase64String(tag)}";
+            using var aes = new AesGcm(key, tag.Length);
+            aes.Encrypt(iv, plainBytes, ciphertext, tag);
+
+            return $"enc|{Convert.ToBase64String(iv)}|{Convert.ToBase64String(ciphertext)}|{Convert.ToBase64String(tag)}";
         }
         catch
         {
@@ -643,6 +648,7 @@ public sealed class SimplyPluralImportService : ISimplyPluralImportService
             }
         }
     }
+
 
     private static async Task<T?> FetchAsync<T>(HttpClient httpClient, string url, CancellationToken ct)
     {

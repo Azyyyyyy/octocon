@@ -11,8 +11,7 @@ public sealed class InMemoryNotificationTokenRepository : INotificationTokenRepo
     public Task<bool> AddAsync(string systemId, string token, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-
-        var normalizedSystemId = systemId.Trim();
+        var normalizedSystemId = NormalizeSystemId(systemId?.Trim() ?? string.Empty);
         var normalizedToken = token.Trim();
         _tokenOwners[normalizedToken] = normalizedSystemId;
 
@@ -20,6 +19,18 @@ public sealed class InMemoryNotificationTokenRepository : INotificationTokenRepo
         systemTokens[normalizedToken] = 1;
 
         return Task.FromResult(true);
+    }
+
+    private static string NormalizeSystemId(string systemId)
+    {
+        if (string.IsNullOrWhiteSpace(systemId))
+            return systemId;
+
+        var separator = systemId.IndexOf(':');
+        if (separator <= 0 || separator >= systemId.Length - 1)
+            return systemId;
+
+        return systemId[(separator + 1)..];
     }
 
     public Task<bool> RemoveAsync(string token, CancellationToken cancellationToken = default)

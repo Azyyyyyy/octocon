@@ -24,15 +24,15 @@ public static class InMemoryServiceCollectionExtensions
         IServiceCollection services,
         PersistenceConfiguration options)
     {
-        var pipeline = services
+            var pipeline = services
             .AddSingleton<IRegionContext>(_ => new InMemoryRegionContext(options.DefaultRegion))
-            .AddSingleton<IAccountRepository, InMemoryRegionalAccountRepository>()
             .AddSingleton<INotificationTokenRepository, InMemoryNotificationTokenRepository>()
             .AddSingleton<IEncryptionStateRepository, InMemoryEncryptionStateRepository>()
+            .AddSingleton<IAccountRepository, InMemoryAccountRepository>()
             .AddSingleton<ISettingsFieldRepository, InMemorySettingsFieldRepository>()
             .AddSingleton<IPollRepository, InMemoryPollRepository>()
-            .AddSingleton<IAlterRepository, InMemoryRegionalAlterRepository>()
-            .AddSingleton<IFrontingRepository, InMemoryRegionalFrontingRepository>()
+            .AddSingleton<IAlterRepository, InMemoryAlterRepository>()
+            .AddSingleton<IFrontingRepository, InMemoryFrontingRepository>()
             .AddSingleton<IFriendshipRepository, InMemoryFriendshipRepository>()
             .AddSingleton<ITagRepository, InMemoryTagRepository>()
             .AddSingleton<IJournalRepository, InMemoryJournalRepository>()

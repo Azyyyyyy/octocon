@@ -58,6 +58,12 @@ public sealed class AuthenticationConfiguration
     public string[]? JwtEs256VerificationKeyPems { get; set; }
 
     /// <summary>
+    /// Encryption pepper for key derivation.
+    /// Env: OCTOCON_ENCRYPTION_PEPPER
+    /// </summary>
+    public string EncryptionPepper { get; set; } = null!;
+
+    /// <summary>
     /// RSA256 public key file path.
     /// If this file does not exist and no public is provided, an exception was thrown.
     /// Env: OCTOCON_AUTH_RSA_PUBLIC_KEY_FILE

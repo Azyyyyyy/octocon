@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using Interfold.Contracts.Models;
 using Interfold.Contracts.Models.Read;
+using Interfold.Domain.Abstractions;
 using Interfold.Domain.Abstractions.Repository;
 
 namespace Interfold.Infrastructure.InMemory.Repository;
@@ -24,26 +25,26 @@ public sealed class InMemoryFrontingRepository : IFrontingRepository
         public DateTimeOffset? EndedAt { get; set; }
     }
 
+    private readonly IRegionContext _regionContext;
+    private readonly IFriendshipRepository? _friendships;
     private readonly ConcurrentDictionary<string, ConcurrentDictionary<int, FrontState>> _activeBySystem = new();
     private readonly ConcurrentDictionary<string, List<FrontHistoryState>> _historyBySystem = new();
     private readonly ConcurrentDictionary<string, int?> _primaryBySystem = new();
     private readonly object _sync = new();
-    private readonly IFriendshipRepository? _friendships;
 
-    public InMemoryFrontingRepository()
+    public InMemoryFrontingRepository(IRegionContext regionContext, IFriendshipRepository friendships)
     {
-    }
-
-    public InMemoryFrontingRepository(IFriendshipRepository friendships)
-    {
+        _regionContext = regionContext;
         _friendships = friendships;
     }
 
     public Task<bool> IsFrontingAsync(string systemId, int alterId, CancellationToken cancellationToken = default)
     {
+        var systemKey = GetSystemKey(systemId);
+
         lock (_sync)
         {
-            var active = _activeBySystem.TryGetValue(systemId, out var set) && set.ContainsKey(alterId);
+            var active = _activeBySystem.TryGetValue(systemKey, out var set) && set.ContainsKey(alterId);
             return Task.FromResult(active);
         }
     }
@@ -56,9 +57,11 @@ public sealed class InMemoryFrontingRepository : IFrontingRepository
         CancellationToken cancellationToken = default
     )
     {
+        var systemKey = GetSystemKey(systemId);
+
         lock (_sync)
         {
-            var set = _activeBySystem.GetOrAdd(systemId, _ => new ConcurrentDictionary<int, FrontState>());
+            var set = _activeBySystem.GetOrAdd(systemKey, _ => new ConcurrentDictionary<int, FrontState>());
             if (set.ContainsKey(alterId))
             {
                 return Task.FromResult<string?>(null);
@@ -73,7 +76,7 @@ public sealed class InMemoryFrontingRepository : IFrontingRepository
                 StartedAt = startedAt
             };
 
-            var history = _historyBySystem.GetOrAdd(systemId, _ => new List<FrontHistoryState>());
+            var history = _historyBySystem.GetOrAdd(systemKey, _ => new List<FrontHistoryState>());
             history.Add(new FrontHistoryState
             {
                 FrontId = frontId,
@@ -89,20 +92,22 @@ public sealed class InMemoryFrontingRepository : IFrontingRepository
 
     public Task<bool> EndAsync(string systemId, int alterId, DateTimeOffset endedAt, CancellationToken cancellationToken = default)
     {
+        var systemKey = GetSystemKey(systemId);
+
         lock (_sync)
         {
-            if (!_activeBySystem.TryGetValue(systemId, out var set))
+            if (!_activeBySystem.TryGetValue(systemKey, out var set))
             {
                 return Task.FromResult(false);
             }
 
             var removed = set.TryRemove(alterId, out var removedFront);
-            if (removed && _primaryBySystem.TryGetValue(systemId, out var currentPrimary) && currentPrimary == alterId)
+            if (removed && _primaryBySystem.TryGetValue(systemKey, out var currentPrimary) && currentPrimary == alterId)
             {
-                _primaryBySystem[systemId] = null;
+                _primaryBySystem[systemKey] = null;
             }
 
-            if (removed && removedFront is not null && _historyBySystem.TryGetValue(systemId, out var history))
+            if (removed && removedFront is not null && _historyBySystem.TryGetValue(systemKey, out var history))
             {
                 var historical = history.LastOrDefault(
                     x => string.Equals(x.FrontId, removedFront.FrontId, StringComparison.Ordinal) &&
@@ -119,29 +124,33 @@ public sealed class InMemoryFrontingRepository : IFrontingRepository
 
     public Task<bool> SetPrimaryAsync(string systemId, int? alterId, CancellationToken cancellationToken = default)
     {
+        var systemKey = GetSystemKey(systemId);
+
         lock (_sync)
         {
             if (alterId is int value)
             {
-                if (!_activeBySystem.TryGetValue(systemId, out var set) || !set.ContainsKey(value))
+                if (!_activeBySystem.TryGetValue(systemKey, out var set) || !set.ContainsKey(value))
                 {
                     return Task.FromResult(false);
                 }
             }
 
-            _primaryBySystem[systemId] = alterId;
+            _primaryBySystem[systemKey] = alterId;
             return Task.FromResult(true);
         }
     }
 
     public Task<IReadOnlyList<FrontActiveReadModel>> ListActiveAsync(string systemId, CancellationToken cancellationToken = default)
     {
+        var systemKey = GetSystemKey(systemId);
+
         lock (_sync)
         {
-            if (!_activeBySystem.TryGetValue(systemId, out var set))
+            if (!_activeBySystem.TryGetValue(systemKey, out var set))
                 return Task.FromResult<IReadOnlyList<FrontActiveReadModel>>(Array.Empty<FrontActiveReadModel>());
 
-            _primaryBySystem.TryGetValue(systemId, out var primary);
+            _primaryBySystem.TryGetValue(systemKey, out var primary);
 
             var results = set.Values
                 .Select(x => new FrontActiveReadModel(
@@ -175,9 +184,11 @@ public sealed class InMemoryFrontingRepository : IFrontingRepository
         DateTimeOffset endInclusive,
         CancellationToken cancellationToken = default)
     {
+        var systemKey = GetSystemKey(systemId);
+
         lock (_sync)
         {
-            if (!_historyBySystem.TryGetValue(systemId, out var history))
+            if (!_historyBySystem.TryGetValue(systemKey, out var history))
             {
                 return Task.FromResult<IReadOnlyList<FrontHistoryReadModel>>(Array.Empty<FrontHistoryReadModel>());
             }
@@ -194,12 +205,14 @@ public sealed class InMemoryFrontingRepository : IFrontingRepository
 
     public Task<FrontActiveReadModel?> GetActiveByFrontIdAsync(string systemId, string frontId, CancellationToken cancellationToken = default)
     {
+        var systemKey = GetSystemKey(systemId);
+
         lock (_sync)
         {
-            if (!_activeBySystem.TryGetValue(systemId, out var set))
+            if (!_activeBySystem.TryGetValue(systemKey, out var set))
                 return Task.FromResult<FrontActiveReadModel?>(null);
 
-            _primaryBySystem.TryGetValue(systemId, out var primary);
+            _primaryBySystem.TryGetValue(systemKey, out var primary);
 
             var found = set.Values.FirstOrDefault(x => string.Equals(x.FrontId, frontId, StringComparison.Ordinal));
             if (found is null)
@@ -214,9 +227,11 @@ public sealed class InMemoryFrontingRepository : IFrontingRepository
 
     public Task<FrontHistoryReadModel?> GetHistoryEntryByFrontIdAsync(string systemId, string frontId, CancellationToken cancellationToken = default)
     {
+        var systemKey = GetSystemKey(systemId);
+
         lock (_sync)
         {
-            if (!_historyBySystem.TryGetValue(systemId, out var history))
+            if (!_historyBySystem.TryGetValue(systemKey, out var history))
                 return Task.FromResult<FrontHistoryReadModel?>(null);
 
             var entry = history.FirstOrDefault(x => string.Equals(x.FrontId, frontId, StringComparison.Ordinal));
@@ -239,9 +254,11 @@ public sealed class InMemoryFrontingRepository : IFrontingRepository
 
     public Task<bool> DeleteFrontByIdAsync(string systemId, string frontId, CancellationToken cancellationToken = default)
     {
+        var systemKey = GetSystemKey(systemId);
+
         lock (_sync)
         {
-            if (!_historyBySystem.TryGetValue(systemId, out var history))
+            if (!_historyBySystem.TryGetValue(systemKey, out var history))
                 return Task.FromResult(false);
 
             var entry = history.FirstOrDefault(x => string.Equals(x.FrontId, frontId, StringComparison.Ordinal));
@@ -250,12 +267,12 @@ public sealed class InMemoryFrontingRepository : IFrontingRepository
 
             history.Remove(entry);
 
-            if (_activeBySystem.TryGetValue(systemId, out var active) && active.ContainsKey(entry.AlterId))
+            if (_activeBySystem.TryGetValue(systemKey, out var active) && active.ContainsKey(entry.AlterId))
             {
                 active.TryRemove(entry.AlterId, out _);
 
-                if (_primaryBySystem.TryGetValue(systemId, out var primary) && primary == entry.AlterId)
-                    _primaryBySystem[systemId] = null;
+                if (_primaryBySystem.TryGetValue(systemKey, out var primary) && primary == entry.AlterId)
+                    _primaryBySystem[systemKey] = null;
             }
 
             return Task.FromResult(true);
@@ -264,9 +281,11 @@ public sealed class InMemoryFrontingRepository : IFrontingRepository
 
     public Task<bool> UpdateCommentByFrontIdAsync(string systemId, string frontId, string comment, CancellationToken cancellationToken = default)
     {
+        var systemKey = GetSystemKey(systemId);
+
         lock (_sync)
         {
-            if (!_activeBySystem.TryGetValue(systemId, out var set))
+            if (!_activeBySystem.TryGetValue(systemKey, out var set))
                 return Task.FromResult(false);
 
             var found = set.Values.FirstOrDefault(x => string.Equals(x.FrontId, frontId, StringComparison.Ordinal));
@@ -275,7 +294,7 @@ public sealed class InMemoryFrontingRepository : IFrontingRepository
 
             found.Comment = comment;
 
-            if (_historyBySystem.TryGetValue(systemId, out var history))
+            if (_historyBySystem.TryGetValue(systemKey, out var history))
             {
                 var historical = history.LastOrDefault(
                     x => string.Equals(x.FrontId, frontId, StringComparison.Ordinal) && x.EndedAt is null);
@@ -287,6 +306,12 @@ public sealed class InMemoryFrontingRepository : IFrontingRepository
 
             return Task.FromResult(true);
         }
+    }
+
+    private string GetSystemKey(string systemId)
+    {
+        var region = _regionContext.ResolveUserRegion(systemId);
+        return $"{region}:{systemId}";
     }
 
     private async Task<string?> ResolveFriendshipLevelAsync(string systemId, string? viewerSystemId, CancellationToken cancellationToken)

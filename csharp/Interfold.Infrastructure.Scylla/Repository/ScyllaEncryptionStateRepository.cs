@@ -31,7 +31,7 @@ public sealed class ScyllaEncryptionStateRepository : IEncryptionStateRepository
             var keyspace = _keyspaceResolver.ResolveRegionalKeyspace(systemId);
 
             var query = new SimpleStatement(
-                $"SELECT encryption_initialized, encryption_key_checksum FROM {keyspace}.users WHERE id = ? LIMIT 1",
+                $"SELECT encryption_initialized, encryption_key_checksum, salt FROM {keyspace}.users WHERE id = ? LIMIT 1",
                 normalizedSystemId
             );
 
@@ -40,11 +40,12 @@ public sealed class ScyllaEncryptionStateRepository : IEncryptionStateRepository
                 ? null
                 : new EncryptionState(
                     row.GetValue<bool?>("encryption_initialized") ?? false,
-                    row.GetValue<string?>("encryption_key_checksum"));
+                    row.GetValue<string?>("encryption_key_checksum"),
+                    row.GetValue<string?>("salt"));
         }, _options, cancellationToken);
     }
 
-    public async Task<bool> UpsertAsync(string systemId, bool initialized, string? keyChecksum, CancellationToken cancellationToken = default)
+    public async Task<bool> UpsertAsync(string systemId, bool initialized, string? keyChecksum, string? salt, CancellationToken cancellationToken = default)
     {
         return await DatabaseTransientRetry.ExecuteScyllaAsync(async () =>
         {
@@ -52,12 +53,26 @@ public sealed class ScyllaEncryptionStateRepository : IEncryptionStateRepository
             var normalizedSystemId = _keyspaceResolver.NormalizeSystemId(systemId);
             var keyspace = _keyspaceResolver.ResolveRegionalKeyspace(systemId);
 
-            var statement = new SimpleStatement(
-                $"UPDATE {keyspace}.users SET encryption_initialized = ?, encryption_key_checksum = ?, updated_at = toTimestamp(now()) WHERE id = ?",
-                initialized,
-                keyChecksum,
-                normalizedSystemId
-            );
+            SimpleStatement statement;
+            if (salt is null)
+            {
+                statement = new SimpleStatement(
+                    $"UPDATE {keyspace}.users SET encryption_initialized = ?, encryption_key_checksum = ?, updated_at = toTimestamp(now()) WHERE id = ?",
+                    initialized,
+                    keyChecksum,
+                    normalizedSystemId
+                );
+            }
+            else
+            {
+                statement = new SimpleStatement(
+                    $"UPDATE {keyspace}.users SET encryption_initialized = ?, encryption_key_checksum = ?, salt = ?, updated_at = toTimestamp(now()) WHERE id = ?",
+                    initialized,
+                    keyChecksum,
+                    salt,
+                    normalizedSystemId
+                );
+            }
 
             await session.ExecuteAsync(statement);
             return true;

@@ -3,6 +3,7 @@ using System.Text.Json;
 using Interfold.Contracts.Models.Commands;
 using Interfold.Contracts.Models.Read;
 using Interfold.Domain.Abstractions.Repository;
+using Interfold.Domain.Abstractions;
 
 namespace Interfold.Infrastructure.InMemory.Repository;
 
@@ -21,11 +22,18 @@ public sealed class InMemoryPollRepository : IPollRepository
         public DateTime UpdatedAt { get; set; }
     }
 
+    private readonly IRegionContext _regionContext;
     private readonly ConcurrentDictionary<string, ConcurrentDictionary<string, PollState>> _bySystem = new();
+
+    public InMemoryPollRepository(IRegionContext regionContext)
+    {
+        _regionContext = regionContext;
+    }
 
     public Task<IReadOnlyList<PollReadModel>> ListAsync(string systemId, CancellationToken cancellationToken = default)
     {
-        if (!_bySystem.TryGetValue(systemId, out var store))
+        var systemKey = GetSystemKey(systemId);
+        if (!_bySystem.TryGetValue(systemKey, out var store))
             return Task.FromResult<IReadOnlyList<PollReadModel>>(Array.Empty<PollReadModel>());
 
         var list = store.Values
@@ -38,7 +46,8 @@ public sealed class InMemoryPollRepository : IPollRepository
 
     public Task<PollReadModel?> GetAsync(string systemId, string pollId, CancellationToken cancellationToken = default)
     {
-        if (!_bySystem.TryGetValue(systemId, out var store) || !store.TryGetValue(pollId, out var poll))
+        var systemKey = GetSystemKey(systemId);
+        if (!_bySystem.TryGetValue(systemKey, out var store) || !store.TryGetValue(pollId, out var poll))
             return Task.FromResult<PollReadModel?>(null);
 
         return Task.FromResult<PollReadModel?>(ToReadModel(poll));
@@ -46,7 +55,8 @@ public sealed class InMemoryPollRepository : IPollRepository
 
     public Task<string?> CreateAsync(string systemId, CreatePollCommand command, CancellationToken cancellationToken = default)
     {
-        var store = _bySystem.GetOrAdd(systemId, _ => new ConcurrentDictionary<string, PollState>());
+        var systemKey = GetSystemKey(systemId);
+        var store = _bySystem.GetOrAdd(systemKey, _ => new ConcurrentDictionary<string, PollState>());
         var id = Guid.NewGuid().ToString("N");
 
         store[id] = new PollState
@@ -66,13 +76,15 @@ public sealed class InMemoryPollRepository : IPollRepository
 
     public Task<bool> ExistsAsync(string systemId, string pollId, CancellationToken cancellationToken = default)
     {
-        var exists = _bySystem.TryGetValue(systemId, out var store) && store.ContainsKey(pollId);
+        var systemKey = GetSystemKey(systemId);
+        var exists = _bySystem.TryGetValue(systemKey, out var store) && store.ContainsKey(pollId);
         return Task.FromResult(exists);
     }
 
     public Task<bool> UpdateAsync(string systemId, UpdatePollCommand command, CancellationToken cancellationToken = default)
     {
-        if (!_bySystem.TryGetValue(systemId, out var store) || !store.TryGetValue(command.Id, out var poll))
+        var systemKey = GetSystemKey(systemId);
+        if (!_bySystem.TryGetValue(systemKey, out var store) || !store.TryGetValue(command.Id, out var poll))
             return Task.FromResult(false);
 
         if (command.Title is not null) poll.Title = command.Title;
@@ -86,7 +98,8 @@ public sealed class InMemoryPollRepository : IPollRepository
 
     public Task<bool> DeleteAsync(string systemId, string pollId, CancellationToken cancellationToken = default)
     {
-        if (!_bySystem.TryGetValue(systemId, out var store))
+        var systemKey = GetSystemKey(systemId);
+        if (!_bySystem.TryGetValue(systemKey, out var store))
             return Task.FromResult(false);
 
         return Task.FromResult(store.TryRemove(pollId, out _));
@@ -94,7 +107,8 @@ public sealed class InMemoryPollRepository : IPollRepository
 
     public async Task RemoveAlterFromPollsAsync(string systemId, int alterId, CancellationToken cancellationToken = default)
     {
-        if (!_bySystem.TryGetValue(systemId, out var store))
+        var systemKey = GetSystemKey(systemId);
+        if (!_bySystem.TryGetValue(systemKey, out var store))
             return;
 
         var alterIdString = alterId.ToString();
@@ -137,4 +151,10 @@ public sealed class InMemoryPollRepository : IPollRepository
             state.InsertedAt,
             state.UpdatedAt
         );
+
+    private string GetSystemKey(string systemId)
+    {
+        var region = _regionContext.ResolveUserRegion(systemId);
+        return $"{region}:{systemId}";
+    }
 }

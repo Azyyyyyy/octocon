@@ -7,9 +7,8 @@ using Interfold.Domain.Abstractions.Repository;
 
 namespace Interfold.Infrastructure.InMemory.Repository;
 
-public sealed class InMemoryRegionalAccountRepository : IAccountRepository
+public sealed class InMemoryAccountRepository : IAccountRepository
 {
-    private readonly IRegionContext _regionContext;
     private readonly ConcurrentDictionary<string, string> _usernameBySystem = new();
     private readonly ConcurrentDictionary<string, string> _descriptionBySystem = new();
     private readonly ConcurrentDictionary<string, string> _avatarBySystem = new();
@@ -22,9 +21,13 @@ public sealed class InMemoryRegionalAccountRepository : IAccountRepository
     private readonly ConcurrentDictionary<string, string> _systemByEmail = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, string> _systemByApple = new(StringComparer.OrdinalIgnoreCase);
 
-    public InMemoryRegionalAccountRepository(IRegionContext regionContext)
+    private readonly IEncryptionStateRepository? _encryptionStates;
+    private readonly IRegionContext _regionContext;
+
+    public InMemoryAccountRepository(IRegionContext regionContext, IEncryptionStateRepository? encryptionStates = null)
     {
         _regionContext = regionContext;
+        _encryptionStates = encryptionStates;
     }
 
     public Task<bool> UpdateUsernameAsync(string systemId, string username, CancellationToken cancellationToken = default)
@@ -115,6 +118,8 @@ public sealed class InMemoryRegionalAccountRepository : IAccountRepository
         var scopedNewSystemId = _regionContext.ResolveUserRegion(newSystemId) + ":" + newSystemId;
         _discordBySystem[newSystemId] = discordId;
         _systemByDiscord[discordId] = scopedNewSystemId;
+
+        EnsureEncryptionSaltForSystem(scopedNewSystemId);
         return Task.FromResult<string?>(scopedNewSystemId);
     }
 
@@ -135,6 +140,8 @@ public sealed class InMemoryRegionalAccountRepository : IAccountRepository
         var scopedNewSystemId = _regionContext.ResolveUserRegion(newSystemId) + ":" + newSystemId;
         _emailBySystem[newSystemId] = email;
         _systemByEmail[email] = scopedNewSystemId;
+
+        EnsureEncryptionSaltForSystem(scopedNewSystemId);
         return Task.FromResult<string?>(scopedNewSystemId);
     }
 
@@ -155,6 +162,8 @@ public sealed class InMemoryRegionalAccountRepository : IAccountRepository
         var scopedNewSystemId = _regionContext.ResolveUserRegion(newSystemId) + ":" + newSystemId;
         _appleBySystem[newSystemId] = appleId;
         _systemByApple[appleId] = scopedNewSystemId;
+
+        EnsureEncryptionSaltForSystem(scopedNewSystemId);
         return Task.FromResult<string?>(scopedNewSystemId);
     }
 
@@ -287,5 +296,15 @@ public sealed class InMemoryRegionalAccountRepository : IAccountRepository
         identifierBySystem[systemKey] = identifier;
         systemByIdentifier[identifier] = scopedSystemId;
         return AccountLinkResult.Success;
+    }
+
+    private void EnsureEncryptionSaltForSystem(string scopedSystemId)
+    {
+        if (_encryptionStates is null)
+            return;
+
+        var saltBytes = RandomNumberGenerator.GetBytes(32);
+        var salt = Convert.ToBase64String(saltBytes);
+        _ = _encryptionStates.UpsertAsync(scopedSystemId, false, null, salt, CancellationToken.None);
     }
 }

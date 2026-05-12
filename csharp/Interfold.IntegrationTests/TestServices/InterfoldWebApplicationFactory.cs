@@ -20,6 +20,7 @@ public class InterfoldWebApplicationFactory : WebApplicationFactory<Program>
         _configurationOverrides["OCTOCON_PERSISTENCE"] = persistenceType;
         _configurationOverrides["OCTOCON_AUTH_RSA_PUBLIC_KEY"] = "TEST";
         _configurationOverrides["OCTOCON_AUTH_RSA_PRIVATE_KEY"] = "TEST";
+        _configurationOverrides["OCTOCON_ENCRYPTION_PEPPER"] = "TEST";
     }
 
     public InterfoldWebApplicationFactory WithConfiguration(string key, string? value)

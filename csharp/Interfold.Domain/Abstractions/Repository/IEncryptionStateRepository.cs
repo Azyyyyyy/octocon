@@ -6,5 +6,5 @@ public interface IEncryptionStateRepository
 {
     Task<EncryptionState?> GetAsync(string systemId, CancellationToken cancellationToken = default);
 
-    Task<bool> UpsertAsync(string systemId, bool initialized, string? keyChecksum, CancellationToken cancellationToken = default);
+    Task<bool> UpsertAsync(string systemId, bool initialized, string? keyChecksum, string? salt, CancellationToken cancellationToken = default);
 }

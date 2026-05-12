@@ -230,7 +230,7 @@ public sealed class SettingsController : InterfoldControllerBase
 
         var execution = await _recoverEncryptionHandler.HandleAsync(envelope, ct);
         if (execution.Accepted)
-            return new SuccessResponse<EncryptionKeyResponse>(new EncryptionKeyResponse(execution.Result!.Key));
+            return new SuccessResponse<EncryptionKeyResponse>(new EncryptionKeyResponse(Convert.ToBase64String(Encoding.UTF8.GetBytes(execution.Result!.Key))));
 
         //TODO: To ensure route works as expected
         return ConflictToError(execution.Conflict!);
@@ -375,7 +375,7 @@ public sealed class SettingsController : InterfoldControllerBase
             PrincipalId: PrincipalId,
             IdempotencyKey: GetIdempotencyKey(req.IdempotencyKey),
             OccurredAt: DateTimeOffset.UtcNow,
-            Payload: new ImportSpCommand(req.Token)
+            Payload: new ImportSpCommand(req.Token, string.IsNullOrWhiteSpace(req.EncryptionKey) ? null : req.EncryptionKey)
         );
 
         return CommandNoContent(await _importSpHandler.HandleAsync(envelope, ct));

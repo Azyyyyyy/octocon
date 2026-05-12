@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using Cassandra;
+using System.Security.Cryptography;
 using Interfold.Contracts.Configuration;
 using Interfold.Contracts.Models.Read;
 using Interfold.Domain.Abstractions.Repository;
@@ -346,12 +347,17 @@ public sealed class ScyllaAccountRepository : IAccountRepository
             var newUserId = Random.Shared.GetString(idChars, 7);
             var keyspace = newRegion; // ResolveRegionalKeyspace would just return the newRegion
 
+            // Generate per-user salt (32 random bytes, Base64-encoded)
+            var saltBytes = RandomNumberGenerator.GetBytes(32);
+            var salt = Convert.ToBase64String(saltBytes);
+
             // Write regional user + global registry together to reduce split-write orphans.
             var createUserBatch = new BatchStatement()
                 .Add(new SimpleStatement(
-                    $"INSERT INTO {keyspace}.users (id, {columnName}, inserted_at, updated_at) VALUES (?, ?, toTimestamp(now()), toTimestamp(now()))",
+                    $"INSERT INTO {keyspace}.users (id, {columnName}, salt, inserted_at, updated_at) VALUES (?, ?, ?, toTimestamp(now()), toTimestamp(now()))",
                     newUserId,
-                    value
+                    value,
+                    salt
                 ))
                 .Add(new SimpleStatement(
                     $"INSERT INTO global.user_registry (user_id, {columnName}, region, inserted_at, updated_at) VALUES (?, ?, ?, toTimestamp(now()), toTimestamp(now()))",

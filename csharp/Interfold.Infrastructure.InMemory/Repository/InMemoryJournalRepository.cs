@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using Interfold.Contracts.Models.Commands;
 using Interfold.Contracts.Models.Read;
 using Interfold.Domain.Abstractions.Repository;
+using Interfold.Domain.Abstractions;
 
 namespace Interfold.Infrastructure.InMemory.Repository;
 
@@ -32,14 +33,21 @@ public sealed class InMemoryJournalRepository : IJournalRepository
         public DateTime UpdatedAt { get; set; }
     }
 
+    private readonly IRegionContext _regionContext;
     private readonly ConcurrentDictionary<string, ConcurrentDictionary<string, EntryState>> _bySystem = new();
     private readonly ConcurrentDictionary<string, ConcurrentDictionary<string, (bool Pinned, bool Locked)>> _stateBySystem = new();
     private readonly ConcurrentDictionary<string, ConcurrentDictionary<int, bool>> _entryAlters = new();
     private readonly ConcurrentDictionary<string, ConcurrentDictionary<string, AlterEntryState>> _alterEntriesBySystem = new();
 
+    public InMemoryJournalRepository(IRegionContext regionContext)
+    {
+        _regionContext = regionContext;
+    }
+
     public Task<string?> CreateGlobalAsync(string systemId, CreateGlobalJournalEntryCommand command, CancellationToken cancellationToken = default)
     {
-        var store = _bySystem.GetOrAdd(systemId, _ => new ConcurrentDictionary<string, EntryState>());
+        var systemKey = GetSystemKey(systemId);
+        var store = _bySystem.GetOrAdd(systemKey, _ => new ConcurrentDictionary<string, EntryState>());
         var id = Guid.NewGuid().ToString("N");
         var now = DateTime.Now;
 
@@ -59,13 +67,15 @@ public sealed class InMemoryJournalRepository : IJournalRepository
 
     public Task<bool> ExistsGlobalAsync(string systemId, string entryId, CancellationToken cancellationToken = default)
     {
-        var exists = _bySystem.TryGetValue(systemId, out var store) && store.ContainsKey(entryId);
+        var systemKey = GetSystemKey(systemId);
+        var exists = _bySystem.TryGetValue(systemKey, out var store) && store.ContainsKey(entryId);
         return Task.FromResult(exists);
     }
 
     public Task<bool> UpdateGlobalAsync(string systemId, UpdateGlobalJournalEntryCommand command, CancellationToken cancellationToken = default)
     {
-        if (!_bySystem.TryGetValue(systemId, out var store) || !store.TryGetValue(command.EntryId, out var entry))
+        var systemKey = GetSystemKey(systemId);
+        if (!_bySystem.TryGetValue(systemKey, out var store) || !store.TryGetValue(command.EntryId, out var entry))
             return Task.FromResult(false);
 
         if (command.Title is not null) entry.Title = command.Title;
@@ -78,13 +88,14 @@ public sealed class InMemoryJournalRepository : IJournalRepository
 
     public Task<bool> DeleteGlobalAsync(string systemId, string entryId, CancellationToken cancellationToken = default)
     {
-        if (!_bySystem.TryGetValue(systemId, out var store))
+        var systemKey = GetSystemKey(systemId);
+        if (!_bySystem.TryGetValue(systemKey, out var store))
             return Task.FromResult(false);
 
         var removed = store.TryRemove(entryId, out _);
         if (removed)
         {
-            if (_stateBySystem.TryGetValue(systemId, out var stateStore))
+            if (_stateBySystem.TryGetValue(systemKey, out var stateStore))
                 stateStore.TryRemove(entryId, out _);
 
             _entryAlters.TryRemove(GetEntryKey(systemId, entryId), out _);
@@ -95,10 +106,11 @@ public sealed class InMemoryJournalRepository : IJournalRepository
 
     public Task<bool> SetGlobalLockedAsync(string systemId, string entryId, bool locked, CancellationToken cancellationToken = default)
     {
-        if (!_bySystem.TryGetValue(systemId, out var store) || !store.ContainsKey(entryId))
+        var systemKey = GetSystemKey(systemId);
+        if (!_bySystem.TryGetValue(systemKey, out var store) || !store.ContainsKey(entryId))
             return Task.FromResult(false);
 
-        var stateStore = _stateBySystem.GetOrAdd(systemId, _ => new ConcurrentDictionary<string, (bool Pinned, bool Locked)>());
+        var stateStore = _stateBySystem.GetOrAdd(systemKey, _ => new ConcurrentDictionary<string, (bool Pinned, bool Locked)>());
         var current = stateStore.GetOrAdd(entryId, _ => (false, false));
         stateStore[entryId] = (current.Pinned, locked);
         return Task.FromResult(true);
@@ -106,10 +118,11 @@ public sealed class InMemoryJournalRepository : IJournalRepository
 
     public Task<bool> SetGlobalPinnedAsync(string systemId, string entryId, bool pinned, CancellationToken cancellationToken = default)
     {
-        if (!_bySystem.TryGetValue(systemId, out var store) || !store.ContainsKey(entryId))
+        var systemKey = GetSystemKey(systemId);
+        if (!_bySystem.TryGetValue(systemKey, out var store) || !store.ContainsKey(entryId))
             return Task.FromResult(false);
 
-        var stateStore = _stateBySystem.GetOrAdd(systemId, _ => new ConcurrentDictionary<string, (bool Pinned, bool Locked)>());
+        var stateStore = _stateBySystem.GetOrAdd(systemKey, _ => new ConcurrentDictionary<string, (bool Pinned, bool Locked)>());
         var current = stateStore.GetOrAdd(entryId, _ => (false, false));
         stateStore[entryId] = (pinned, current.Locked);
         return Task.FromResult(true);
@@ -117,7 +130,8 @@ public sealed class InMemoryJournalRepository : IJournalRepository
 
     public Task<bool> AttachGlobalAlterAsync(string systemId, string entryId, int alterId, CancellationToken cancellationToken = default)
     {
-        if (!_bySystem.TryGetValue(systemId, out var store) || !store.ContainsKey(entryId))
+        var systemKey = GetSystemKey(systemId);
+        if (!_bySystem.TryGetValue(systemKey, out var store) || !store.ContainsKey(entryId))
             return Task.FromResult(false);
 
         var key = GetEntryKey(systemId, entryId);
@@ -137,7 +151,8 @@ public sealed class InMemoryJournalRepository : IJournalRepository
 
     public Task<string?> CreateAlterAsync(string systemId, CreateAlterJournalEntryCommand command, CancellationToken cancellationToken = default)
     {
-        var store = _alterEntriesBySystem.GetOrAdd(systemId, _ => new ConcurrentDictionary<string, AlterEntryState>());
+        var systemKey = GetSystemKey(systemId);
+        var store = _alterEntriesBySystem.GetOrAdd(systemKey, _ => new ConcurrentDictionary<string, AlterEntryState>());
         var entryId = Guid.NewGuid().ToString("N");
         var now = DateTime.UtcNow;
 
@@ -160,7 +175,8 @@ public sealed class InMemoryJournalRepository : IJournalRepository
 
     public Task<AlterJournalRef?> GetAlterRefAsync(string systemId, string entryId, CancellationToken cancellationToken = default)
     {
-        if (!_alterEntriesBySystem.TryGetValue(systemId, out var store) || !store.TryGetValue(entryId, out var entry))
+        var systemKey = GetSystemKey(systemId);
+        if (!_alterEntriesBySystem.TryGetValue(systemKey, out var store) || !store.TryGetValue(entryId, out var entry))
             return Task.FromResult<AlterJournalRef?>(null);
 
         return Task.FromResult<AlterJournalRef?>(new AlterJournalRef(entry.EntryId, entry.AlterId));
@@ -168,7 +184,8 @@ public sealed class InMemoryJournalRepository : IJournalRepository
 
     public Task<bool> UpdateAlterAsync(string systemId, UpdateAlterJournalEntryCommand command, CancellationToken cancellationToken = default)
     {
-        if (!_alterEntriesBySystem.TryGetValue(systemId, out var store) || !store.TryGetValue(command.EntryId, out var entry))
+        var systemKey = GetSystemKey(systemId);
+        if (!_alterEntriesBySystem.TryGetValue(systemKey, out var store) || !store.TryGetValue(command.EntryId, out var entry))
             return Task.FromResult(false);
 
         if (command.Title is not null) entry.Title = command.Title;
@@ -181,7 +198,8 @@ public sealed class InMemoryJournalRepository : IJournalRepository
 
     public Task<bool> DeleteAlterAsync(string systemId, string entryId, CancellationToken cancellationToken = default)
     {
-        if (!_alterEntriesBySystem.TryGetValue(systemId, out var store))
+        var systemKey = GetSystemKey(systemId);
+        if (!_alterEntriesBySystem.TryGetValue(systemKey, out var store))
             return Task.FromResult(false);
 
         return Task.FromResult(store.TryRemove(entryId, out _));
@@ -189,7 +207,8 @@ public sealed class InMemoryJournalRepository : IJournalRepository
 
     public Task<bool> SetAlterLockedAsync(string systemId, string entryId, bool locked, CancellationToken cancellationToken = default)
     {
-        if (!_alterEntriesBySystem.TryGetValue(systemId, out var store) || !store.TryGetValue(entryId, out var entry))
+        var systemKey = GetSystemKey(systemId);
+        if (!_alterEntriesBySystem.TryGetValue(systemKey, out var store) || !store.TryGetValue(entryId, out var entry))
             return Task.FromResult(false);
 
         entry.Locked = locked;
@@ -199,7 +218,8 @@ public sealed class InMemoryJournalRepository : IJournalRepository
 
     public Task<bool> SetAlterPinnedAsync(string systemId, string entryId, bool pinned, CancellationToken cancellationToken = default)
     {
-        if (!_alterEntriesBySystem.TryGetValue(systemId, out var store) || !store.TryGetValue(entryId, out var entry))
+        var systemKey = GetSystemKey(systemId);
+        if (!_alterEntriesBySystem.TryGetValue(systemKey, out var store) || !store.TryGetValue(entryId, out var entry))
             return Task.FromResult(false);
 
         entry.Pinned = pinned;
@@ -209,7 +229,8 @@ public sealed class InMemoryJournalRepository : IJournalRepository
 
     public Task<IReadOnlyList<AlterJournalReadModel>> ListAlterAsync(string systemId, int alterId, CancellationToken cancellationToken = default)
     {
-        if (!_alterEntriesBySystem.TryGetValue(systemId, out var store))
+        var systemKey = GetSystemKey(systemId);
+        if (!_alterEntriesBySystem.TryGetValue(systemKey, out var store))
             return Task.FromResult<IReadOnlyList<AlterJournalReadModel>>(Array.Empty<AlterJournalReadModel>());
 
         var entries = store.Values
@@ -223,7 +244,8 @@ public sealed class InMemoryJournalRepository : IJournalRepository
 
     public Task<AlterJournalReadModel?> GetAlterAsync(string systemId, string entryId, CancellationToken cancellationToken = default)
     {
-        if (!_alterEntriesBySystem.TryGetValue(systemId, out var store) || !store.TryGetValue(entryId, out var entry))
+        var systemKey = GetSystemKey(systemId);
+        if (!_alterEntriesBySystem.TryGetValue(systemKey, out var store) || !store.TryGetValue(entryId, out var entry))
             return Task.FromResult<AlterJournalReadModel?>(null);
 
         return Task.FromResult<AlterJournalReadModel?>(
@@ -233,7 +255,8 @@ public sealed class InMemoryJournalRepository : IJournalRepository
 
     public Task<IReadOnlyList<JournalReadModel>> ListGlobalAsync(string systemId, CancellationToken cancellationToken = default)
     {
-        if (!_bySystem.TryGetValue(systemId, out var store))
+        var systemKey = GetSystemKey(systemId);
+        if (!_bySystem.TryGetValue(systemKey, out var store))
             return Task.FromResult<IReadOnlyList<JournalReadModel>>(Array.Empty<JournalReadModel>());
 
         var entries = store.Values
@@ -261,7 +284,8 @@ public sealed class InMemoryJournalRepository : IJournalRepository
 
     public Task<JournalReadModel?> GetGlobalAsync(string systemId, string entryId, CancellationToken cancellationToken = default)
     {
-        if (!_bySystem.TryGetValue(systemId, out var store) || !store.TryGetValue(entryId, out var entry))
+        var systemKey = GetSystemKey(systemId);
+        if (!_bySystem.TryGetValue(systemKey, out var store) || !store.TryGetValue(entryId, out var entry))
             return Task.FromResult<JournalReadModel?>(null);
 
         var (pinned, locked) = GetGlobalState(systemId, entryId);
@@ -282,7 +306,8 @@ public sealed class InMemoryJournalRepository : IJournalRepository
 
     private (bool Pinned, bool Locked) GetGlobalState(string systemId, string entryId)
     {
-        if (_stateBySystem.TryGetValue(systemId, out var stateStore) &&
+        var systemKey = GetSystemKey(systemId);
+        if (_stateBySystem.TryGetValue(systemKey, out var stateStore) &&
             stateStore.TryGetValue(entryId, out var state))
             return state;
         return (false, false);
@@ -296,5 +321,11 @@ public sealed class InMemoryJournalRepository : IJournalRepository
         return alters.Keys.ToArray();
     }
 
-    private static string GetEntryKey(string systemId, string entryId) => $"{systemId}:{entryId}";
+    private string GetEntryKey(string systemId, string entryId) => $"{GetSystemKey(systemId)}:{entryId}";
+
+    private string GetSystemKey(string systemId)
+    {
+        var region = _regionContext.ResolveUserRegion(systemId);
+        return $"{region}:{systemId}";
+    }
 }

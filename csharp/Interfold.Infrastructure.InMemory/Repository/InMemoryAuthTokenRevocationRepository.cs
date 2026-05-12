@@ -33,7 +33,7 @@ public sealed class InMemoryAuthTokenRevocationRepository : IAuthTokenRevocation
         {
             _tokens[jti] = new TokenRecord(
                 Jti: jti,
-                SystemId: systemId,
+                SystemId: NormalizeSystemId(systemId),
                 IssuedAt: DateTimeOffset.UtcNow,
                 ExpiresAt: expiresAt,
                 RevokedAt: null
@@ -87,8 +87,10 @@ public sealed class InMemoryAuthTokenRevocationRepository : IAuthTokenRevocation
 
         lock (_lock)
         {
+            var normalizedSystemId = NormalizeSystemId(systemId);
+
             IReadOnlyList<string> tokens = _tokens.Values
-                .Where(t => t.SystemId == systemId
+                .Where(t => t.SystemId == normalizedSystemId
                     && t.RevokedAt is null
                     && t.ExpiresAt > DateTimeOffset.UtcNow)
                 .OrderByDescending(t => t.IssuedAt)
@@ -98,6 +100,18 @@ public sealed class InMemoryAuthTokenRevocationRepository : IAuthTokenRevocation
 
             return Task.FromResult(tokens);
         }
+    }
+
+    private static string NormalizeSystemId(string systemId)
+    {
+        if (string.IsNullOrWhiteSpace(systemId))
+            return systemId;
+
+        var separator = systemId.IndexOf(':');
+        if (separator <= 0 || separator >= systemId.Length - 1)
+            return systemId;
+
+        return systemId[(separator + 1)..];
     }
 
     public Task<int> CleanupExpiredTokensAsync(

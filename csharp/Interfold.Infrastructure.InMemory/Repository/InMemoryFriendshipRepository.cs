@@ -29,8 +29,9 @@ public sealed class InMemoryFriendshipRepository : IFriendshipRepository
             return Task.FromResult<string?>(null);
         }
 
-        // In-memory mode has no user registry; treat provided value as canonical id.
-        return Task.FromResult<string?>(userNameOrId);
+        // In-memory mode has no user registry; treat provided value as canonical id,
+        // but normalize by stripping any region prefix to match Scylla NormalizeSystemId semantics.
+        return Task.FromResult<string?>(NormalizeSystemId(userNameOrId.Trim()));
     }
 
     public Task<string?> GetFriendshipLevelAsync(string systemId, string? viewerSystemId, CancellationToken cancellationToken = default)
@@ -40,12 +41,15 @@ public sealed class InMemoryFriendshipRepository : IFriendshipRepository
             return Task.FromResult<string?>(null);
         }
 
-        if (string.Equals(systemId, viewerSystemId, StringComparison.Ordinal))
+        var normalizedSystemId = NormalizeSystemId(systemId);
+        var normalizedViewerId = NormalizeSystemId(viewerSystemId);
+
+        if (string.Equals(normalizedSystemId, normalizedViewerId, StringComparison.Ordinal))
         {
             return Task.FromResult<string?>("trusted_friend");
         }
 
-        if (!_friendships.TryGetValue(systemId, out var store) || !store.TryGetValue(viewerSystemId, out var state))
+        if (!_friendships.TryGetValue(normalizedSystemId, out var store) || !store.TryGetValue(normalizedViewerId, out var state))
         {
             return Task.FromResult<string?>(null);
         }
@@ -55,7 +59,8 @@ public sealed class InMemoryFriendshipRepository : IFriendshipRepository
 
     public Task<IReadOnlyList<FriendshipReadModel>> ListFriendshipsAsync(string systemId, CancellationToken cancellationToken = default)
     {
-        if (!_friendships.TryGetValue(systemId, out var store))
+        var normalizedSystemId = NormalizeSystemId(systemId);
+        if (!_friendships.TryGetValue(normalizedSystemId, out var store))
         {
             return Task.FromResult<IReadOnlyList<FriendshipReadModel>>(Array.Empty<FriendshipReadModel>());
         }
@@ -75,13 +80,16 @@ public sealed class InMemoryFriendshipRepository : IFriendshipRepository
 
     public Task<FriendshipReadModel?> GetFriendshipAsync(string systemId, string friendSystemId, CancellationToken cancellationToken = default)
     {
-        if (!_friendships.TryGetValue(systemId, out var store) || !store.TryGetValue(friendSystemId, out var state))
+        var normalizedSystemId = NormalizeSystemId(systemId);
+        var normalizedFriendId = NormalizeSystemId(friendSystemId);
+
+        if (!_friendships.TryGetValue(normalizedSystemId, out var store) || !store.TryGetValue(normalizedFriendId, out var state))
         {
             return Task.FromResult<FriendshipReadModel?>(null);
         }
 
         return Task.FromResult<FriendshipReadModel?>(new FriendshipReadModel(
-            new FriendProfileReadModel(friendSystemId, null, null, null, null),
+            new FriendProfileReadModel(state.FriendSystemId, null, null, null, null),
             new FriendshipModel(
                 state.Level,
                 state.Since),
@@ -90,14 +98,17 @@ public sealed class InMemoryFriendshipRepository : IFriendshipRepository
 
     public Task<bool> RemoveFriendshipAsync(string systemId, string friendSystemId, CancellationToken cancellationToken = default)
     {
-        if (!_friendships.TryGetValue(systemId, out var userStore) || !userStore.TryRemove(friendSystemId, out _))
+        var normalizedSystemId = NormalizeSystemId(systemId);
+        var normalizedFriendId = NormalizeSystemId(friendSystemId);
+
+        if (!_friendships.TryGetValue(normalizedSystemId, out var userStore) || !userStore.TryRemove(normalizedFriendId, out _))
         {
             return Task.FromResult(false);
         }
 
-        if (_friendships.TryGetValue(friendSystemId, out var peerStore))
+        if (_friendships.TryGetValue(normalizedFriendId, out var peerStore))
         {
-            peerStore.TryRemove(systemId, out _);
+            peerStore.TryRemove(normalizedSystemId, out _);
         }
 
         return Task.FromResult(true);
@@ -105,7 +116,10 @@ public sealed class InMemoryFriendshipRepository : IFriendshipRepository
 
     public Task<bool> SetTrustedAsync(string systemId, string friendSystemId, bool trusted, CancellationToken cancellationToken = default)
     {
-        if (!_friendships.TryGetValue(systemId, out var store) || !store.TryGetValue(friendSystemId, out var state))
+        var normalizedSystemId = NormalizeSystemId(systemId);
+        var normalizedFriendId = NormalizeSystemId(friendSystemId);
+
+        if (!_friendships.TryGetValue(normalizedSystemId, out var store) || !store.TryGetValue(normalizedFriendId, out var state))
         {
             return Task.FromResult(false);
         }
@@ -116,7 +130,9 @@ public sealed class InMemoryFriendshipRepository : IFriendshipRepository
 
     public Task<FriendRequestIndexReadModel> GetFriendRequestsAsync(string systemId, CancellationToken cancellationToken = default)
     {
-        var outgoing = _outgoingRequests.TryGetValue(systemId, out var outStore)
+        var normalizedSystemId = NormalizeSystemId(systemId);
+
+        var outgoing = _outgoingRequests.TryGetValue(normalizedSystemId, out var outStore)
             ? outStore.Values
                 .OrderByDescending(r => r.DateSent)
                 .Select(r => new FriendRequestReadModel(
@@ -127,7 +143,7 @@ public sealed class InMemoryFriendshipRepository : IFriendshipRepository
 
         var incoming = _outgoingRequests
             .SelectMany(kvp => kvp.Value.Values.Select(r => (From: kvp.Key, Request: r)))
-            .Where(x => x.Request.OtherSystemId == systemId)
+            .Where(x => x.Request.OtherSystemId == normalizedSystemId)
             .OrderByDescending(x => x.Request.DateSent)
             .Select(x => new FriendRequestReadModel(
                 new FriendProfileReadModel(x.From, null, null, null, null),
@@ -139,28 +155,31 @@ public sealed class InMemoryFriendshipRepository : IFriendshipRepository
 
     public Task<SendFriendRequestOutcome> SendRequestAsync(string systemId, string targetSystemId, CancellationToken cancellationToken = default)
     {
-        if (IsFriends(systemId, targetSystemId))
+        var normalizedSystemId = NormalizeSystemId(systemId);
+        var normalizedTargetId = NormalizeSystemId(targetSystemId);
+
+        if (IsFriends(normalizedSystemId, normalizedTargetId))
         {
             return Task.FromResult(SendFriendRequestOutcome.AlreadyFriends);
         }
 
-        if (HasOutgoingRequest(systemId, targetSystemId))
+        if (HasOutgoingRequest(normalizedSystemId, normalizedTargetId))
         {
             return Task.FromResult(SendFriendRequestOutcome.AlreadySent);
         }
 
-        if (HasOutgoingRequest(targetSystemId, systemId))
+        if (HasOutgoingRequest(normalizedTargetId, normalizedSystemId))
         {
-            LinkFriends(systemId, targetSystemId);
-            RemoveRequest(targetSystemId, systemId);
-            RemoveRequest(systemId, targetSystemId);
+            LinkFriends(normalizedSystemId, normalizedTargetId);
+            RemoveRequest(normalizedTargetId, normalizedSystemId);
+            RemoveRequest(normalizedSystemId, normalizedTargetId);
             return Task.FromResult(SendFriendRequestOutcome.Accepted);
         }
 
-        var store = _outgoingRequests.GetOrAdd(systemId, _ => new ConcurrentDictionary<string, RequestState>());
-        store[targetSystemId] = new RequestState
+        var store = _outgoingRequests.GetOrAdd(normalizedSystemId, _ => new ConcurrentDictionary<string, RequestState>());
+        store[normalizedTargetId] = new RequestState
         {
-            OtherSystemId = targetSystemId,
+            OtherSystemId = normalizedTargetId,
             DateSent = DateTimeOffset.UtcNow
         };
 
@@ -169,80 +188,90 @@ public sealed class InMemoryFriendshipRepository : IFriendshipRepository
 
     public Task<FriendRequestMutationOutcome> AcceptRequestAsync(string systemId, string sourceSystemId, CancellationToken cancellationToken = default)
     {
-        if (IsFriends(systemId, sourceSystemId))
+        var normalizedSystemId = NormalizeSystemId(systemId);
+        var normalizedSourceId = NormalizeSystemId(sourceSystemId);
+
+        if (IsFriends(normalizedSystemId, normalizedSourceId))
         {
             return Task.FromResult(FriendRequestMutationOutcome.AlreadyFriends);
         }
 
-        if (!HasOutgoingRequest(sourceSystemId, systemId))
+        if (!HasOutgoingRequest(normalizedSourceId, normalizedSystemId))
         {
             return Task.FromResult(FriendRequestMutationOutcome.NotRequested);
         }
 
-        LinkFriends(systemId, sourceSystemId);
-        RemoveRequest(sourceSystemId, systemId);
-        RemoveRequest(systemId, sourceSystemId);
+        LinkFriends(normalizedSystemId, normalizedSourceId);
+        RemoveRequest(normalizedSourceId, normalizedSystemId);
+        RemoveRequest(normalizedSystemId, normalizedSourceId);
         return Task.FromResult(FriendRequestMutationOutcome.Ok);
     }
 
     public Task<FriendRequestMutationOutcome> RejectRequestAsync(string systemId, string sourceSystemId, CancellationToken cancellationToken = default)
     {
-        if (IsFriends(systemId, sourceSystemId))
+        var normalizedSystemId = NormalizeSystemId(systemId);
+        var normalizedSourceId = NormalizeSystemId(sourceSystemId);
+
+        if (IsFriends(normalizedSystemId, normalizedSourceId))
         {
             return Task.FromResult(FriendRequestMutationOutcome.AlreadyFriends);
         }
 
-        if (!HasOutgoingRequest(sourceSystemId, systemId))
+        if (!HasOutgoingRequest(normalizedSourceId, normalizedSystemId))
         {
             return Task.FromResult(FriendRequestMutationOutcome.NotRequested);
         }
 
-        RemoveRequest(sourceSystemId, systemId);
+        RemoveRequest(normalizedSourceId, normalizedSystemId);
         return Task.FromResult(FriendRequestMutationOutcome.Ok);
     }
 
     public Task<FriendRequestMutationOutcome> CancelRequestAsync(string systemId, string targetSystemId, CancellationToken cancellationToken = default)
     {
-        if (IsFriends(systemId, targetSystemId))
+        var normalizedSystemId = NormalizeSystemId(systemId);
+        var normalizedTargetId = NormalizeSystemId(targetSystemId);
+
+        if (IsFriends(normalizedSystemId, normalizedTargetId))
         {
             return Task.FromResult(FriendRequestMutationOutcome.AlreadyFriends);
         }
 
-        if (!HasOutgoingRequest(systemId, targetSystemId))
+        if (!HasOutgoingRequest(normalizedSystemId, normalizedTargetId))
         {
             return Task.FromResult(FriendRequestMutationOutcome.NotRequested);
         }
 
-        RemoveRequest(systemId, targetSystemId);
+        RemoveRequest(normalizedSystemId, normalizedTargetId);
         return Task.FromResult(FriendRequestMutationOutcome.Ok);
     }
 
     public Task<IReadOnlyList<string>> DeleteAllForSystemAsync(string systemId, CancellationToken cancellationToken = default)
     {
+        var normalizedSystemId = NormalizeSystemId(systemId);
         var friendIds = new List<string>();
 
         // Remove all friendships where this user is involved
-        if (_friendships.TryRemove(systemId, out var friends))
+        if (_friendships.TryRemove(normalizedSystemId, out var friends))
         {
             foreach (var friendId in friends.Keys)
             {
                 friendIds.Add(friendId);
                 if (_friendships.TryGetValue(friendId, out var peerStore))
                 {
-                    peerStore.TryRemove(systemId, out _);
+                    peerStore.TryRemove(normalizedSystemId, out _);
                 }
             }
         }
 
         // Remove all outgoing requests from this user
-        _outgoingRequests.TryRemove(systemId, out _);
+        _outgoingRequests.TryRemove(normalizedSystemId, out _);
 
         // Remove all incoming requests to this user (we need to scan for this in-memory)
         foreach (var requesterId in _outgoingRequests.Keys)
         {
             if (_outgoingRequests.TryGetValue(requesterId, out var requests))
             {
-                requests.TryRemove(systemId, out _);
+                requests.TryRemove(normalizedSystemId, out _);
             }
         }
 
@@ -282,5 +311,17 @@ public sealed class InMemoryFriendshipRepository : IFriendshipRepository
             Level = "friend",
             Since = now
         };
+    }
+
+    private static string NormalizeSystemId(string systemId)
+    {
+        if (string.IsNullOrWhiteSpace(systemId))
+            return systemId;
+
+        var separator = systemId.IndexOf(':');
+        if (separator <= 0 || separator >= systemId.Length - 1)
+            return systemId;
+
+        return systemId[(separator + 1)..];
     }
 }

@@ -47,7 +47,7 @@ public sealed class ResetEncryptionCommandHandler : ICommandHandler<ResetEncrypt
                 return CommandExecutionResult<SettingsCommandResult>.Success(replay with { Replay = true });
         }
         
-        var persisted = await _repository.UpsertAsync(command.PrincipalId, false, null, cancellationToken);
+        var persisted = await _repository.UpsertAsync(command.PrincipalId, false, null, null, cancellationToken);
         if (!persisted)
             return RejectInvariant(command, "settings:encryption_reset_failed");
 
