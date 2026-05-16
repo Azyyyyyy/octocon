@@ -32,7 +32,7 @@ public static class RecoveryCodeResolver
         return !string.IsNullOrWhiteSpace(recoveryCode);
     }
 
-    private static bool LooksLikeCompactJwe(string token) => token.Count(ch => ch == '.') == 4;
+    public static bool LooksLikeCompactJwe(string token) => token.Count(ch => ch == '.') == 4;
 
     private static bool TryLoadEncryptionPrivateKey(ref string privateKeyPem)
     {

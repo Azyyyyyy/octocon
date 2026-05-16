@@ -7,6 +7,7 @@ using Interfold.Api.Middleware;
 using Interfold.Api.Services;
 using Interfold.Api.Socket;
 using Interfold.Api.Swagger;
+using Interfold.Contracts;
 using Interfold.Contracts.Configuration;
 using Interfold.Domain.Abstractions;
 using Interfold.Domain.Abstractions.Repository;
@@ -156,7 +157,13 @@ builder.Services
 
 // --- MVC ---
 builder.Services.AddControllers()
-    .AddJsonOptions(options => options.JsonSerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower);
+    .AddJsonOptions(options =>
+    {
+        options.JsonSerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower;
+        // Ensure DateTime / DateTimeOffset are consistently emitted as UTC (single trailing 'Z')
+        options.JsonSerializerOptions.Converters.Add(new UtcDateTimeConverter());
+        options.JsonSerializerOptions.Converters.Add(new UtcDateTimeOffsetConverter());
+    });
 
 // --- Swagger/OpenAPI ---
 builder.Services.AddEndpointsApiExplorer();

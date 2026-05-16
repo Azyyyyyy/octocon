@@ -208,7 +208,7 @@ public sealed class SettingsController : InterfoldControllerBase
 
         var execution = await _setupEncryptionHandler.HandleAsync(envelope, ct);
         if (execution.Accepted)
-            return new SuccessResponse<EncryptionKeyResponse>(new EncryptionKeyResponse(execution.Result!.Key));
+            return new SuccessResponse<EncryptionKeyResponse>(new EncryptionKeyResponse(Convert.ToBase64String(Encoding.UTF8.GetBytes(execution.Result!.Key))));
 
         return ConflictToError(execution.Conflict!);
     }
@@ -369,13 +369,34 @@ public sealed class SettingsController : InterfoldControllerBase
     [HttpPost("import-sp")]
     public async Task<Response> ImportSp([FromBody] SettingsImportRequest req, CancellationToken ct)
     {
+        string? encryptionKey = null;
+        if (!string.IsNullOrWhiteSpace(req.EncryptionKey))
+        {
+            var candidate = req.EncryptionKey;
+            var privateKey = _authenticationConfiguration.CurrentValue.Rsa256PrivateKey;
+            if (!Helpers.RecoveryCodeResolver.LooksLikeCompactJwe(candidate))
+            {
+                return new ErrorResponse("Failed to decrypt encryption key.", "encryption_key_decryption_error",
+                    System.Net.HttpStatusCode.BadRequest);
+            }
+
+            if (!Helpers.RecoveryCodeResolver.TryResolve(candidate, privateKey, out var decrypted,
+                    out var errorCode))
+            {
+                return new ErrorResponse("Failed to decrypt encryption key.", errorCode,
+                    System.Net.HttpStatusCode.BadRequest);
+            }
+
+            encryptionKey = decrypted;
+        }
+
         var envelope = new CommandEnvelope<ImportSpCommand>(
             OperationIds.SettingsImportSp,
             Guid.NewGuid(),
             PrincipalId: PrincipalId,
             IdempotencyKey: GetIdempotencyKey(req.IdempotencyKey),
             OccurredAt: DateTimeOffset.UtcNow,
-            Payload: new ImportSpCommand(req.Token, string.IsNullOrWhiteSpace(req.EncryptionKey) ? null : req.EncryptionKey)
+            Payload: new ImportSpCommand(req.Token, encryptionKey)
         );
 
         return CommandNoContent(await _importSpHandler.HandleAsync(envelope, ct));

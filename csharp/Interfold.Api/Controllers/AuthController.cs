@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.Extensions.Options;
@@ -23,6 +24,7 @@ public sealed class AuthController : InterfoldControllerBase
     private readonly DiscordOAuthService _discordOAuth;
     private readonly AppleOAuthService _appleOAuth;
     private readonly IAuthTokenRevocationRepository _tokenRevocation;
+    private readonly IEncryptionStateRepository _encryptionRepository;
 
     public AuthController(
         IAccountRepository accounts,
@@ -32,7 +34,7 @@ public sealed class AuthController : InterfoldControllerBase
         GoogleOAuthService googleOAuth,
         DiscordOAuthService discordOAuth,
         AppleOAuthService appleOAuth,
-        IAuthTokenRevocationRepository tokenRevocation)
+        IAuthTokenRevocationRepository tokenRevocation, IEncryptionStateRepository encryptionRepository)
     {
         _accounts = accounts;
         _authOptions = authOptions;
@@ -42,6 +44,7 @@ public sealed class AuthController : InterfoldControllerBase
         _discordOAuth = discordOAuth;
         _appleOAuth = appleOAuth;
         _tokenRevocation = tokenRevocation;
+        _encryptionRepository = encryptionRepository;
     }
 
     private static readonly HashSet<string> SupportedProviders = new(StringComparer.OrdinalIgnoreCase)
@@ -174,6 +177,12 @@ public sealed class AuthController : InterfoldControllerBase
         {
             return StatusCode(StatusCodes.Status403Forbidden, "Failed to authenticate. Did you use the same account to sign in before?");
         }
+        
+        // Generate per-user salt (32 random bytes, Base64-encoded)
+        var saltBytes = RandomNumberGenerator.GetBytes(32);
+        var salt = Convert.ToBase64String(saltBytes);
+
+        await _encryptionRepository.UpsertAsync(systemId, false, null, salt, HttpContext.RequestAborted);
 
         var token = await IssueDeepLinkTokenAsync(systemId);
         var redirectBase = ResolveRedirectBase(provider);

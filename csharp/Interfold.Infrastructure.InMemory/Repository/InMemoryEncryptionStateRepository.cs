@@ -20,7 +20,11 @@ public sealed class InMemoryEncryptionStateRepository : IEncryptionStateReposito
     {
         cancellationToken.ThrowIfCancellationRequested();
         var normalizedSystemId = NormalizeSystemId(systemId);
-        _states[normalizedSystemId] = new EncryptionState(initialized, keyChecksum, salt);
+
+        _states.TryGetValue(normalizedSystemId, out EncryptionState? value);
+        _states[normalizedSystemId] = new EncryptionState(Initialized: initialized, KeyChecksum: keyChecksum,
+            Salt: salt ?? value?.Salt);
+
         return Task.FromResult(true);
     }
 
