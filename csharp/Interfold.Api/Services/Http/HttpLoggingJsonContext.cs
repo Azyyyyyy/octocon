@@ -1,10 +1,8 @@
 ﻿using System.Text.Json.Serialization;
 
-namespace Interfold.SPDump.Http;
+namespace Interfold.Api.Services.Http;
 
 [JsonSerializable(typeof(RequestMeta))]
 [JsonSerializable(typeof(ResponseMeta))]
-internal partial class HttpLoggingJsonContext : JsonSerializerContext
-{
-}
+internal partial class HttpLoggingJsonContext : JsonSerializerContext;
 

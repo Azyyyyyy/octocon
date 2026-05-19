@@ -5,6 +5,7 @@ using Interfold.Api.Auth;
 using Interfold.Api.Helpers;
 using Interfold.Api.Middleware;
 using Interfold.Api.Services;
+using Interfold.Api.Services.Http;
 using Interfold.Api.Socket;
 using Interfold.Api.Swagger;
 using Interfold.Contracts;
@@ -74,11 +75,13 @@ builder.Services.AddInterfoldPersistence(builder.Configuration);
 builder.Services.AddInterfoldDomainHandlers();
 builder.Services.AddSingleton<IAvatarStorage, LocalAvatarStorage>();
 
+builder.Services.AddTransient<HttpLoggingHandler>();
+
 // --- HTTP Client Factory (for OAuth token exchange, etc.) ---
 builder.Services.AddHttpClient<GoogleOAuthService>();
 builder.Services.AddHttpClient<DiscordOAuthService>();
 builder.Services.AddHttpClient<AppleOAuthService>();
-builder.Services.AddHttpClient("SimplyPlural");
+builder.Services.AddHttpClient("SimplyPlural").AddHttpMessageHandler<HttpLoggingHandler>();
 builder.Services.AddSingleton<ISimplyPluralImportService, SimplyPluralImportService>();
 
 // --- Auth ---
@@ -104,10 +107,9 @@ builder.Services
             ClockSkew = TimeSpan.FromMinutes(1),
             ValidateIssuerSigningKey = false,
             RequireSignedTokens = true,
-            SignatureValidator = (token, validationParameters) =>
+            SignatureValidator = (token, _) =>
                 ValidateJwtTokenSignatureForBearer(
                     token,
-                    validationParameters,
                     authOptionsMonitor?.CurrentValue ?? authConfig)
         };
         // JTI revocation check is wired after app.Build() to access IAuthTokenRevocationRepository
@@ -188,7 +190,7 @@ builder.Services.AddSwaggerGen(options =>
             "api/systems/me/alters/{id}/avatar"
         };
 
-        if (!allowedConflicts.Any(allowed => route?.Contains(allowed) == true))
+        if (allowedConflicts.All(allowed => route?.Contains(allowed) != true))
         {
             var actionNames = string.Join(", ", apiDescriptions.Select(d => $"{d.ActionDescriptor.DisplayName}"));
             throw new NotSupportedException(
@@ -342,7 +344,6 @@ return 0;
 // ES256 JWT token validation using ECDSA P-256 public keys.
 static SecurityToken ValidateJwtTokenSignatureForBearer(
     string token,
-    TokenValidationParameters validationParameters,
     AuthenticationConfiguration config)
 {
     if (string.IsNullOrWhiteSpace(token))
@@ -357,7 +358,7 @@ static SecurityToken ValidateJwtTokenSignatureForBearer(
     }
 
     var headerJson = Encoding.UTF8.GetString(parts[0].Base64UrlDecode());
-    var alg = string.Empty;
+    string alg;
     using (var headerDoc = JsonDocument.Parse(headerJson))
     {
         if (!headerDoc.RootElement.TryGetProperty("alg", out var algProp)

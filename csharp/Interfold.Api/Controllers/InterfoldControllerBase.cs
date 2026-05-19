@@ -49,7 +49,7 @@ public abstract class InterfoldControllerBase : ControllerBase
             throw new InterfoldException("CT is required on alter check", "alter_check_server_issue");
         }
 
-        var alterRepository = this.HttpContext.RequestServices.GetRequiredService<IAlterRepository>();
+        var alterRepository = HttpContext.RequestServices.GetRequiredService<IAlterRepository>();
         var alterExists = await alterRepository.ExistsAsync(principal, alterId, ct.Value);
         if (!alterExists)
         {
@@ -151,9 +151,9 @@ public abstract class InterfoldControllerBase : ControllerBase
         return ConflictToError(result.Conflict!);
     }
 
-    protected ErrorResponse ConflictToError(Interfold.Contracts.Operations.ConflictResult conflict)
+    protected ErrorResponse ConflictToError(Contracts.Operations.ConflictResult conflict)
     {
-        this.Response.Headers["X-Interfold-OperationId"] = conflict.OperationId;
+        Response.Headers["X-Interfold-OperationId"] = conflict.OperationId;
         
         return conflict.Code switch
         {

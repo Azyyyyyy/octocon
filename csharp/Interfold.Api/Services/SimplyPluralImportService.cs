@@ -2,9 +2,12 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text;
 using Interfold.Api.Services.SimplyPlural;
+using Interfold.Contracts.Configuration;
 using Interfold.Contracts.Models.Commands;
+using Interfold.Domain;
 using Interfold.Domain.Abstractions;
 using Interfold.Domain.Abstractions.Repository;
+using Microsoft.Extensions.Options;
 
 namespace Interfold.Api.Services;
 
@@ -38,6 +41,8 @@ public sealed class SimplyPluralImportService : ISimplyPluralImportService
     private readonly IPollRepository _pollRepository;
     private readonly IJournalRepository _journalRepository;
     private readonly IAvatarStorage _avatarStorage;
+    private readonly IEncryptionStateRepository _encryptionStateRepository;
+    private readonly IOptionsMonitor<AuthenticationConfiguration> _authOptions;
     private readonly ILogger<SimplyPluralImportService> _logger;
 
     public SimplyPluralImportService(
@@ -50,7 +55,7 @@ public sealed class SimplyPluralImportService : ISimplyPluralImportService
         IPollRepository pollRepository,
         IJournalRepository journalRepository,
         IAvatarStorage avatarStorage,
-        ILogger<SimplyPluralImportService> logger)
+        ILogger<SimplyPluralImportService> logger, IEncryptionStateRepository encryptionStateRepository, IOptionsMonitor<AuthenticationConfiguration> authConfig)
     {
         _httpClientFactory = httpClientFactory;
         _alterRepository = alterRepository;
@@ -62,6 +67,8 @@ public sealed class SimplyPluralImportService : ISimplyPluralImportService
         _journalRepository = journalRepository;
         _avatarStorage = avatarStorage;
         _logger = logger;
+        _encryptionStateRepository = encryptionStateRepository;
+        _authOptions = authConfig;
     }
 
     public bool? WaitForAvatars { get; set; }
@@ -69,13 +76,18 @@ public sealed class SimplyPluralImportService : ISimplyPluralImportService
     public async Task<SpImportResult> ImportAsync(
         string systemId,
         string spToken,
-        string? encryptionKey,
+        string? recoveryKey,
         CancellationToken cancellationToken = default)
     {
         _logger.LogInformation("Starting Simply Plural import for system {SystemId}", systemId);
+        if (!string.IsNullOrWhiteSpace(recoveryKey))
+        {
+            var (encryptionValidation, derivedKey) = await ValidateEncryptionKeyAsync(systemId, recoveryKey, cancellationToken);
+            if (!encryptionValidation.Success)
+                return encryptionValidation;
 
-        if (!string.IsNullOrWhiteSpace(encryptionKey))
-            encryptionKey = encryptionKey.Trim();
+            recoveryKey = derivedKey;
+        }
 
         using var httpClient = _httpClientFactory.CreateClient("SimplyPlural");
         httpClient.DefaultRequestHeaders.TryAddWithoutValidation("Authorization", spToken); // SP uses non-standard "Authorization: {token}" header
@@ -106,9 +118,9 @@ public sealed class SimplyPluralImportService : ISimplyPluralImportService
         await ImportPollsAsync(httpClient, spSystemId, systemId, alterAssociations, cancellationToken);
 
         // (optional) 7. Import notes per alter as alter journals
-        if (!string.IsNullOrWhiteSpace(encryptionKey))
+        if (!string.IsNullOrWhiteSpace(recoveryKey))
         {
-            await ImportNotesAsync(httpClient, spSystemId, systemId, alterAssociations, encryptionKey, cancellationToken);
+            await ImportNotesAsync(httpClient, spSystemId, systemId, alterAssociations, recoveryKey, cancellationToken);
         }
 
         // 8. Update account description if available
@@ -568,6 +580,21 @@ public sealed class SimplyPluralImportService : ISimplyPluralImportService
             return null;
         }
     }
+    
+    private async Task<(SpImportResult Result, string DerivedKey)> ValidateEncryptionKeyAsync(string systemId, string recoveryCode, CancellationToken ct)
+    {
+        var state = await _encryptionStateRepository.GetAsync(systemId, ct);
+        if (state is null || !state.Initialized || string.IsNullOrWhiteSpace(state.KeyChecksum))
+            return (new SpImportResult(false, 0, "Encryption is not initialized for this system."), string.Empty);
+
+        var pepper = _authOptions.CurrentValue.EncryptionPepper;
+        var key = EncryptionKey.DeriveKey(pepper, systemId, recoveryCode, state.Salt);
+        var checksum = EncryptionKey.DeriveChecksum(key);
+        if (!string.Equals(checksum, state.KeyChecksum, StringComparison.Ordinal))
+            return (new SpImportResult(false, 0, "The provided encryption key is invalid."), string.Empty);
+
+        return (new SpImportResult(true, 0), key);
+    }
 
     private static JsonElement BuildPollData(SpPollContent poll, Dictionary<string, int> alterAssociations)
     {
@@ -674,12 +701,12 @@ public sealed class SimplyPluralImportService : ISimplyPluralImportService
             var typeInfoObj = SpJsonContext.Default.GetTypeInfo(typeof(T));
             if (typeInfoObj is System.Text.Json.Serialization.Metadata.JsonTypeInfo<T> typedInfo)
             {
-                var result = await System.Text.Json.JsonSerializer.DeserializeAsync<T>(stream, typedInfo, ct).ConfigureAwait(false);
+                var result = await JsonSerializer.DeserializeAsync<T>(stream, typedInfo, ct).ConfigureAwait(false);
                 return result;
             }
 
             // Fallback to runtime deserialization
-            var fallback = await System.Text.Json.JsonSerializer.DeserializeAsync<T>(stream, cancellationToken: ct).ConfigureAwait(false);
+            var fallback = await JsonSerializer.DeserializeAsync<T>(stream, cancellationToken: ct).ConfigureAwait(false);
             return fallback;
         }
         catch

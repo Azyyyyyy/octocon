@@ -58,17 +58,16 @@ public sealed class SetupEncryptionCommandHandler : ICommandHandler<SetupEncrypt
                 return CommandExecutionResult<EncryptionCommandResult>.Success(replay with { Replay = true });
         }
         
-        var pepper = _authOptions.CurrentValue.EncryptionPepper;
-
         var existing = await _repository.GetAsync(command.PrincipalId, cancellationToken);
         if (string.IsNullOrWhiteSpace(existing?.Salt))
         {
             throw new InterfoldException("Salt must be provided.", "encryption_salt_required");
         }
 
+        var pepper = _authOptions.CurrentValue.EncryptionPepper;
         string salt = existing.Salt;
-        var key = DeriveKey(pepper, command.PrincipalId, command.Payload.RecoveryCode, salt);
-        var checksum = DeriveChecksum(key);
+        var key = EncryptionKey.DeriveKey(pepper, command.PrincipalId, command.Payload.RecoveryCode, salt);
+        var checksum = EncryptionKey.DeriveChecksum(key);
 
         var persisted = await _repository.UpsertAsync(command.PrincipalId, true, checksum, null, cancellationToken);
         if (!persisted)
@@ -88,30 +87,6 @@ public sealed class SetupEncryptionCommandHandler : ICommandHandler<SetupEncrypt
 
         await _eventBus.PublishAsync(new SettingsProfileUpdatedEvent(command.PrincipalId, false), cancellationToken);
         return CommandExecutionResult<EncryptionCommandResult>.Success(result);
-    }
-
-    private static string DeriveKey(string pepper, string systemId, string recoveryCode, string salt)
-    {
-        // Step 1: SHA256(pepper + user_id + recovery_code)
-        var hashInput = Encoding.UTF8.GetBytes(pepper + systemId + recoveryCode);
-        var sha256Hash = SHA256.HashData(hashInput);
-
-        // Step 2: Argon2id(sha256_hash, salt, t_cost=12, m_cost=65536, parallelism=1, hash_len=32)
-        var saltBytes = Convert.FromBase64String(salt);
-        using var argon2 = new Argon2id(sha256Hash);
-        argon2.Salt = saltBytes;
-        argon2.DegreeOfParallelism = 1;
-        argon2.MemorySize = 65536; // KB
-        argon2.Iterations = 12;
-
-        var keyBytes = argon2.GetBytes(32);
-        return Convert.ToBase64String(keyBytes);
-    }
-
-    private static string DeriveChecksum(string key)
-    {
-        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(key));
-        return Convert.ToBase64String(hash)[..9];
     }
 
     private static CommandExecutionResult<EncryptionCommandResult> RejectDuplicate(

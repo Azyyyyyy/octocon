@@ -45,7 +45,7 @@ public sealed class ImportSpCommandHandler : ICommandHandler<ImportSpCommand, Se
                 var importResult = await _importService.ImportAsync(
                     command.PrincipalId,
                     command.Payload.Token,
-                    command.Payload.EncryptionKey,
+                    command.Payload.RecoveryCode,
                     ct);
                 return importResult.Success;
             },

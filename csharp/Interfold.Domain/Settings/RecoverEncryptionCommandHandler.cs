@@ -59,8 +59,8 @@ public sealed class RecoverEncryptionCommandHandler : ICommandHandler<RecoverEnc
             return RejectInvariant(command, "settings:encryption_not_initialized");
 
         var pepper = _authOptions.CurrentValue.EncryptionPepper;
-        var key = DeriveKey(pepper, command.PrincipalId, command.Payload.RecoveryCode, state.Salt);
-        var checksum = DeriveChecksum(key);
+        var key = EncryptionKey.DeriveKey(pepper, command.PrincipalId, command.Payload.RecoveryCode, state.Salt);
+        var checksum = EncryptionKey.DeriveChecksum(key);
 
         if (!string.Equals(checksum, state.KeyChecksum, StringComparison.Ordinal))
             return RejectInvariant(command, "settings:invalid_recovery_code");
@@ -78,28 +78,6 @@ public sealed class RecoverEncryptionCommandHandler : ICommandHandler<RecoverEnc
             cancellationToken);
 
         return CommandExecutionResult<EncryptionCommandResult>.Success(result);
-    }
-
-    private static string DeriveKey(string pepper, string systemId, string recoveryCode, string salt)
-    {
-        var hashInput = Encoding.UTF8.GetBytes(pepper + systemId + recoveryCode);
-        var sha256Hash = SHA256.HashData(hashInput);
-
-        var saltBytes = Convert.FromBase64String(salt);
-        using var argon2 = new Argon2id(sha256Hash);
-        argon2.Salt = saltBytes;
-        argon2.DegreeOfParallelism = 1;
-        argon2.MemorySize = 65536;
-        argon2.Iterations = 12;
-
-        var keyBytes = argon2.GetBytes(32);
-        return Convert.ToBase64String(keyBytes);
-    }
-
-    private static string DeriveChecksum(string key)
-    {
-        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(key));
-        return Convert.ToBase64String(hash)[..9];
     }
 
     private static CommandExecutionResult<EncryptionCommandResult> RejectDuplicate(

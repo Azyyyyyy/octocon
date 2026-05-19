@@ -369,26 +369,9 @@ public sealed class SettingsController : InterfoldControllerBase
     [HttpPost("import-sp")]
     public async Task<Response> ImportSp([FromBody] SettingsImportRequest req, CancellationToken ct)
     {
-        string? encryptionKey = null;
-        if (!string.IsNullOrWhiteSpace(req.EncryptionKey))
-        {
-            var candidate = req.EncryptionKey;
-            var privateKey = _authenticationConfiguration.CurrentValue.Rsa256PrivateKey;
-            if (!Helpers.RecoveryCodeResolver.LooksLikeCompactJwe(candidate))
-            {
-                return new ErrorResponse("Failed to decrypt encryption key.", "encryption_key_decryption_error",
-                    System.Net.HttpStatusCode.BadRequest);
-            }
-
-            if (!Helpers.RecoveryCodeResolver.TryResolve(candidate, privateKey, out var decrypted,
-                    out var errorCode))
-            {
-                return new ErrorResponse("Failed to decrypt encryption key.", errorCode,
-                    System.Net.HttpStatusCode.BadRequest);
-            }
-
-            encryptionKey = decrypted;
-        }
+        string? recoveryCode = null;
+        if (!string.IsNullOrWhiteSpace(req.RecoveryCode) && !TryResolveRecoveryCode(req.RecoveryCode, out recoveryCode, out var decryptionErrorCode))
+            return new ErrorResponse("Failed to decrypt recovery code.", decryptionErrorCode, System.Net.HttpStatusCode.BadRequest);
 
         var envelope = new CommandEnvelope<ImportSpCommand>(
             OperationIds.SettingsImportSp,
@@ -396,7 +379,7 @@ public sealed class SettingsController : InterfoldControllerBase
             PrincipalId: PrincipalId,
             IdempotencyKey: GetIdempotencyKey(req.IdempotencyKey),
             OccurredAt: DateTimeOffset.UtcNow,
-            Payload: new ImportSpCommand(req.Token, encryptionKey)
+            Payload: new ImportSpCommand(req.Token, recoveryCode)
         );
 
         return CommandNoContent(await _importSpHandler.HandleAsync(envelope, ct));

@@ -1,9 +1,9 @@
 ﻿using System.Security.Cryptography;
 using Interfold.Api.Services;
+using Interfold.Api.Services.Http;
 using Interfold.Domain.Abstractions;
 using Interfold.Infrastructure.InMemory;
 using Interfold.Infrastructure.DependencyInjection;
-using Interfold.SPDump.Http;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;

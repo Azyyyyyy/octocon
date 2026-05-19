@@ -1,8 +1,6 @@
 ﻿using System.Text.Json;
-using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.Logging;
 
-namespace Interfold.SPDump.Http;
+namespace Interfold.Api.Services.Http;
 
 public class HttpLoggingHandler : DelegatingHandler
 {
@@ -10,17 +8,24 @@ public class HttpLoggingHandler : DelegatingHandler
     private readonly ILogger<HttpLoggingHandler> _logger;
     private readonly bool _replayEnabled;
     private readonly bool _replayStrict;
+    private readonly bool _enabled;
 
     public HttpLoggingHandler(IConfiguration configuration, ILogger<HttpLoggingHandler> logger)
     {
         _logger = logger;
         _basePath = configuration["HttpMessageLog:BasePath"] ?? "http-messages";
-        _replayEnabled = configuration.GetValue<bool>("HttpMessageLog:Replay:Enabled", false);
-        _replayStrict = configuration.GetValue<bool>("HttpMessageLog:Replay:Strict", false);
+        _replayEnabled = configuration.GetValue("HttpMessageLog:Replay:Enabled", false);
+        _replayStrict = configuration.GetValue("HttpMessageLog:Replay:Strict", false);
+        _enabled = configuration.GetValue("HttpMessageLog:Enabled", false);
     }
 
     protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
     {
+        if (!_enabled)
+        {
+            return await base.SendAsync(request, cancellationToken).ConfigureAwait(false);
+        }
+        
         try
         {
             var requestId = Guid.NewGuid().ToString("N");
@@ -43,10 +48,9 @@ public class HttpLoggingHandler : DelegatingHandler
             Directory.CreateDirectory(requestFolder);
 
             // Read and log request body (if any)
-            byte[]? reqBytes = null;
             if (request.Content != null)
             {
-                reqBytes = await request.Content.ReadAsByteArrayAsync(cancellationToken).ConfigureAwait(false);
+                var reqBytes = await request.Content.ReadAsByteArrayAsync(cancellationToken).ConfigureAwait(false);
 
                 var reqExt = GetExtensionFromMediaType(request.Content.Headers.ContentType?.MediaType);
                 var reqFile = Path.Combine(requestFolder, $"{SanitizeFileName(endpoint)}_{DateTime.UtcNow:yyyyMMddHHmmssfff}_{requestId}.request{reqExt}");
@@ -63,7 +67,7 @@ public class HttpLoggingHandler : DelegatingHandler
                     ContentHeaders = request.Content.Headers.ToDictionary(h => h.Key, h => h.Value?.ToArray())
                 };
                 var reqMetaFile = Path.ChangeExtension(reqFile, ".meta.json");
-                await File.WriteAllTextAsync(reqMetaFile, System.Text.Json.JsonSerializer.Serialize(reqMeta, HttpLoggingJsonContext.Default.RequestMeta), cancellationToken).ConfigureAwait(false);
+                await File.WriteAllTextAsync(reqMetaFile, JsonSerializer.Serialize(reqMeta, HttpLoggingJsonContext.Default.RequestMeta), cancellationToken).ConfigureAwait(false);
 
                 // Replace the request content so the request can be sent (we already consumed it)
                 var newContent = new ByteArrayContent(reqBytes);
@@ -85,7 +89,7 @@ public class HttpLoggingHandler : DelegatingHandler
                 };
                 var reqMetaFile = Path.ChangeExtension(reqFile, ".meta.json");
                 Directory.CreateDirectory(Path.GetDirectoryName(reqMetaFile) ?? requestFolder);
-                await File.WriteAllTextAsync(reqMetaFile, System.Text.Json.JsonSerializer.Serialize(reqMeta, HttpLoggingJsonContext.Default.RequestMeta), cancellationToken).ConfigureAwait(false);
+                await File.WriteAllTextAsync(reqMetaFile, JsonSerializer.Serialize(reqMeta, HttpLoggingJsonContext.Default.RequestMeta), cancellationToken).ConfigureAwait(false);
             }
 
             // If replay is enabled, attempt to find a recorded response on disk and return it instead of calling the backend.
@@ -114,10 +118,7 @@ public class HttpLoggingHandler : DelegatingHandler
             }
 
             // If we don't have a replayed response, send the request to the live backend.
-            if (response == null)
-            {
-                response = await base.SendAsync(request, cancellationToken).ConfigureAwait(false);
-            }
+            response ??= await base.SendAsync(request, cancellationToken).ConfigureAwait(false);
 
             // Log response
             var responseFolder = Path.Combine(folderSegments.Concat(new[] { "response" }).ToArray());
@@ -143,7 +144,7 @@ public class HttpLoggingHandler : DelegatingHandler
                     ContentHeaders = response.Content.Headers.ToDictionary(h => h.Key, h => h.Value?.ToArray())
                 };
                 var respMetaFile = Path.ChangeExtension(respFile, ".meta.json");
-                await File.WriteAllTextAsync(respMetaFile, System.Text.Json.JsonSerializer.Serialize(respMeta, HttpLoggingJsonContext.Default.ResponseMeta), cancellationToken).ConfigureAwait(false);
+                await File.WriteAllTextAsync(respMetaFile, JsonSerializer.Serialize(respMeta, HttpLoggingJsonContext.Default.ResponseMeta), cancellationToken).ConfigureAwait(false);
 
                 // Replace response content so downstream consumers can read it
                 var newRespContent = new ByteArrayContent(respBytes);
@@ -167,7 +168,7 @@ public class HttpLoggingHandler : DelegatingHandler
                 };
                 var respMetaFile = Path.ChangeExtension(respFile, ".meta.json");
                 Directory.CreateDirectory(Path.GetDirectoryName(respMetaFile) ?? responseFolder);
-                await File.WriteAllTextAsync(respMetaFile, System.Text.Json.JsonSerializer.Serialize(respMeta, HttpLoggingJsonContext.Default.ResponseMeta), cancellationToken).ConfigureAwait(false);
+                await File.WriteAllTextAsync(respMetaFile, JsonSerializer.Serialize(respMeta, HttpLoggingJsonContext.Default.ResponseMeta), cancellationToken).ConfigureAwait(false);
             }
 
             return response;
@@ -265,7 +266,7 @@ public class HttpLoggingHandler : DelegatingHandler
                 try
                 {
                     var metaJson = File.ReadAllText(metaFile);
-                    var recorded = System.Text.Json.JsonSerializer.Deserialize<ResponseMeta>(metaJson, HttpLoggingJsonContext.Default.ResponseMeta);
+                    var recorded = JsonSerializer.Deserialize<ResponseMeta>(metaJson, HttpLoggingJsonContext.Default.ResponseMeta);
                     if (recorded == null)
                         continue;
 
@@ -292,7 +293,7 @@ public class HttpLoggingHandler : DelegatingHandler
                         && string.Equals(normalizedRecorded, normalizedCurrent, StringComparison.Ordinal))
                     {
                         chosen = fi;
-                        chosenMetaRoot = System.Text.Json.JsonDocument.Parse(metaJson).RootElement.Clone();
+                        chosenMetaRoot = JsonDocument.Parse(metaJson).RootElement.Clone();
                         break;
                     }
                 }
@@ -307,7 +308,7 @@ public class HttpLoggingHandler : DelegatingHandler
 
             // We have already parsed the meta into JSON; prefer using the typed ResponseMeta for headers/status
             var metaJsonText = File.ReadAllText(Path.ChangeExtension(chosen.FullName, ".meta.json"));
-            var recordedMeta = System.Text.Json.JsonSerializer.Deserialize<ResponseMeta>(metaJsonText, HttpLoggingJsonContext.Default.ResponseMeta);
+            var recordedMeta = JsonSerializer.Deserialize<ResponseMeta>(metaJsonText, HttpLoggingJsonContext.Default.ResponseMeta);
 
             var status = recordedMeta?.Status ?? 200;
             var reason = recordedMeta?.Reason ?? string.Empty;
