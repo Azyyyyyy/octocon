@@ -64,6 +64,8 @@ public sealed class SimplyPluralImportService : ISimplyPluralImportService
         _logger = logger;
     }
 
+    public bool? WaitForAvatars { get; set; }
+    
     public async Task<SpImportResult> ImportAsync(
         string systemId,
         string spToken,
@@ -117,7 +119,15 @@ public sealed class SimplyPluralImportService : ISimplyPluralImportService
         }
 
         // 9. Download and attach avatars in background
-        _ = Task.Run(async () => await DownloadAvatarsAsync(systemId, avatarDownloads), CancellationToken.None);
+        if (WaitForAvatars == true)
+        {
+            await DownloadAvatarsAsync(systemId, avatarDownloads, cancellationToken);
+        }
+        else
+        {
+            _ = Task.Run(async () => await DownloadAvatarsAsync(systemId, avatarDownloads, CancellationToken.None),
+                CancellationToken.None);
+        }
 
         _logger.LogInformation("Simply Plural import complete for system {SystemId}: {AlterCount} alters imported", systemId, alterCount);
         return new SpImportResult(true, alterCount);
@@ -609,7 +619,7 @@ public sealed class SimplyPluralImportService : ISimplyPluralImportService
         return JsonDocument.Parse(stream.ToArray()).RootElement.Clone();
     }
 
-    private async Task DownloadAvatarsAsync(string systemId, List<AvatarDownload> downloads)
+    private async Task DownloadAvatarsAsync(string systemId, List<AvatarDownload> downloads, CancellationToken cancellationToken)
     {
         using var httpClient = _httpClientFactory.CreateClient("SimplyPlural");
 
@@ -617,13 +627,13 @@ public sealed class SimplyPluralImportService : ISimplyPluralImportService
         {
             try
             {
-                using var response = await httpClient.GetAsync(download.Url, HttpCompletionOption.ResponseHeadersRead);
+                using var response = await httpClient.GetAsync(download.Url, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
                 if (!response.IsSuccessStatusCode)
                     continue;
 
-                await using var stream = await response.Content.ReadAsStreamAsync();
+                await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
                 //TODO: We should ideally be coverting it to webp for consistency of other images
-                var avatarUrl = await _avatarStorage.SaveAlterAvatarAsync(download.SystemId, download.AlterId, stream);
+                var avatarUrl = await _avatarStorage.SaveAlterAvatarAsync(download.SystemId, download.AlterId, stream, cancellationToken);
 
                 await _alterRepository.UpdateAsync(systemId, new UpdateAlterCommand(
                     AlterId: download.AlterId,
@@ -640,7 +650,7 @@ public sealed class SimplyPluralImportService : ISimplyPluralImportService
                     Archived: null,
                     Pinned: null,
                     UpdatedAt: DateTimeOffset.UtcNow
-                ));
+                ), cancellationToken);
             }
             catch (Exception ex)
             {
@@ -654,7 +664,23 @@ public sealed class SimplyPluralImportService : ISimplyPluralImportService
     {
         try
         {
-            return await httpClient.GetFromJsonAsync<T>(url, ct);
+            using var response = await httpClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
+            if (!response.IsSuccessStatusCode)
+                return default;
+
+            await using var stream = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
+
+            // Use the source-generated JsonSerializer context when available for better performance and to avoid trimming issues.
+            var typeInfoObj = SpJsonContext.Default.GetTypeInfo(typeof(T));
+            if (typeInfoObj is System.Text.Json.Serialization.Metadata.JsonTypeInfo<T> typedInfo)
+            {
+                var result = await System.Text.Json.JsonSerializer.DeserializeAsync<T>(stream, typedInfo, ct).ConfigureAwait(false);
+                return result;
+            }
+
+            // Fallback to runtime deserialization
+            var fallback = await System.Text.Json.JsonSerializer.DeserializeAsync<T>(stream, cancellationToken: ct).ConfigureAwait(false);
+            return fallback;
         }
         catch
         {

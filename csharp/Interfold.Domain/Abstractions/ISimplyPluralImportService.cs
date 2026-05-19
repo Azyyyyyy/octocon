@@ -10,6 +10,8 @@ public interface ISimplyPluralImportService
         string spToken,
         string? encryptionKey,
         CancellationToken cancellationToken = default);
+
+    bool? WaitForAvatars { get; set; }
 }
 
 public sealed record SpImportResult(bool Success, int AlterCount, string? Error = null);

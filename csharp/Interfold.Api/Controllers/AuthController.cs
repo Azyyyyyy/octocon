@@ -177,12 +177,16 @@ public sealed class AuthController : InterfoldControllerBase
         {
             return StatusCode(StatusCodes.Status403Forbidden, "Failed to authenticate. Did you use the same account to sign in before?");
         }
-        
-        // Generate per-user salt (32 random bytes, Base64-encoded)
-        var saltBytes = RandomNumberGenerator.GetBytes(32);
-        var salt = Convert.ToBase64String(saltBytes);
 
-        await _encryptionRepository.UpsertAsync(systemId, false, null, salt, HttpContext.RequestAborted);
+        var encryptionState = await _encryptionRepository.GetAsync(systemId, HttpContext.RequestAborted);
+        if (encryptionState?.Salt == null)
+        {
+            // Generate per-user salt (32 random bytes, Base64-encoded)
+            var saltBytes = RandomNumberGenerator.GetBytes(32);
+            var salt = Convert.ToBase64String(saltBytes);
+
+            await _encryptionRepository.UpsertAsync(systemId, false, null, salt, HttpContext.RequestAborted);
+        }
 
         var token = await IssueDeepLinkTokenAsync(systemId);
         var redirectBase = ResolveRedirectBase(provider);
@@ -232,10 +236,15 @@ public sealed class AuthController : InterfoldControllerBase
             return apiConfig.BetaFrontendAddress ?? throw new InvalidOperationException("Beta frontend address is not configured.");
         }
 
-        if ((providerKey == "discord" || providerKey == "google") &&
+        if (providerKey is "discord" or "google" &&
             platform.Equals("wasm", StringComparison.OrdinalIgnoreCase))
         {
             return apiConfig.FrontendAddress ?? throw new InvalidOperationException("Frontend address is not configured.");
+        }
+        
+        if (platform.Equals("desktop", StringComparison.OrdinalIgnoreCase))
+        {
+            return "octocon://deep/auth/token";
         }
 
         return BuildDeepAuthRedirectBase(apiConfig.DeepLinkAddress);

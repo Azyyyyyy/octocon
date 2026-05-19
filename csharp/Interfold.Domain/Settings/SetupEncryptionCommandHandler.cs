@@ -70,7 +70,7 @@ public sealed class SetupEncryptionCommandHandler : ICommandHandler<SetupEncrypt
         var key = DeriveKey(pepper, command.PrincipalId, command.Payload.RecoveryCode, salt);
         var checksum = DeriveChecksum(key);
 
-        var persisted = await _repository.UpsertAsync(command.PrincipalId, true, checksum, salt, cancellationToken);
+        var persisted = await _repository.UpsertAsync(command.PrincipalId, true, checksum, null, cancellationToken);
         if (!persisted)
             return RejectInvariant(command, "settings:encryption_setup_failed");
 
