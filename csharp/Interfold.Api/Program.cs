@@ -363,17 +363,17 @@ app.UseAuthorization();
 app.MapHealthChecks(HealthCheckRoutes.Live, new Microsoft.AspNetCore.Diagnostics.HealthChecks.HealthCheckOptions
 {
     Predicate = _ => false // Liveness: no dependency checks, just confirms process is running
-}).AllowAnonymous();
+}).AllowAnonymous().ShortCircuit();
 
 app.MapHealthChecks(HealthCheckRoutes.Ready, new Microsoft.AspNetCore.Diagnostics.HealthChecks.HealthCheckOptions
 {
     Predicate = check => check.Tags.Contains("ready")
-}).AllowAnonymous();
+}).AllowAnonymous().ShortCircuit();
 
 app.MapHealthChecks(HealthCheckRoutes.Startup, new Microsoft.AspNetCore.Diagnostics.HealthChecks.HealthCheckOptions
 {
     Predicate = check => check.Tags.Contains("startup")
-}).AllowAnonymous();
+}).AllowAnonymous().ShortCircuit();
 
 app.MapMethods("/api/socket/websocket", ["GET", "CONNECT"], WebSocketHandler.HandleUserSocketAsync).AllowAnonymous();
 app.MapControllers();
