@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Interfold.Domain.Abstractions;
+using Interfold.Api.Controllers.Base;
 
 namespace Interfold.Api.Controllers;
 

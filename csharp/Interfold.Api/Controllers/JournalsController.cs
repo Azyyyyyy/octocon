@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Mvc;
 using Interfold.Contracts.Operations;
 using Interfold.Domain.Abstractions.Repository;
 using Interfold.Domain.Journals;
+using Interfold.Api.Controllers.Base;
 
 namespace Interfold.Api.Controllers;
 

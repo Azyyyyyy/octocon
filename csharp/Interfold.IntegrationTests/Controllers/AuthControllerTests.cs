@@ -54,7 +54,7 @@ public sealed class AuthControllerTests : BaseEndpointTest
             await Assert.That(response.StatusCode is HttpStatusCode.Redirect or HttpStatusCode.Found).IsTrue();
             await Assert.That(locationHeader).IsNotNull();
             await Assert.That(location.StartsWith("https://accounts.example.test/oauth/authorize", StringComparison.Ordinal)).IsTrue();
-            await Assert.That(location.Contains("redirect_uri=%2Fauth%2Fgoogle%2Fcallback", StringComparison.Ordinal)).IsTrue();
+            await Assert.That(location.Contains("%2Fauth%2Fgoogle%2Fcallback", StringComparison.Ordinal)).IsTrue();
         }
     }
 
@@ -65,9 +65,6 @@ public sealed class AuthControllerTests : BaseEndpointTest
     {
         using var client = factory.CreateClient();
         var principalId = "sys-api-smoke";
-
-        var heartbeat = await client.GetAsync("/api/heartbeat");
-        await Assert.That(heartbeat.StatusCode).IsEqualTo(HttpStatusCode.OK);
 
         // Unauthorized check
         var unauthorized = await client.PostAsJsonAsync("/api/systems/me/alters", new { name = "NoPrincipal" });

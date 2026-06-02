@@ -5,6 +5,7 @@ using Interfold.Domain.Polls;
 using Interfold.Contracts.Models.Commands;
 using Interfold.Contracts.Models.Read;
 using Interfold.Domain.Abstractions.Repository;
+using Interfold.Api.Controllers.Base;
 
 namespace Interfold.Api.Controllers;
 

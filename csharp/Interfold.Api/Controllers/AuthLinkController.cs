@@ -9,22 +9,18 @@ using Interfold.Contracts.Configuration;
 using Interfold.Contracts.Events;
 using Interfold.Contracts.Models.Read;
 using Interfold.Domain.Abstractions.Repository;
+using Interfold.Api.Controllers.Base;
 
 namespace Interfold.Api.Controllers;
 
 [AllowAnonymous]
 [Route("auth/link")]
-public sealed class AuthLinkController : InterfoldControllerBase
+public sealed class AuthLinkController : OAuthControllerBase
 {
     private const string LinkTokenCookieName = "octocon_link_token";
+    private const string RedirectUriCookieName = "octocon_link_redirect_uri";
 
     private readonly IAccountRepository _accounts;
-    private readonly IOptionsMonitor<AuthenticationConfiguration> _authOptions;
-    private readonly IOptionsMonitor<ApiConfiguration> _apiOptions;
-    private readonly IAuthenticationSchemeProvider _schemeProvider;
-    private readonly GoogleOAuthService _googleOAuth;
-    private readonly DiscordOAuthService _discordOAuth;
-    private readonly AppleOAuthService _appleOAuth;
     private readonly IClusterEventBus _eventBus;
 
     public AuthLinkController(
@@ -36,66 +32,28 @@ public sealed class AuthLinkController : InterfoldControllerBase
         DiscordOAuthService discordOAuth,
         AppleOAuthService appleOAuth,
         IClusterEventBus eventBus)
+        : base(authOptions, apiOptions, schemeProvider, googleOAuth, discordOAuth, appleOAuth)
     {
         _accounts = accounts;
-        _authOptions = authOptions;
-        _apiOptions = apiOptions;
-        _schemeProvider = schemeProvider;
-        _googleOAuth = googleOAuth;
-        _discordOAuth = discordOAuth;
-        _appleOAuth = appleOAuth;
         _eventBus = eventBus;
     }
 
-    private static readonly HashSet<string> SupportedProviders = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "discord",
-        "google",
-        "apple"
-    };
+    protected override string CallbackRoutePrefix => "auth/link";
 
     [HttpGet("{provider}")]
-    public async Task<IActionResult> BeginLink([FromRoute] string provider)
+    public async Task<IActionResult> Begin([FromRoute] string provider)
     {
         if (!IsSupportedProvider(provider))
-        {
-            return BadRequest(new
-            {
-                error = "Unsupported OAuth provider.",
-                code = "invalid_oauth_provider",
-                provider
-            });
-        }
+            return UnsupportedProviderResponse(provider);
 
-        var linkToken = Request.Query["link_token"].ToString();
-        if (!string.IsNullOrWhiteSpace(linkToken))
-        {
-            Response.Cookies.Append(LinkTokenCookieName, linkToken, new CookieOptions
-            {
-                HttpOnly = true,
-                IsEssential = true,
-                Secure = Request.IsHttps,
-                SameSite = SameSiteMode.Lax,
-                MaxAge = TimeSpan.FromMinutes(10)
-            });
-        }
+        StoreQueryCookie(LinkTokenCookieName, "link_token");
+        StoreRedirectUriCookie(RedirectUriCookieName);
 
         var providerKey = provider.ToLowerInvariant();
-        var challengeScheme = GetChallengeScheme(providerKey);
-        if (!string.IsNullOrWhiteSpace(challengeScheme))
-        {
-            var registeredScheme = await _schemeProvider.GetSchemeAsync(challengeScheme);
-            if (registeredScheme is not null)
-            {
-                var props = new AuthenticationProperties
-                {
-                    RedirectUri = BuildCallbackBaseUri(providerKey)
-                };
+        var challenge = await IssueChallengeIfRegisteredAsync(providerKey, OperationIds.QueryAuthLinkRequest);
 
-                Response.Headers["X-Interfold-OperationId"] = OperationIds.QueryAuthLinkRequest;
-                return Challenge(props, challengeScheme);
-            }
-        }
+        if (challenge is not null)
+            return challenge;
 
         Response.Headers["X-Interfold-OperationId"] = OperationIds.QueryAuthLinkRequest;
         return StatusCode(StatusCodes.Status403Forbidden, string.Empty);
@@ -112,14 +70,7 @@ public sealed class AuthLinkController : InterfoldControllerBase
     private async Task<IActionResult> Callback(string provider)
     {
         if (!IsSupportedProvider(provider))
-        {
-            return BadRequest(new
-            {
-                error = "Unsupported OAuth provider.",
-                code = "invalid_oauth_provider",
-                provider
-            });
-        }
+            return UnsupportedProviderResponse(provider);
 
         var providerKey = provider.ToLowerInvariant();
 
@@ -139,6 +90,9 @@ public sealed class AuthLinkController : InterfoldControllerBase
         await _accounts.ClearLinkTokenAsync(systemId, HttpContext.RequestAborted);
         Response.Cookies.Delete(LinkTokenCookieName);
 
+        var redirectUri = Request.Cookies[RedirectUriCookieName];
+        Response.Cookies.Delete(RedirectUriCookieName);
+
         var identity = await ExtractProviderIdentityAsync(provider);
         if (string.IsNullOrWhiteSpace(identity))
         {
@@ -157,7 +111,7 @@ public sealed class AuthLinkController : InterfoldControllerBase
 
         return result switch
         {
-            AccountLinkResult.Success => await RedirectWithSocketEventAsync(systemId, providerKey, identity),
+            AccountLinkResult.Success => await RedirectWithSocketEventAsync(systemId, providerKey, identity, redirectUri),
             AccountLinkResult.AlreadyLinked => StatusCode(StatusCodes.Status403Forbidden, new
             {
                 error = providerKey switch
@@ -182,13 +136,18 @@ public sealed class AuthLinkController : InterfoldControllerBase
         };
     }
 
-    private async Task<IActionResult> RedirectWithSocketEventAsync(string systemId, string providerKey, string identity)
+    private async Task<IActionResult> RedirectWithSocketEventAsync(string systemId, string providerKey, string identity, string? redirectUri)
     {
         await _eventBus.PublishAsync(
             new SettingsAccountLinkedEvent(systemId, providerKey, identity),
             HttpContext.RequestAborted);
 
-        var apiConfig = _apiOptions.CurrentValue;
+        if (!string.IsNullOrWhiteSpace(redirectUri))
+        {
+            return Redirect(redirectUri);
+        }
+
+        var apiConfig = ApiOptions.CurrentValue;
         var deepLinkBase = NormalizeDeepLinkBase(apiConfig.DeepLinkAddress);
         var redirectBase = deepLinkBase.EndsWith("/deep", StringComparison.OrdinalIgnoreCase)
             ? deepLinkBase
@@ -196,124 +155,4 @@ public sealed class AuthLinkController : InterfoldControllerBase
 
         return Redirect($"{redirectBase}/link_success/{providerKey}");
     }
-
-    private static string NormalizeDeepLinkBase(string? deepLinkAddress)
-    {
-        if (string.IsNullOrWhiteSpace(deepLinkAddress))
-        {
-            return "https://octocon.app/deep";
-        }
-
-        return deepLinkAddress.Trim().TrimEnd('/');
-    }
-
-    private async Task<string?> ExtractProviderIdentityAsync(string provider)
-    {
-        if (provider.Equals("discord", StringComparison.OrdinalIgnoreCase))
-        {
-            // Discord OAuth2 callback delivers an authorization code; exchange it for the user ID.
-            var code = await GetValueAsync("code");
-            if (!string.IsNullOrWhiteSpace(code))
-            {
-                var redirectUri = BuildCallbackBaseUri(provider);
-                return await _discordOAuth.ExchangeCodeForDiscordIdAsync(code, redirectUri, HttpContext.RequestAborted);
-            }
-
-            // Fallback for legacy flows that deliver the ID directly.
-            return await GetValueAsync("uid", "discord_id", "id");
-        }
-
-        if (provider.Equals("google", StringComparison.OrdinalIgnoreCase))
-        {
-            // Google OAuth2 callback sends 'code' instead of 'email'.
-            // Exchange code for access token and fetch user info.
-            var code = await GetValueAsync("code");
-            if (string.IsNullOrWhiteSpace(code))
-            {
-                // Fallback: try direct email parameter for legacy flows
-                return await GetValueAsync("email");
-            }
-
-            // Build the redirect URI for token exchange
-            var redirectUri = BuildCallbackBaseUri(provider);
-            var email = await _googleOAuth.ExchangeCodeForEmailAsync(code, redirectUri, HttpContext.RequestAborted);
-
-            return email ?? await GetValueAsync("email");
-        }
-
-        if (provider.Equals("apple", StringComparison.OrdinalIgnoreCase))
-        {
-            var code = await GetValueAsync("code");
-            if (!string.IsNullOrWhiteSpace(code))
-            {
-                var redirectUri = BuildCallbackBaseUri(provider);
-                var appleId = await _appleOAuth.ExchangeCodeForAppleIdAsync(code, redirectUri, HttpContext.RequestAborted);
-                if (!string.IsNullOrWhiteSpace(appleId))
-                {
-                    return appleId;
-                }
-            }
-
-            var idToken = await GetValueAsync("id_token");
-            var sub = _appleOAuth.ExtractSubFromJwt(idToken);
-            if (!string.IsNullOrWhiteSpace(sub))
-            {
-                return sub;
-            }
-
-            return await GetValueAsync("uid", "apple_id", "id", "sub");
-        }
-
-        return null;
-    }
-
-    private string BuildCallbackBaseUri(string provider)
-    {
-        var providerKey = provider.ToLowerInvariant();
-        var authConfig = _authOptions.CurrentValue;
-        var baseUrl = authConfig.CallbackBaseUrl ?? $"{Request.Scheme}://{Request.Host}";
-        return $"{baseUrl}/auth/link/{providerKey}/callback";
-    }
-
-    private async Task<string?> GetValueAsync(params string[] keys)
-    {
-        foreach (var key in keys)
-        {
-            var query = Request.Query[key].ToString();
-            if (!string.IsNullOrWhiteSpace(query))
-            {
-                return query;
-            }
-        }
-
-        if (Request.HasFormContentType)
-        {
-            var form = await Request.ReadFormAsync(HttpContext.RequestAborted);
-            foreach (var key in keys)
-            {
-                var value = form[key].ToString();
-                if (!string.IsNullOrWhiteSpace(value))
-                {
-                    return value;
-                }
-            }
-        }
-
-        return null;
-    }
-
-    private string? GetChallengeScheme(string providerKey)
-    {
-        var authConfig = _authOptions.CurrentValue;
-        return providerKey switch
-        {
-            "discord" => authConfig.DiscordSchemeName,
-            "google" => authConfig.GoogleSchemeName,
-            "apple" => authConfig.AppleSchemeName,
-            _ => null
-        };
-    }
-
-    private static bool IsSupportedProvider(string provider)
-        => !string.IsNullOrWhiteSpace(provider) && SupportedProviders.Contains(provider);
 }

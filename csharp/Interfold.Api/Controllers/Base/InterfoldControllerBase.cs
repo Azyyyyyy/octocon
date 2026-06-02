@@ -11,7 +11,7 @@ using Interfold.Contracts;
 using Interfold.Contracts.Models;
 using Interfold.Domain.Abstractions.Repository;
 
-namespace Interfold.Api.Controllers;
+namespace Interfold.Api.Controllers.Base;
 
 [ApiController]
 [Authorize]

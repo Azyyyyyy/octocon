@@ -17,6 +17,7 @@ using Interfold.Domain.Accounts;
 using Interfold.Domain.Settings;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.Extensions.Options;
+using Interfold.Api.Controllers.Base;
 
 namespace Interfold.Api.Controllers;
 

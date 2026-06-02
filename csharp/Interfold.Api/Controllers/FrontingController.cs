@@ -5,6 +5,7 @@ using Interfold.Contracts.Models.Read;
 using Interfold.Contracts.Operations;
 using Interfold.Domain.Abstractions.Repository;
 using Interfold.Domain.Fronting;
+using Interfold.Api.Controllers.Base;
 
 namespace Interfold.Api.Controllers;
 

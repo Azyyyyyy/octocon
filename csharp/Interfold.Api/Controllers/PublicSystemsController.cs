@@ -1,3 +1,4 @@
+using Interfold.Api.Controllers.Base;
 using Interfold.Domain.Abstractions.Repository;
 using Microsoft.AspNetCore.Mvc;
 

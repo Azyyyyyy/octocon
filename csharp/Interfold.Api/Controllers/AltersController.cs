@@ -10,6 +10,7 @@ using Interfold.Contracts.Models.Read;
 using Interfold.Contracts.Operations;
 using Interfold.Domain.Abstractions.Repository;
 using Interfold.Domain.Alters;
+using Interfold.Api.Controllers.Base;
 
 namespace Interfold.Api.Controllers;
 

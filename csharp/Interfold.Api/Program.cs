@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using Interfold.Api;
 using Interfold.Api.Auth;
 using Interfold.Api.Helpers;
 using Interfold.Api.Middleware;
@@ -73,6 +74,27 @@ builder.Services.AddCors(options =>
 builder.Services.AddInterfoldCluster(builder.Configuration);
 builder.Services.AddInterfoldPersistence(builder.Configuration);
 builder.Services.AddInterfoldDomainHandlers();
+
+// --- Health Checks ---
+// Readiness checks use a short timeout (5s) — fail fast if a dependency drops.
+// Startup checks use a longer timeout (30s) — databases may still be initializing at boot.
+var healthChecks = builder.Services.AddHealthChecks();
+
+if (persistenceConfig.Mode == "scylla-postgres")
+{
+    healthChecks.AddCheck<Interfold.Infrastructure.Scylla.ScyllaHealthChecker>(
+        "scylla-ready", tags: ["ready"], timeout: TimeSpan.FromSeconds(5));
+    healthChecks.AddCheck<Interfold.Infrastructure.Scylla.ScyllaHealthChecker>(
+        "scylla-startup", tags: ["startup"], timeout: TimeSpan.FromSeconds(30));
+
+    if (!persistenceConfig.CompatibilityMode)
+    {
+        healthChecks.AddCheck<Interfold.Infrastructure.Postgres.PostgresHealthChecker>(
+            "postgres-ready", tags: ["ready"], timeout: TimeSpan.FromSeconds(5));
+        healthChecks.AddCheck<Interfold.Infrastructure.Postgres.PostgresHealthChecker>(
+            "postgres-startup", tags: ["startup"], timeout: TimeSpan.FromSeconds(30));
+    }
+}
 builder.Services.AddSingleton<IAvatarStorage, LocalAvatarStorage>();
 
 builder.Services.AddTransient<HttpLoggingHandler>();
@@ -202,6 +224,7 @@ builder.Services.AddSwaggerGen(options =>
     });
 
     options.DocumentFilter<MultipleContentTypeOperationFilter>();
+    options.DocumentFilter<HealthCheckDocumentFilter>();
 
     // Add JWT Bearer authentication to Swagger UI
     options.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
@@ -335,6 +358,23 @@ app.UseWebSockets(new WebSocketOptions
 });
 
 app.UseAuthorization();
+
+// --- Health Check Endpoints ---
+app.MapHealthChecks(HealthCheckRoutes.Live, new Microsoft.AspNetCore.Diagnostics.HealthChecks.HealthCheckOptions
+{
+    Predicate = _ => false // Liveness: no dependency checks, just confirms process is running
+}).AllowAnonymous();
+
+app.MapHealthChecks(HealthCheckRoutes.Ready, new Microsoft.AspNetCore.Diagnostics.HealthChecks.HealthCheckOptions
+{
+    Predicate = check => check.Tags.Contains("ready")
+}).AllowAnonymous();
+
+app.MapHealthChecks(HealthCheckRoutes.Startup, new Microsoft.AspNetCore.Diagnostics.HealthChecks.HealthCheckOptions
+{
+    Predicate = check => check.Tags.Contains("startup")
+}).AllowAnonymous();
+
 app.MapMethods("/api/socket/websocket", ["GET", "CONNECT"], WebSocketHandler.HandleUserSocketAsync).AllowAnonymous();
 app.MapControllers();
 
