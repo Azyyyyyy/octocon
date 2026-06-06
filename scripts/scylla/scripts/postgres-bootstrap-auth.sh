@@ -4,14 +4,18 @@ set -euo pipefail
 # PostgreSQL authentication bootstrap.
 #
 # This script runs ONCE after the postgres container is healthy to:
-#   1. Create the app user (PGUSER) as a non-superuser with CREATEDB
+#   1. Create the app user (PGUSER) as a non-superuser (DML-only, no CREATEDB)
 #   2. Create a dedicated admin superuser (<PGUSER>_admin) with a random password
-#   3. Create the application database owned by the app user
-#   4. Scramble the cluster owner (pg_init) password
+#   3. Create the application database owned by admin
+#   4. Grant DML-only privileges (SELECT, INSERT, UPDATE, DELETE) to app user
+#   5. Scramble the cluster owner (db_init) password
 #
-# The container starts with a disposable init superuser 'pg_init' (cluster owner).
+# The container starts with a disposable init superuser 'db_init' (cluster owner).
 # We can't fully lock or demote the cluster owner in PostgreSQL, so instead we
 # randomize its password and save it to recovery.
+#
+# Schema DDL is applied by postgres-load-schema.sh using the admin account.
+# The app user has NO DDL privileges — cannot CREATE/ALTER/DROP tables.
 #
 # Required environment variables:
 #   PGUSER       - App-level username (will be non-superuser)
@@ -89,16 +93,16 @@ fi
 
 echo "[pg-auth-bootstrap] Connected as '${INIT_USER}' (cluster owner)."
 
-# --- Step 1: Create the app user (non-superuser with CREATEDB) ---
-echo "[pg-auth-bootstrap] Creating app user '${APP_USER}' (non-superuser, CREATEDB)..."
+# --- Step 1: Create the app user (non-superuser, DML-only) ---
+echo "[pg-auth-bootstrap] Creating app user '${APP_USER}' (non-superuser)..."
 psql_as_init -c "
 DO \$\$
 BEGIN
   IF EXISTS (SELECT FROM pg_roles WHERE rolname = '${APP_USER}') THEN
-    ALTER ROLE \"${APP_USER}\" WITH PASSWORD '${APP_PASSWORD}' NOSUPERUSER LOGIN CREATEDB;
+    ALTER ROLE \"${APP_USER}\" WITH PASSWORD '${APP_PASSWORD}' NOSUPERUSER LOGIN NOCREATEDB;
     RAISE NOTICE 'Role ${APP_USER} already exists, updated.';
   ELSE
-    CREATE ROLE \"${APP_USER}\" WITH PASSWORD '${APP_PASSWORD}' NOSUPERUSER LOGIN CREATEDB;
+    CREATE ROLE \"${APP_USER}\" WITH PASSWORD '${APP_PASSWORD}' NOSUPERUSER LOGIN NOCREATEDB;
   END IF;
 END
 \$\$;
@@ -121,17 +125,40 @@ END
 \$\$;
 "
 
-# --- Step 3: Create the application database owned by app user ---
+# --- Step 3: Create the application database owned by admin ---
+# The admin owns the database/schema (DDL). The app user gets DML-only.
 echo "[pg-auth-bootstrap] Ensuring database '${DB_NAME}' exists..."
 if ! psql_as_init -tAc "SELECT 1 FROM pg_database WHERE datname = '${DB_NAME}'" | grep -q 1; then
-  psql_as_init -c "CREATE DATABASE \"${DB_NAME}\" OWNER \"${APP_USER}\";"
-  echo "[pg-auth-bootstrap] Database '${DB_NAME}' created."
+  psql_as_init -c "CREATE DATABASE \"${DB_NAME}\" OWNER \"${ADMIN_USER}\";"
+  echo "[pg-auth-bootstrap] Database '${DB_NAME}' created (owner: ${ADMIN_USER})."
 else
   echo "[pg-auth-bootstrap] Database '${DB_NAME}' already exists."
-  psql_as_init -c "ALTER DATABASE \"${DB_NAME}\" OWNER TO \"${APP_USER}\";" 2>/dev/null || true
+  psql_as_init -c "ALTER DATABASE \"${DB_NAME}\" OWNER TO \"${ADMIN_USER}\";" 2>/dev/null || true
 fi
 
-# --- Step 4: Scramble the cluster owner password ---
+# --- Step 4: Grant DML-only privileges to app user ---
+echo "[pg-auth-bootstrap] Granting DML privileges to '${APP_USER}' on '${DB_NAME}'..."
+
+# Helper to run SQL against the application database as init
+psql_as_init_db() {
+  PGPASSWORD="$INIT_PASSWORD" psql -v ON_ERROR_STOP=1 -h "$DB_HOST" -U "$INIT_USER" -d "$DB_NAME" "$@"
+}
+
+# Grant CONNECT on the database
+psql_as_init -c "GRANT CONNECT ON DATABASE \"${DB_NAME}\" TO \"${APP_USER}\";"
+
+# Grant USAGE on public schema (no CREATE — can't make new tables)
+psql_as_init_db -c "GRANT USAGE ON SCHEMA public TO \"${APP_USER}\";"
+
+# Grant DML on all current and future tables in public schema
+psql_as_init_db -c "GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO \"${APP_USER}\";"
+psql_as_init_db -c "ALTER DEFAULT PRIVILEGES FOR ROLE \"${ADMIN_USER}\" IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO \"${APP_USER}\";"
+
+# Grant USAGE on sequences (needed for serial/identity columns if any)
+psql_as_init_db -c "GRANT USAGE ON ALL SEQUENCES IN SCHEMA public TO \"${APP_USER}\";"
+psql_as_init_db -c "ALTER DEFAULT PRIVILEGES FOR ROLE \"${ADMIN_USER}\" IN SCHEMA public GRANT USAGE ON SEQUENCES TO \"${APP_USER}\";"
+
+# --- Step 5: Scramble the cluster owner password ---
 INIT_SCRAMBLED_PASS=$(head -c 32 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 32)
 echo "[pg-auth-bootstrap] Scrambling cluster owner '${INIT_USER}' password..."
 psql_as_init -c "ALTER ROLE \"${INIT_USER}\" WITH PASSWORD '${INIT_SCRAMBLED_PASS}';"
@@ -171,6 +198,6 @@ echo "[pg-auth-bootstrap] ========================================"
 echo "[pg-auth-bootstrap] ADMIN ACCOUNT: ${ADMIN_USER}"
 echo "[pg-auth-bootstrap] Credentials saved to: ${RECOVERY_DIR}/pg-admin-credentials.txt"
 echo "[pg-auth-bootstrap] Cluster owner '${INIT_USER}': password scrambled"
-echo "[pg-auth-bootstrap] App user '${APP_USER}': non-superuser, CREATEDB, LOGIN"
+echo "[pg-auth-bootstrap] App user '${APP_USER}': DML-only (SELECT/INSERT/UPDATE/DELETE)"
 echo "[pg-auth-bootstrap] ========================================"
 echo "[pg-auth-bootstrap] Bootstrap complete."

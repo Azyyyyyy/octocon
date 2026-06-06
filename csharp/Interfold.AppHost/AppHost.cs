@@ -128,12 +128,12 @@ var pgBootstrapAuth = builder.AddContainer("pg-bootstrap-auth", "timescale/times
     });
 
 // --- PostgreSQL Schema Initialization ---
+// Uses admin credentials from pg_recovery volume (written by pg-bootstrap-auth).
 var msgDbLoadSchema = builder.AddContainer("msg-db-load-schema", "timescale/timescaledb", "latest-pg16")
     .WithBindMount("../../db/postgres/001_create_octocon_idempotency.sql", "/schemas/001_create_octocon_idempotency.sql", isReadOnly: true)
     .WithBindMount("../../db/postgres/002_create_auth_tokens.sql", "/schemas/002_create_auth_tokens.sql", isReadOnly: true)
     .WithBindMount("../../scripts/scylla/scripts/postgres-load-schema.sh", "/scripts/postgres-load-schema.sh", isReadOnly: true)
-    .WithEnvironment("PGPASSWORD", postgresPassword)
-    .WithEnvironment("PGUSER", postgresUser)
+    .WithVolume("pg_recovery", "/recovery")
     .WithEntrypoint("/bin/bash")
     .WithArgs("/scripts/postgres-load-schema.sh", "msg-db", "octocon",
         "/schemas/001_create_octocon_idempotency.sql", "/schemas/002_create_auth_tokens.sql")
@@ -167,6 +167,7 @@ if (mode == "cassandra")
         .WithContainerNetworkAlias("cassandra")
         .WithEnvironment("CASSANDRA_CLUSTER_NAME", "OctoCluster")
         .WithEnvironment("CASSANDRA_AUTHENTICATOR", "PasswordAuthenticator")
+        .WithEnvironment("CASSANDRA_AUTHORIZER", "CassandraAuthorizer")
         .WithEnvironment("CASSANDRA_LISTEN_ADDRESS", "cassandra")
         .WithEnvironment("CASSANDRA_BROADCAST_ADDRESS", "cassandra")
         .WithEnvironment("CASSANDRA_BROADCAST_RPC_ADDRESS", "cassandra")
@@ -223,6 +224,7 @@ else
             .WithContainerNetworkAlias(name)
             .WithArgs(seeds, "--smp", "1", "--memory", "750M", "--overprovisioned", "1",
                 "--developer-mode", "1", "--authenticator", "PasswordAuthenticator",
+                "--authorizer", "CassandraAuthorizer",
                 "--endpoint-snitch", "GossipingPropertyFileSnitch",
                 "--api-address", "0.0.0.0", "--broadcast-address", name)
             .WithBindMount($"../../scripts/scylla/cassandra-rackdc.{region}.properties", "/etc/scylla/cassandra-rackdc.properties", isReadOnly: true)
@@ -289,6 +291,7 @@ var scyllaLoadKeyspaces = builder.AddContainer(loadKeysName, loadKeysImage, load
     .WithBindMount("../../db/scylla/001_create_octocon_keyspaces.cql", "/init.cql", isReadOnly: true)
     .WithBindMount("../../db/scylla/001_create_octocon_schema.templated.cql", "/schema.cql", isReadOnly: true)
     .WithBindMount("../../scripts/scylla/scripts/scylla-load-keyspaces.sh", "/scripts/scylla-load-keyspaces.sh", isReadOnly: true)
+    .WithVolume("scylla_recovery", "/recovery")
     .WithEnvironment("SCYLLA_USER", scyllaUser)
     .WithEnvironment("SCYLLA_PASSWORD", scyllaPassword)
     .WithEntrypoint("/bin/bash")

@@ -46,13 +46,55 @@ IS_SUPER=$(cqlsh "$DB_HOST" -u "$ADMIN_USER" -p "$ADMIN_PASS" \
   -e "SELECT is_superuser FROM system_auth.roles WHERE role = '${SCYLLA_USER}';" 2>/dev/null || true)
 
 if echo "$IS_SUPER" | grep -q "False"; then
-  echo "[auth-finalize] '${SCYLLA_USER}' is already non-superuser. Nothing to do."
+  echo "[auth-finalize] '${SCYLLA_USER}' is already non-superuser."
+  # Still ensure permissions are granted (idempotent — GRANT is safe to repeat)
+  echo "[auth-finalize] Ensuring DML permissions are granted..."
+  KEYSPACES=$(cqlsh "$DB_HOST" -u "$ADMIN_USER" -p "$ADMIN_PASS" \
+    -e "DESCRIBE KEYSPACES;" 2>/dev/null \
+    | tr -s ' ' '\n' \
+    | grep -v "^$" \
+    | grep -vE "^(system|system_auth|system_distributed|system_traces|system_schema|system_distributed_everywhere)$")
+  for ks in $KEYSPACES; do
+    cqlsh "$DB_HOST" -u "$ADMIN_USER" -p "$ADMIN_PASS" -e \
+      "GRANT SELECT ON KEYSPACE \"${ks}\" TO '${SCYLLA_USER}';" 2>/dev/null || true
+    cqlsh "$DB_HOST" -u "$ADMIN_USER" -p "$ADMIN_PASS" -e \
+      "GRANT MODIFY ON KEYSPACE \"${ks}\" TO '${SCYLLA_USER}';" 2>/dev/null || true
+  done
+  echo "[auth-finalize] Permissions verified. Nothing else to do."
   exit 0
 fi
 
 echo "[auth-finalize] Demoting '${SCYLLA_USER}' to non-superuser..."
 cqlsh "$DB_HOST" -u "$ADMIN_USER" -p "$ADMIN_PASS" -e \
   "ALTER ROLE '${SCYLLA_USER}' WITH SUPERUSER = false;"
+
+# --- Revoke DDL grants (were needed for keyspace creation, no longer needed) ---
+echo "[auth-finalize] Revoking DDL permissions from '${SCYLLA_USER}'..."
+cqlsh "$DB_HOST" -u "$ADMIN_USER" -p "$ADMIN_PASS" -e \
+  "REVOKE CREATE ON ALL KEYSPACES FROM '${SCYLLA_USER}';" 2>/dev/null || true
+cqlsh "$DB_HOST" -u "$ADMIN_USER" -p "$ADMIN_PASS" -e \
+  "REVOKE ALTER ON ALL KEYSPACES FROM '${SCYLLA_USER}';" 2>/dev/null || true
+cqlsh "$DB_HOST" -u "$ADMIN_USER" -p "$ADMIN_PASS" -e \
+  "REVOKE DROP ON ALL KEYSPACES FROM '${SCYLLA_USER}';" 2>/dev/null || true
+
+# --- Grant least-privilege access to app user on all keyspaces ---
+# After demotion, the app user needs explicit permissions (CassandraAuthorizer is enabled).
+echo "[auth-finalize] Granting DML permissions to '${SCYLLA_USER}'..."
+
+# Regional keyspaces + global
+KEYSPACES=$(cqlsh "$DB_HOST" -u "$ADMIN_USER" -p "$ADMIN_PASS" \
+  -e "DESCRIBE KEYSPACES;" 2>/dev/null \
+  | tr -s ' ' '\n' \
+  | grep -v "^$" \
+  | grep -vE "^(system|system_auth|system_distributed|system_traces|system_schema|system_distributed_everywhere)$")
+
+for ks in $KEYSPACES; do
+  echo "[auth-finalize]   GRANT SELECT, MODIFY ON KEYSPACE ${ks} TO '${SCYLLA_USER}'"
+  cqlsh "$DB_HOST" -u "$ADMIN_USER" -p "$ADMIN_PASS" -e \
+    "GRANT SELECT ON KEYSPACE \"${ks}\" TO '${SCYLLA_USER}';"
+  cqlsh "$DB_HOST" -u "$ADMIN_USER" -p "$ADMIN_PASS" -e \
+    "GRANT MODIFY ON KEYSPACE \"${ks}\" TO '${SCYLLA_USER}';"
+done
 
 # Update recovery notes
 cat >> "${ADMIN_CREDS_FILE}" 2>/dev/null <<EOF || true

@@ -42,15 +42,29 @@ fi
 echo "[auth-bootstrap] Waiting for CQL on ${DB_HOST}:9042..."
 TIMEOUT=90
 ELAPSED=0
-until cqlsh "$DB_HOST" -u "$DEFAULT_USER" -p "$DEFAULT_PASSWORD" -e "DESCRIBE CLUSTER" >/dev/null 2>&1; do
-  sleep 2
-  ELAPSED=$((ELAPSED + 2))
-  if [ "$ELAPSED" -ge "$TIMEOUT" ]; then
-    echo "[auth-bootstrap] ERROR: Timed out waiting for CQL (${TIMEOUT}s)"
-    exit 1
+
+# Try the app user first (works after previous bootstrap), then fall back to default.
+CQL_READY=false
+until [ "$CQL_READY" = "true" ]; do
+  if cqlsh "$DB_HOST" -u "$SCYLLA_USER" -p "$SCYLLA_PASSWORD" -e "DESCRIBE CLUSTER" >/dev/null 2>&1; then
+    CQL_READY=true
+    echo "[auth-bootstrap] CQL is ready (connected as '${SCYLLA_USER}')."
+    # If the app user can already connect, bootstrap was previously completed.
+    echo "[auth-bootstrap] App user '${SCYLLA_USER}' can authenticate — bootstrap previously completed."
+    echo "[auth-bootstrap] Bootstrap already complete (idempotent re-run)."
+    exit 0
+  elif cqlsh "$DB_HOST" -u "$DEFAULT_USER" -p "$DEFAULT_PASSWORD" -e "DESCRIBE CLUSTER" >/dev/null 2>&1; then
+    CQL_READY=true
+    echo "[auth-bootstrap] CQL is ready (connected as '${DEFAULT_USER}')."
+  else
+    sleep 2
+    ELAPSED=$((ELAPSED + 2))
+    if [ "$ELAPSED" -ge "$TIMEOUT" ]; then
+      echo "[auth-bootstrap] ERROR: Timed out waiting for CQL (${TIMEOUT}s)"
+      exit 1
+    fi
   fi
 done
-echo "[auth-bootstrap] CQL is ready."
 
 # --- Step 1: Create the app user (temporarily as superuser for remaining setup) ---
 EXISTING=$(cqlsh "$DB_HOST" -u "$DEFAULT_USER" -p "$DEFAULT_PASSWORD" \
@@ -106,9 +120,17 @@ else
     "ALTER ROLE '${DEFAULT_USER}' WITH PASSWORD = '${CASSANDRA_RANDOM_PASS}' AND LOGIN = false;"
 fi
 
-# --- Step 4: Grant SCYLLA_USER permissions needed for keyspace/schema creation ---
-# The demotion to non-superuser happens AFTER schema init (scylla-finalize-auth.sh).
-# For now, SCYLLA_USER remains a superuser so the keyspace loader can run.
+# --- Step 4: Explicitly grant DDL permissions for keyspace/schema creation ---
+# With CassandraAuthorizer enabled, there's a cache warmup period where the superuser
+# bypass isn't immediately effective. Explicit grants ensure the keyspace loader works.
+echo "[auth-bootstrap] Granting DDL permissions to '${SCYLLA_USER}' for schema creation..."
+cqlsh "$DB_HOST" -u "$SCYLLA_USER" -p "$SCYLLA_PASSWORD" -e \
+  "GRANT CREATE ON ALL KEYSPACES TO '${SCYLLA_USER}';"
+cqlsh "$DB_HOST" -u "$SCYLLA_USER" -p "$SCYLLA_PASSWORD" -e \
+  "GRANT ALTER ON ALL KEYSPACES TO '${SCYLLA_USER}';"
+cqlsh "$DB_HOST" -u "$SCYLLA_USER" -p "$SCYLLA_PASSWORD" -e \
+  "GRANT DROP ON ALL KEYSPACES TO '${SCYLLA_USER}';"
+
 echo "[auth-bootstrap] NOTE: '${SCYLLA_USER}' remains superuser until schema init completes."
 echo "[auth-bootstrap]       scylla-finalize-auth.sh will demote it after keyspace loading."
 

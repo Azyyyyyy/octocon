@@ -50,4 +50,5 @@ TestResults/
 *.nuget.props
 *.nuget.targets
 
-compose_templates/msg_pgdata/**
+csharp/Interfold.Api/wwwroot/avatars/**
+csharp/Interfold.Api/http-messages/**

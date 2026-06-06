@@ -39,6 +39,20 @@ if [ "${SCYLLA_PASSWORD:-}" = "cassandra" ]; then
   exit 1
 fi
 
+# --- Use admin credentials from recovery volume if available (has DDL privileges) ---
+RECOVERY_DIR="${RECOVERY_PATH:-/recovery}"
+ADMIN_CREDS_FILE="${RECOVERY_DIR}/admin-credentials.txt"
+
+if [ -f "$ADMIN_CREDS_FILE" ]; then
+  ADMIN_USER=$(grep -E "^username=" "$ADMIN_CREDS_FILE" | head -1 | cut -d= -f2-)
+  ADMIN_PASS=$(grep -E "^password=" "$ADMIN_CREDS_FILE" | head -1 | cut -d= -f2-)
+  if [ -n "${ADMIN_USER:-}" ] && [ -n "${ADMIN_PASS:-}" ]; then
+    echo "[load-keyspaces] Using admin account '${ADMIN_USER}' for DDL operations."
+    SCYLLA_USER="$ADMIN_USER"
+    SCYLLA_PASSWORD="$ADMIN_PASS"
+  fi
+fi
+
 # Configure cqlsh credentials file (avoids -p on command line warning)
 if [ -n "${SCYLLA_USER:-}" ] && [ -n "${SCYLLA_PASSWORD:-}" ]; then
   mkdir -p ~/.cassandra
