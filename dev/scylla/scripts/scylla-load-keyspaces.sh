@@ -32,6 +32,24 @@ REGIONAL_KEYSPACES=(nam eur sam sas eas ocn gdpr)
 KEYSPACE_TEMPLATE_PATH="${KEYSPACE_TEMPLATE_PATH:-/init.cql}"
 SCHEMA_TEMPLATE_PATH="${SCHEMA_TEMPLATE_PATH:-/schema.cql}"
 
+# --- Guard: reject the well-known default password ---
+if [ "${SCYLLA_PASSWORD:-}" = "cassandra" ]; then
+  echo "[load-keyspaces] ERROR: SCYLLA_PASSWORD is the well-known default ('cassandra')."
+  echo "[load-keyspaces]        Refusing to continue. Set a secure password."
+  exit 1
+fi
+
+# Configure cqlsh credentials file (avoids -p on command line warning)
+if [ -n "${SCYLLA_USER:-}" ] && [ -n "${SCYLLA_PASSWORD:-}" ]; then
+  mkdir -p ~/.cassandra
+  cat > ~/.cassandra/cqlshrc <<EOF
+[authentication]
+username = ${SCYLLA_USER}
+password = ${SCYLLA_PASSWORD}
+EOF
+  chmod 600 ~/.cassandra/cqlshrc
+fi
+
 has_dc() {
   local target="$1"
   for dc in "${DCS[@]}"; do
@@ -51,7 +69,8 @@ get_visible_dcs() {
     | tr '[:upper:]' '[:lower:]' \
     | grep -Eo '[a-z][a-z0-9_]+' \
     | grep -E "^(nam|eur|sam|sas|eas|ocn|gdpr)$" \
-    | sort -u
+    | sort -u \
+    || true
 }
 
 make_simple_replication() {

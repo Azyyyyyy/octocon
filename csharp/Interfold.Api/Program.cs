@@ -28,6 +28,9 @@ using OpenTelemetry.Trace;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// --- Aspire ServiceDefaults (OTel, resilience, service discovery) ---
+builder.AddServiceDefaults();
+
 //Database connections which have been implemented
 ScyllaServiceCollectionExtensions.Register();
 InMemoryServiceCollectionExtensions.Register();
@@ -157,26 +160,12 @@ builder.Services.AddHttpsRedirection(options =>
 });
 
 // --- OpenTelemetry ---
-// Traces and metrics are exported via OTLP when OCTOCON_OTLP_ENDPOINT is set.
-// Without the env var the SDK still runs in-process so metrics are always available
-// for internal /metrics scraping or future export without code changes.
+// The InterfoldMetrics custom meter is registered on top of ServiceDefaults OTel config.
 builder.Services
     .AddOpenTelemetry()
     .WithMetrics(metrics =>
     {
-        metrics
-            .AddAspNetCoreInstrumentation()
-            .AddMeter(InterfoldMetrics.MeterName);
-
-        if (!string.IsNullOrWhiteSpace(builder.Configuration["OCTOCON_OTLP_ENDPOINT"]))
-            metrics.AddOtlpExporter(o => o.Endpoint = new Uri(builder.Configuration["OCTOCON_OTLP_ENDPOINT"]!));
-    })
-    .WithTracing(tracing =>
-    {
-        tracing.AddAspNetCoreInstrumentation();
-
-        if (!string.IsNullOrWhiteSpace(builder.Configuration["OCTOCON_OTLP_ENDPOINT"]))
-            tracing.AddOtlpExporter(o => o.Endpoint = new Uri(builder.Configuration["OCTOCON_OTLP_ENDPOINT"]!));
+        metrics.AddMeter(InterfoldMetrics.MeterName);
     });
 
 // --- MVC ---
@@ -359,21 +348,8 @@ app.UseWebSockets(new WebSocketOptions
 
 app.UseAuthorization();
 
-// --- Health Check Endpoints ---
-app.MapHealthChecks(HealthCheckRoutes.Live, new Microsoft.AspNetCore.Diagnostics.HealthChecks.HealthCheckOptions
-{
-    Predicate = _ => false // Liveness: no dependency checks, just confirms process is running
-}).AllowAnonymous().ShortCircuit();
-
-app.MapHealthChecks(HealthCheckRoutes.Ready, new Microsoft.AspNetCore.Diagnostics.HealthChecks.HealthCheckOptions
-{
-    Predicate = check => check.Tags.Contains("ready")
-}).AllowAnonymous().ShortCircuit();
-
-app.MapHealthChecks(HealthCheckRoutes.Startup, new Microsoft.AspNetCore.Diagnostics.HealthChecks.HealthCheckOptions
-{
-    Predicate = check => check.Tags.Contains("startup")
-}).AllowAnonymous().ShortCircuit();
+// --- Health Check Endpoints (from ServiceDefaults) ---
+app.MapDefaultEndpoints();
 
 app.MapMethods("/api/socket/websocket", ["GET", "CONNECT"], WebSocketHandler.HandleUserSocketAsync).AllowAnonymous();
 app.MapControllers();

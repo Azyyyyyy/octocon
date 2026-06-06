@@ -303,7 +303,7 @@ CREATE TABLE IF NOT EXISTS global.notification_tokens (
 CREATE INDEX IF NOT EXISTS notification_tokens_by_push_token ON global.notification_tokens (push_token);
 
 CREATE TABLE IF NOT EXISTS global.friendships (
-    user_id t   ext,
+    user_id text,
     friend_id text,
     level smallint,
     since timestamp,
