@@ -4,16 +4,19 @@ set -euo pipefail
 # ScyllaDB/Cassandra authentication bootstrap.
 #
 # This script runs ONCE to:
-#   1. Create the app user (SCYLLA_USER) as a temporary superuser
-#   2. Create a dedicated admin account (<SCYLLA_USER>_admin) with a random password
+#   1. Create a dedicated admin account (<SCYLLA_USER>_admin) as superuser
+#   2. Create the app user (SCYLLA_USER) as non-superuser (least privilege from the start)
 #   3. Lock the default 'cassandra' account
-#   4. Demote SCYLLA_USER to non-superuser (app runs with least privilege)
 #
-# The admin account credentials are saved to /recovery/ for schema migrations.
+# The API's migration service handles DDL and permission grants at startup using admin creds.
+# The admin account credentials are saved to /recovery/ for emergency use.
 #
 # Required environment variables:
-#   SCYLLA_USER      - App-level username (will be demoted to non-superuser after setup)
-#   SCYLLA_PASSWORD  - App-level password
+#   SCYLLA_USER           - App-level username (non-superuser)
+#   SCYLLA_PASSWORD       - App-level password
+#
+# Optional environment variables:
+#   SCYLLA_ADMIN_PASSWORD - Admin password (defaults to random if not set)
 #
 # Usage:
 #   scylla-bootstrap-auth.sh <db-host>
@@ -66,22 +69,38 @@ until [ "$CQL_READY" = "true" ]; do
   fi
 done
 
-# --- Step 1: Create the app user (temporarily as superuser for remaining setup) ---
+# --- Step 1: Create dedicated admin superuser ---
+ADMIN_PASS="${SCYLLA_ADMIN_PASSWORD:-$(head -c 32 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 32)}"
+
+ADMIN_EXISTING=$(cqlsh "$DB_HOST" -u "$DEFAULT_USER" -p "$DEFAULT_PASSWORD" \
+  -e "LIST ROLES OF '${ADMIN_USER}';" 2>/dev/null || true)
+
+if echo "$ADMIN_EXISTING" | grep -q "$ADMIN_USER"; then
+  echo "[auth-bootstrap] Admin user '${ADMIN_USER}' already exists. Updating password..."
+  cqlsh "$DB_HOST" -u "$DEFAULT_USER" -p "$DEFAULT_PASSWORD" -e \
+    "ALTER ROLE '${ADMIN_USER}' WITH PASSWORD = '${ADMIN_PASS}';"
+else
+  echo "[auth-bootstrap] Creating admin superuser '${ADMIN_USER}'..."
+  cqlsh "$DB_HOST" -u "$DEFAULT_USER" -p "$DEFAULT_PASSWORD" -e \
+    "CREATE ROLE '${ADMIN_USER}' WITH PASSWORD = '${ADMIN_PASS}' AND SUPERUSER = true AND LOGIN = true;"
+fi
+
+# --- Step 2: Create the app user (non-superuser from the start) ---
 EXISTING=$(cqlsh "$DB_HOST" -u "$DEFAULT_USER" -p "$DEFAULT_PASSWORD" \
   -e "LIST ROLES OF '${SCYLLA_USER}';" 2>/dev/null || true)
 
 if echo "$EXISTING" | grep -q "$SCYLLA_USER"; then
   echo "[auth-bootstrap] App user '${SCYLLA_USER}' already exists."
-  # Always update the password to SCYLLA_PASSWORD (invalidates the well-known default)
   if [ "$SCYLLA_USER" = "$DEFAULT_USER" ]; then
-    echo "[auth-bootstrap] Updating '${SCYLLA_USER}' password to configured value..."
-    cqlsh "$DB_HOST" -u "$DEFAULT_USER" -p "$DEFAULT_PASSWORD" -e \
-      "ALTER ROLE '${SCYLLA_USER}' WITH PASSWORD = '${SCYLLA_PASSWORD}';"
+    # The default 'cassandra' account can't demote itself. Use the admin to do it.
+    echo "[auth-bootstrap] Updating '${SCYLLA_USER}' password and demoting via admin..."
+    cqlsh "$DB_HOST" -u "$ADMIN_USER" -p "$ADMIN_PASS" -e \
+      "ALTER ROLE '${SCYLLA_USER}' WITH PASSWORD = '${SCYLLA_PASSWORD}' AND SUPERUSER = false;"
   fi
 else
-  echo "[auth-bootstrap] Creating app user '${SCYLLA_USER}' (temporary superuser)..."
-  cqlsh "$DB_HOST" -u "$DEFAULT_USER" -p "$DEFAULT_PASSWORD" -e \
-    "CREATE ROLE IF NOT EXISTS '${SCYLLA_USER}' WITH PASSWORD = '${SCYLLA_PASSWORD}' AND SUPERUSER = true AND LOGIN = true;"
+  echo "[auth-bootstrap] Creating app user '${SCYLLA_USER}' (non-superuser)..."
+  cqlsh "$DB_HOST" -u "$ADMIN_USER" -p "$ADMIN_PASS" -e \
+    "CREATE ROLE IF NOT EXISTS '${SCYLLA_USER}' WITH PASSWORD = '${SCYLLA_PASSWORD}' AND SUPERUSER = false AND LOGIN = true;"
 fi
 
 # Verify the app user can connect
@@ -89,22 +108,6 @@ echo "[auth-bootstrap] Verifying '${SCYLLA_USER}' login..."
 if ! cqlsh "$DB_HOST" -u "$SCYLLA_USER" -p "$SCYLLA_PASSWORD" -e "DESCRIBE CLUSTER" >/dev/null 2>&1; then
   echo "[auth-bootstrap] ERROR: Cannot authenticate as '${SCYLLA_USER}'. Aborting."
   exit 1
-fi
-
-# --- Step 2: Create dedicated admin superuser with random password ---
-ADMIN_PASS=$(head -c 32 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 32)
-
-ADMIN_EXISTING=$(cqlsh "$DB_HOST" -u "$SCYLLA_USER" -p "$SCYLLA_PASSWORD" \
-  -e "LIST ROLES OF '${ADMIN_USER}';" 2>/dev/null || true)
-
-if echo "$ADMIN_EXISTING" | grep -q "$ADMIN_USER"; then
-  echo "[auth-bootstrap] Admin user '${ADMIN_USER}' already exists. Rotating password..."
-  cqlsh "$DB_HOST" -u "$SCYLLA_USER" -p "$SCYLLA_PASSWORD" -e \
-    "ALTER ROLE '${ADMIN_USER}' WITH PASSWORD = '${ADMIN_PASS}';"
-else
-  echo "[auth-bootstrap] Creating admin superuser '${ADMIN_USER}'..."
-  cqlsh "$DB_HOST" -u "$SCYLLA_USER" -p "$SCYLLA_PASSWORD" -e \
-    "CREATE ROLE '${ADMIN_USER}' WITH PASSWORD = '${ADMIN_PASS}' AND SUPERUSER = true AND LOGIN = true;"
 fi
 
 # --- Step 3: Lock the default 'cassandra' account (unless SCYLLA_USER IS the default) ---
@@ -116,23 +119,9 @@ else
   CASSANDRA_RANDOM_PASS=$(head -c 32 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 32)
 
   echo "[auth-bootstrap] Locking default '${DEFAULT_USER}' account..."
-  cqlsh "$DB_HOST" -u "$SCYLLA_USER" -p "$SCYLLA_PASSWORD" -e \
+  cqlsh "$DB_HOST" -u "$ADMIN_USER" -p "$ADMIN_PASS" -e \
     "ALTER ROLE '${DEFAULT_USER}' WITH PASSWORD = '${CASSANDRA_RANDOM_PASS}' AND LOGIN = false;"
 fi
-
-# --- Step 4: Explicitly grant DDL permissions for keyspace/schema creation ---
-# With CassandraAuthorizer enabled, there's a cache warmup period where the superuser
-# bypass isn't immediately effective. Explicit grants ensure the keyspace loader works.
-echo "[auth-bootstrap] Granting DDL permissions to '${SCYLLA_USER}' for schema creation..."
-cqlsh "$DB_HOST" -u "$SCYLLA_USER" -p "$SCYLLA_PASSWORD" -e \
-  "GRANT CREATE ON ALL KEYSPACES TO '${SCYLLA_USER}';"
-cqlsh "$DB_HOST" -u "$SCYLLA_USER" -p "$SCYLLA_PASSWORD" -e \
-  "GRANT ALTER ON ALL KEYSPACES TO '${SCYLLA_USER}';"
-cqlsh "$DB_HOST" -u "$SCYLLA_USER" -p "$SCYLLA_PASSWORD" -e \
-  "GRANT DROP ON ALL KEYSPACES TO '${SCYLLA_USER}';"
-
-echo "[auth-bootstrap] NOTE: '${SCYLLA_USER}' remains superuser until schema init completes."
-echo "[auth-bootstrap]       scylla-finalize-auth.sh will demote it after keyspace loading."
 
 # --- Save recovery credentials ---
 mkdir -p "$RECOVERY_DIR" 2>/dev/null || true
@@ -146,11 +135,6 @@ created_at=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
 # Usage:
 #   cqlsh ${DB_HOST} -u '${ADMIN_USER}' -p '${ADMIN_PASS}'
-#
-# To re-promote the app user temporarily:
-#   ALTER ROLE '${SCYLLA_USER}' WITH SUPERUSER = true;
-# Then demote again after:
-#   ALTER ROLE '${SCYLLA_USER}' WITH SUPERUSER = false;
 EOF
 
 cat > "${RECOVERY_DIR}/cassandra-locked.txt" 2>/dev/null <<EOF || true
@@ -174,8 +158,8 @@ else
   echo "[auth-bootstrap] Default '${DEFAULT_USER}' account: LOCKED"
 fi
 echo "[auth-bootstrap] Credentials saved to: ${RECOVERY_DIR}/cassandra-locked.txt"
-echo "[auth-bootstrap] App user '${SCYLLA_USER}': superuser (will be demoted after schema init)"
+echo "[auth-bootstrap] App user '${SCYLLA_USER}': non-superuser (DML-only, grants managed by API)"
 echo "[auth-bootstrap] ========================================"
 echo "[auth-bootstrap] Bootstrap complete."
-echo "[auth-bootstrap]   Schema changes:  ${ADMIN_USER} (superuser, see recovery folder)"
-echo "[auth-bootstrap]   Next step: run scylla-finalize-auth.sh after keyspace loading to demote '${SCYLLA_USER}'"
+echo "[auth-bootstrap]   Schema DDL: handled by API migration service using '${ADMIN_USER}'"
+echo "[auth-bootstrap]   App runtime: '${SCYLLA_USER}' (non-superuser, DML only)"

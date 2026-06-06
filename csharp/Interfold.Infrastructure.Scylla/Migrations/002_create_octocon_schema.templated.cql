@@ -1,6 +1,6 @@
 -- =====================
 -- Schema Template: Replace {{KEYSPACE}} with regional keyspace (nam, eur, ocn, eas, sam, sas, gdpr)
--- Or create separate scripts per keyspace
+-- Applied by ScyllaMigrationService at startup.
 -- =====================
 
 -- =====================

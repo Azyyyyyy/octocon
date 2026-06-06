@@ -140,6 +140,7 @@ public static class ConfigurationServiceCollectionExtensions
         opts.CompatibilityMode = compatibilityMode;
         opts.PostgresConnectionString = config["OCTOCON_POSTGRES_CONNECTION"]
             ?? "Host=localhost;Port=5432;Database=octocon;Username=octocon;Password=octocon";
+        opts.PostgresAdminConnectionString = config["OCTOCON_POSTGRES_ADMIN_CONNECTION"];
         opts.ScyllaKeyspace = config["OCTOCON_SCYLLA_KEYSPACE"] ?? region;
         opts.ScyllaLocalDatacenter = config["OCTOCON_SCYLLA_DATACENTER"] ?? "datacenter1";
         opts.ScyllaContactPoints = string.IsNullOrWhiteSpace(contactPointsStr)
@@ -147,6 +148,9 @@ public static class ConfigurationServiceCollectionExtensions
             : contactPointsStr.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         opts.ScyllaUsername = config["OCTOCON_SCYLLA_USERNAME"];
         opts.ScyllaPassword = config["OCTOCON_SCYLLA_PASSWORD"];
+        opts.ScyllaAdminUsername = config["OCTOCON_SCYLLA_ADMIN_USERNAME"];
+        opts.ScyllaAdminPassword = config["OCTOCON_SCYLLA_ADMIN_PASSWORD"];
+        opts.ScyllaSingleKeyspace = bool.TryParse(config["OCTOCON_SCYLLA_SINGLE_KEYSPACE"], out var singleKs) && singleKs;
         opts.DbRetryAttempts = TryParseInt(config["OCTOCON_DB_RETRY_ATTEMPTS"]) ?? 3;
         opts.DbRetryInitialDelayMs = TryParseInt(config["OCTOCON_DB_RETRY_INITIAL_DELAY_MS"]) ?? 100;
         opts.DbRetryMaxDelayMs = TryParseInt(config["OCTOCON_DB_RETRY_MAX_DELAY_MS"]) ?? 1500;

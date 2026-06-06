@@ -1,6 +1,6 @@
 -- Unified keyspace creation template for Octocon.
 --
--- This file is rendered and applied by dev/scylla/scripts/scylla-load-keyspaces.sh.
+-- This file is rendered by ScyllaMigrationService at startup.
 --
 -- Placeholders:
 --   {{KEYSPACE}}                Regional keyspace name (nam, eur, sam, sas, eas, ocn, gdpr)

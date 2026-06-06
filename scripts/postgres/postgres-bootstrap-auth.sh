@@ -109,7 +109,7 @@ END
 "
 
 # --- Step 2: Create dedicated admin superuser with random password ---
-ADMIN_PASS=$(head -c 32 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 32)
+ADMIN_PASS="${PG_ADMIN_PASSWORD:-$(head -c 32 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 32)}"
 
 echo "[pg-auth-bootstrap] Creating admin superuser '${ADMIN_USER}'..."
 psql_as_init -c "

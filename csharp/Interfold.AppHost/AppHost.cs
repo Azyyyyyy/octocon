@@ -47,8 +47,10 @@ builder.AddDockerComposeEnvironment("docker-compose")
 // --- Parameters (set via user-secrets or environment variables) ---
 var postgresUser = builder.AddParameter("postgres-user");
 var postgresPassword = builder.AddParameter("postgres-password", secret: true);
+var postgresAdminPassword = builder.AddParameter("postgres-admin-password", secret: true);
 var scyllaUser = builder.AddParameter("scylla-user");
 var scyllaPassword = builder.AddParameter("scylla-password", secret: true);
+var scyllaAdminPassword = builder.AddParameter("scylla-admin-password", secret: true);
 var encryptionPrivateKey = builder.AddParameter("encryption-private-key", secret: true);
 
 // --- Reject well-known default passwords at startup (dev mode only; compose relies on shell guard) ---
@@ -112,9 +114,10 @@ var msgDb = builder.AddContainer("msg-db", "timescale/timescaledb", "latest-pg16
 
 // --- PostgreSQL Auth Bootstrap (creates app user, admin account, scrambles init) ---
 var pgBootstrapAuth = builder.AddContainer("pg-bootstrap-auth", "timescale/timescaledb", "latest-pg16")
-    .WithBindMount("../../scripts/scylla/scripts/postgres-bootstrap-auth.sh", "/scripts/postgres-bootstrap-auth.sh", isReadOnly: true)
+    .WithBindMount("../../scripts/postgres/postgres-bootstrap-auth.sh", "/scripts/postgres-bootstrap-auth.sh", isReadOnly: true)
     .WithVolume("pg_recovery", "/recovery")
     .WithEnvironment("PG_INIT_PASSWORD", postgresPassword)
+    .WithEnvironment("PG_ADMIN_PASSWORD", postgresAdminPassword)
     .WithEnvironment("PGUSER", postgresUser)
     .WithEnvironment("PGPASSWORD", postgresPassword)
     .WithEntrypoint("/bin/bash")
@@ -127,34 +130,10 @@ var pgBootstrapAuth = builder.AddContainer("pg-bootstrap-auth", "timescale/times
             dep.Condition = "service_healthy";
     });
 
-// --- PostgreSQL Schema Initialization ---
-// Uses admin credentials from pg_recovery volume (written by pg-bootstrap-auth).
-var msgDbLoadSchema = builder.AddContainer("msg-db-load-schema", "timescale/timescaledb", "latest-pg16")
-    .WithBindMount("../../db/postgres/001_create_octocon_idempotency.sql", "/schemas/001_create_octocon_idempotency.sql", isReadOnly: true)
-    .WithBindMount("../../db/postgres/002_create_auth_tokens.sql", "/schemas/002_create_auth_tokens.sql", isReadOnly: true)
-    .WithBindMount("../../scripts/scylla/scripts/postgres-load-schema.sh", "/scripts/postgres-load-schema.sh", isReadOnly: true)
-    .WithVolume("pg_recovery", "/recovery")
-    .WithEntrypoint("/bin/bash")
-    .WithArgs("/scripts/postgres-load-schema.sh", "msg-db", "octocon",
-        "/schemas/001_create_octocon_idempotency.sql", "/schemas/002_create_auth_tokens.sql")
-    .WaitFor(msgDb)
-    .WaitForCompletion(pgBootstrapAuth)
-    .PublishAsDockerComposeService((_, service) =>
-    {
-        service.Networks = ["postgres"];
-        foreach (var dep in service.DependsOn.Values)
-        {
-            if (dep.Condition == "service_started")
-                dep.Condition = "service_healthy";
-        }
-    });
-
 // --- ScyllaDB / Cassandra (conditional on launch profile) ---
 IResourceBuilder<ContainerResource>? scyllaEndpointOwner = null;
-string loadKeysName;
 string loadKeysImage;
 string loadKeysTag;
-string[] loadKeysArgs;
 string scyllaFirstHost;
 IResourceBuilder<ContainerResource> loadKeysWaitTarget;
 
@@ -179,7 +158,7 @@ if (mode == "cassandra")
         .WithEnvironment("CQLSH_USER", scyllaUser)
         .WithEnvironment("CQLSH_PASSWORD", scyllaPassword)
         .WithBindMount("../../scripts/cassandra/enable-mv.sh", "/enable-mv.sh", isReadOnly: true)
-        .WithBindMount("../../scripts/scylla/cassandra-rackdc.nam.properties", "/etc/cassandra/cassandra-rackdc.properties", isReadOnly: true)
+        .WithBindMount("../../db/scylla/cassandra-rackdc.nam.properties", "/etc/cassandra/cassandra-rackdc.properties", isReadOnly: true)
         .WithVolume("cassandra_data", "/var/lib/cassandra")
         .WithEndpoint(port: scyllaPort, targetPort: 9042, name: "cql", scheme: "tcp")
         .WithHealthCheck("scylla-health")
@@ -198,10 +177,8 @@ if (mode == "cassandra")
             };
         });
 
-    loadKeysName = "cassandra-load-keyspaces";
     loadKeysImage = "cassandra";
     loadKeysTag = "4.1";
-    loadKeysArgs = ["/scripts/scylla-load-keyspaces.sh", "cassandra"];
     loadKeysWaitTarget = cassandra;
     scyllaEndpointOwner = cassandra;
     scyllaFirstHost = "cassandra";
@@ -227,7 +204,7 @@ else
                 "--authorizer", "CassandraAuthorizer",
                 "--endpoint-snitch", "GossipingPropertyFileSnitch",
                 "--api-address", "0.0.0.0", "--broadcast-address", name)
-            .WithBindMount($"../../scripts/scylla/cassandra-rackdc.{region}.properties", "/etc/scylla/cassandra-rackdc.properties", isReadOnly: true)
+            .WithBindMount($"../../db/scylla/cassandra-rackdc.{region}.properties", "/etc/scylla/cassandra-rackdc.properties", isReadOnly: true)
             .WithVolume(regions.Length > 1 ? $"scylla_{region}_data" : "scylla_data", "/var/lib/scylla")
             .WithLifetime(ContainerLifetime.Persistent)
             .WithEnvironment("CQLSH_USER", scyllaUser)
@@ -259,20 +236,19 @@ else
 
     var firstNode = regions.Length > 1 ? $"scylla-{regions[0]}" : "scylla";
 
-    loadKeysName = "scylla-load-keyspaces";
     loadKeysImage = "scylladb/scylla";
     loadKeysTag = "2025.1";
-    loadKeysArgs = ["/scripts/scylla-load-keyspaces.sh", firstNode, .. regions[1..]];
     loadKeysWaitTarget = previousNode!;
     scyllaFirstHost = firstNode;
 }
 
-// --- CQL Auth Bootstrap (creates custom superuser, locks default cassandra account) ---
+// --- CQL Auth Bootstrap (creates admin superuser, app user as non-superuser, locks cassandra) ---
 var scyllaBootstrapAuth = builder.AddContainer("scylla-bootstrap-auth", loadKeysImage, loadKeysTag)
-    .WithBindMount("../../scripts/scylla/scripts/scylla-bootstrap-auth.sh", "/scripts/scylla-bootstrap-auth.sh", isReadOnly: true)
+    .WithBindMount("../../scripts/scylla/scylla-bootstrap-auth.sh", "/scripts/scylla-bootstrap-auth.sh", isReadOnly: true)
     .WithVolume("scylla_recovery", "/recovery")
     .WithEnvironment("SCYLLA_USER", scyllaUser)
     .WithEnvironment("SCYLLA_PASSWORD", scyllaPassword)
+    .WithEnvironment("SCYLLA_ADMIN_PASSWORD", scyllaAdminPassword)
     .WithEntrypoint("/bin/bash")
     .WithArgs("/scripts/scylla-bootstrap-auth.sh", scyllaFirstHost)
     .WaitFor(loadKeysWaitTarget)
@@ -284,44 +260,6 @@ var scyllaBootstrapAuth = builder.AddContainer("scylla-bootstrap-auth", loadKeys
             if (dep.Condition == "service_started")
                 dep.Condition = "service_healthy";
         }
-    });
-
-// --- CQL Schema Loading (shared across all DB modes) ---
-var scyllaLoadKeyspaces = builder.AddContainer(loadKeysName, loadKeysImage, loadKeysTag)
-    .WithBindMount("../../db/scylla/001_create_octocon_keyspaces.cql", "/init.cql", isReadOnly: true)
-    .WithBindMount("../../db/scylla/001_create_octocon_schema.templated.cql", "/schema.cql", isReadOnly: true)
-    .WithBindMount("../../scripts/scylla/scripts/scylla-load-keyspaces.sh", "/scripts/scylla-load-keyspaces.sh", isReadOnly: true)
-    .WithVolume("scylla_recovery", "/recovery")
-    .WithEnvironment("SCYLLA_USER", scyllaUser)
-    .WithEnvironment("SCYLLA_PASSWORD", scyllaPassword)
-    .WithEntrypoint("/bin/bash")
-    .WithArgs(loadKeysArgs)
-    .WaitFor(loadKeysWaitTarget)
-    .WaitForCompletion(scyllaBootstrapAuth)
-    .WaitForCompletion(msgDbLoadSchema)
-    .PublishAsDockerComposeService((_, service) =>
-    {
-        service.Networks = ["scylla"];
-        // Wait for DB to be healthy, not just started
-        foreach (var dep in service.DependsOn.Values)
-        {
-            if (dep.Condition == "service_started")
-                dep.Condition = "service_healthy";
-        }
-    });
-
-// --- CQL Auth Finalization (demotes app user to non-superuser after schema is loaded) ---
-var scyllaFinalizeAuth = builder.AddContainer("scylla-finalize-auth", loadKeysImage, loadKeysTag)
-    .WithBindMount("../../scripts/scylla/scripts/scylla-finalize-auth.sh", "/scripts/scylla-finalize-auth.sh", isReadOnly: true)
-    .WithVolume("scylla_recovery", "/recovery")
-    .WithEnvironment("SCYLLA_USER", scyllaUser)
-    .WithEnvironment("SCYLLA_PASSWORD", scyllaPassword)
-    .WithEntrypoint("/bin/bash")
-    .WithArgs("/scripts/scylla-finalize-auth.sh", scyllaFirstHost)
-    .WaitForCompletion(scyllaLoadKeyspaces)
-    .PublishAsDockerComposeService((_, service) =>
-    {
-        service.Networks = ["scylla"];
     });
 
 // --- Endpoint references (resolve to localhost:{hostPort} in dev, container:{targetPort} in compose) ---
@@ -341,11 +279,18 @@ var api = builder.AddProject<Projects.Interfold_Api>("interfold-api")
     .WithEnvironment("OCTOCON_SCYLLA_DATACENTER", "nam")
     .WithEnvironment("OCTOCON_SCYLLA_USERNAME", scyllaUser)
     .WithEnvironment("OCTOCON_SCYLLA_PASSWORD", scyllaPassword)
+    .WithEnvironment("OCTOCON_SCYLLA_ADMIN_USERNAME",
+        ReferenceExpression.Create($"{scyllaUser}_admin"))
+    .WithEnvironment("OCTOCON_SCYLLA_ADMIN_PASSWORD", scyllaAdminPassword)
+    .WithEnvironment("OCTOCON_SCYLLA_SINGLE_KEYSPACE", mode == "single" ? "true" : "false")
     .WithEnvironment("OCTOCON_POSTGRES_CONNECTION",
         ReferenceExpression.Create($"Host={pgEndpoint.Property(EndpointProperty.Host)};Port={pgEndpoint.Property(EndpointProperty.Port)};Database=octocon;Username={postgresUser};Password={postgresPassword}"))
+    .WithEnvironment("OCTOCON_POSTGRES_ADMIN_CONNECTION",
+        ReferenceExpression.Create($"Host={pgEndpoint.Property(EndpointProperty.Host)};Port={pgEndpoint.Property(EndpointProperty.Port)};Database=octocon;Username={postgresUser}_admin;Password={postgresAdminPassword}"))
     .WithEnvironment("ENCRYPTION_PRIVATE_KEY", encryptionPrivateKey)
     .WithExternalHttpEndpoints()
-    .WaitForCompletion(scyllaFinalizeAuth)
+    .WaitForCompletion(pgBootstrapAuth)
+    .WaitForCompletion(scyllaBootstrapAuth)
     .PublishAsDockerComposeService((_, service) =>
     {
         service.Networks = ["scylla", "postgres", "api"];

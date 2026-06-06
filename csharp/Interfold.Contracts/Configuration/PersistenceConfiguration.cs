@@ -6,7 +6,9 @@ namespace Interfold.Contracts.Configuration;
 ///   - OCTOCON_PERSISTENCE (scylla-postgres or inmemory)
 ///   - OCTOCON_REGION (default: nam)
 ///   - OCTOCON_POSTGRES_CONNECTION
+///   - OCTOCON_POSTGRES_ADMIN_CONNECTION (admin for schema migrations)
 ///   - OCTOCON_SCYLLA_* (keyspace, datacenter, contact points, credentials)
+///   - OCTOCON_SCYLLA_ADMIN_USERNAME / OCTOCON_SCYLLA_ADMIN_PASSWORD
 ///   - OCTOCON_DB_RETRY_* (retry strategy parameters)
 ///   - OCTOCON_HYDRATION_MAX_CONCURRENCY
 /// </summary>
@@ -34,6 +36,34 @@ public sealed class PersistenceConfiguration
     /// </summary>
     public string PostgresConnectionString { get; set; } =
         "Host=localhost;Port=5432;Database=octocon;Username=octocon;Password=octocon";
+
+    /// <summary>
+    /// PostgreSQL admin connection string used for schema migrations at startup.
+    /// If null/empty, migrations are skipped.
+    /// Env: OCTOCON_POSTGRES_ADMIN_CONNECTION
+    /// </summary>
+    public string? PostgresAdminConnectionString { get; set; }
+
+    /// <summary>
+    /// Scylla admin username for schema migrations at startup.
+    /// If null/empty, migrations are skipped.
+    /// Env: OCTOCON_SCYLLA_ADMIN_USERNAME
+    /// </summary>
+    public string? ScyllaAdminUsername { get; set; }
+
+    /// <summary>
+    /// Scylla admin password (paired with ScyllaAdminUsername).
+    /// Env: OCTOCON_SCYLLA_ADMIN_PASSWORD
+    /// </summary>
+    public string? ScyllaAdminPassword { get; set; }
+
+    /// <summary>
+    /// When true, the migration service only creates the single keyspace specified by
+    /// ScyllaKeyspace instead of all regional keyspaces. Useful for dev/single-instance setups.
+    /// Default: false
+    /// Env: OCTOCON_SCYLLA_SINGLE_KEYSPACE
+    /// </summary>
+    public bool ScyllaSingleKeyspace { get; set; } = false;
 
     /// <summary>
     /// Compatibility mode for Scylla-only operation in 'scylla-postgres' mode.

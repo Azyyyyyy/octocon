@@ -38,11 +38,15 @@ public static partial class ServiceCollectionExtensions
         cfg.DefaultRegion            = configuration.DefaultRegion;
         cfg.CompatibilityMode        = configuration.CompatibilityMode;
         cfg.PostgresConnectionString = configuration.PostgresConnectionString;
+        cfg.PostgresAdminConnectionString = configuration.PostgresAdminConnectionString;
         cfg.ScyllaKeyspace           = configuration.ScyllaKeyspace;
         cfg.ScyllaLocalDatacenter    = configuration.ScyllaLocalDatacenter;
         cfg.ScyllaContactPoints      = configuration.ScyllaContactPoints;
         cfg.ScyllaUsername           = configuration.ScyllaUsername;
         cfg.ScyllaPassword           = configuration.ScyllaPassword;
+        cfg.ScyllaAdminUsername      = configuration.ScyllaAdminUsername;
+        cfg.ScyllaAdminPassword      = configuration.ScyllaAdminPassword;
+        cfg.ScyllaSingleKeyspace     = configuration.ScyllaSingleKeyspace;
         cfg.DbRetryAttempts          = configuration.DbRetryAttempts;
         cfg.DbRetryInitialDelayMs    = configuration.DbRetryInitialDelayMs;
         cfg.DbRetryMaxDelayMs        = configuration.DbRetryMaxDelayMs;

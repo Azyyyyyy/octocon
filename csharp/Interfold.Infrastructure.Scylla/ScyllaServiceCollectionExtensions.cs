@@ -37,7 +37,8 @@ public static class ScyllaServiceCollectionExtensions
                 .AddSingleton<IFriendshipRepository, ScyllaFriendshipRepository>()
                 .AddSingleton<ITagRepository, ScyllaTagRepository>()
                 .AddSingleton<IJournalRepository, ScyllaJournalRepository>()
-                .AddSingleton<IPollRepository, ScyllaPollRepository>();
+                .AddSingleton<IPollRepository, ScyllaPollRepository>()
+                .AddHostedService<ScyllaMigrationService>();
 
         return pipeline;
     }

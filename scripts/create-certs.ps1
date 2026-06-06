@@ -1,7 +1,7 @@
 param(
     [string]$RootName = 'Interfold SS Root CA',
     [string]$Domains = 'api.octocon.dev,api.octocon.app',
-    [string]$OutputPath = '.',
+    [string]$OutputPath = '.\certs',
     [Parameter(Mandatory=$true)][string]$Password,
     [int]$Years = 8
 )
@@ -24,6 +24,10 @@ Write-Host "Certificates created"
 # Move root to store
 $MyCertPath = Join-Path Cert:\LocalMachine\My $Root.Thumbprint
 Move-Item $MyCertPath -Destination Cert:\LocalMachine\Root
+
+if (-not (Test-Path $OutputPath -PathType Container)) {
+    New-Item -ItemType Directory -Path $OutputPath
+}
 
 # Export root as .cer
 $RootCertPath = Join-Path Cert:\LocalMachine\Root $Root.Thumbprint

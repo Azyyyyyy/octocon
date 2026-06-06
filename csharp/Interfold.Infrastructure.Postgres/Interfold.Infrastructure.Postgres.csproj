@@ -10,4 +10,8 @@
       <ProjectReference Include="..\Interfold.Infrastructure\Interfold.Infrastructure.csproj" />
     </ItemGroup>
 
+    <ItemGroup>
+      <EmbeddedResource Include="Migrations\*.sql" />
+    </ItemGroup>
+
 </Project>

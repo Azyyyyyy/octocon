@@ -32,6 +32,7 @@ public static class PostgresServiceCollectionExtensions
         return services
             .AddSingleton<IPostgresConnectionFactory, PostgresConnectionFactory>()
             .AddSingleton<IIdempotencyStore, PostgresIdempotencyStore>()
-            .AddSingleton<IAuthTokenRevocationRepository, AuthTokenRevocationRepository>();
+            .AddSingleton<IAuthTokenRevocationRepository, AuthTokenRevocationRepository>()
+            .AddHostedService<PostgresMigrationService>();
     }
 }
