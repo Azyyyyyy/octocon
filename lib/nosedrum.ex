@@ -1,2 +1,0 @@
-defmodule Nosedrum do
-end

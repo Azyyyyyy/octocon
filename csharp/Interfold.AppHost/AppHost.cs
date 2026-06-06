@@ -112,7 +112,7 @@ var msgDb = builder.AddContainer("msg-db", "timescale/timescaledb", "latest-pg16
 
 // --- PostgreSQL Auth Bootstrap (creates app user, admin account, scrambles init) ---
 var pgBootstrapAuth = builder.AddContainer("pg-bootstrap-auth", "timescale/timescaledb", "latest-pg16")
-    .WithBindMount("../../dev/scylla/scripts/postgres-bootstrap-auth.sh", "/scripts/postgres-bootstrap-auth.sh", isReadOnly: true)
+    .WithBindMount("../../scripts/scylla/scripts/postgres-bootstrap-auth.sh", "/scripts/postgres-bootstrap-auth.sh", isReadOnly: true)
     .WithVolume("pg_recovery", "/recovery")
     .WithEnvironment("PG_INIT_PASSWORD", postgresPassword)
     .WithEnvironment("PGUSER", postgresUser)
@@ -129,9 +129,9 @@ var pgBootstrapAuth = builder.AddContainer("pg-bootstrap-auth", "timescale/times
 
 // --- PostgreSQL Schema Initialization ---
 var msgDbLoadSchema = builder.AddContainer("msg-db-load-schema", "timescale/timescaledb", "latest-pg16")
-    .WithBindMount("../../csharp/db/postgres/001_create_octocon_idempotency.sql", "/schemas/001_create_octocon_idempotency.sql", isReadOnly: true)
-    .WithBindMount("../../csharp/db/postgres/002_create_auth_tokens.sql", "/schemas/002_create_auth_tokens.sql", isReadOnly: true)
-    .WithBindMount("../../dev/scylla/scripts/postgres-load-schema.sh", "/scripts/postgres-load-schema.sh", isReadOnly: true)
+    .WithBindMount("../../db/postgres/001_create_octocon_idempotency.sql", "/schemas/001_create_octocon_idempotency.sql", isReadOnly: true)
+    .WithBindMount("../../db/postgres/002_create_auth_tokens.sql", "/schemas/002_create_auth_tokens.sql", isReadOnly: true)
+    .WithBindMount("../../scripts/scylla/scripts/postgres-load-schema.sh", "/scripts/postgres-load-schema.sh", isReadOnly: true)
     .WithEnvironment("PGPASSWORD", postgresPassword)
     .WithEnvironment("PGUSER", postgresUser)
     .WithEntrypoint("/bin/bash")
@@ -177,8 +177,8 @@ if (mode == "cassandra")
         .WithEnvironment("HEAP_NEWSIZE", "256M")
         .WithEnvironment("CQLSH_USER", scyllaUser)
         .WithEnvironment("CQLSH_PASSWORD", scyllaPassword)
-        .WithBindMount("../../dev/cassandra/enable-mv.sh", "/enable-mv.sh", isReadOnly: true)
-        .WithBindMount("../../dev/scylla/cassandra-rackdc.nam.properties", "/etc/cassandra/cassandra-rackdc.properties", isReadOnly: true)
+        .WithBindMount("../../scripts/cassandra/enable-mv.sh", "/enable-mv.sh", isReadOnly: true)
+        .WithBindMount("../../scripts/scylla/cassandra-rackdc.nam.properties", "/etc/cassandra/cassandra-rackdc.properties", isReadOnly: true)
         .WithVolume("cassandra_data", "/var/lib/cassandra")
         .WithEndpoint(port: scyllaPort, targetPort: 9042, name: "cql", scheme: "tcp")
         .WithHealthCheck("scylla-health")
@@ -225,7 +225,7 @@ else
                 "--developer-mode", "1", "--authenticator", "PasswordAuthenticator",
                 "--endpoint-snitch", "GossipingPropertyFileSnitch",
                 "--api-address", "0.0.0.0", "--broadcast-address", name)
-            .WithBindMount($"../../dev/scylla/cassandra-rackdc.{region}.properties", "/etc/scylla/cassandra-rackdc.properties", isReadOnly: true)
+            .WithBindMount($"../../scripts/scylla/cassandra-rackdc.{region}.properties", "/etc/scylla/cassandra-rackdc.properties", isReadOnly: true)
             .WithVolume(regions.Length > 1 ? $"scylla_{region}_data" : "scylla_data", "/var/lib/scylla")
             .WithLifetime(ContainerLifetime.Persistent)
             .WithEnvironment("CQLSH_USER", scyllaUser)
@@ -267,7 +267,7 @@ else
 
 // --- CQL Auth Bootstrap (creates custom superuser, locks default cassandra account) ---
 var scyllaBootstrapAuth = builder.AddContainer("scylla-bootstrap-auth", loadKeysImage, loadKeysTag)
-    .WithBindMount("../../dev/scylla/scripts/scylla-bootstrap-auth.sh", "/scripts/scylla-bootstrap-auth.sh", isReadOnly: true)
+    .WithBindMount("../../scripts/scylla/scripts/scylla-bootstrap-auth.sh", "/scripts/scylla-bootstrap-auth.sh", isReadOnly: true)
     .WithVolume("scylla_recovery", "/recovery")
     .WithEnvironment("SCYLLA_USER", scyllaUser)
     .WithEnvironment("SCYLLA_PASSWORD", scyllaPassword)
@@ -286,9 +286,9 @@ var scyllaBootstrapAuth = builder.AddContainer("scylla-bootstrap-auth", loadKeys
 
 // --- CQL Schema Loading (shared across all DB modes) ---
 var scyllaLoadKeyspaces = builder.AddContainer(loadKeysName, loadKeysImage, loadKeysTag)
-    .WithBindMount("../../csharp/db/scylla/001_create_octocon_keyspaces.cql", "/init.cql", isReadOnly: true)
-    .WithBindMount("../../csharp/db/scylla/001_create_octocon_schema.templated.cql", "/schema.cql", isReadOnly: true)
-    .WithBindMount("../../dev/scylla/scripts/scylla-load-keyspaces.sh", "/scripts/scylla-load-keyspaces.sh", isReadOnly: true)
+    .WithBindMount("../../db/scylla/001_create_octocon_keyspaces.cql", "/init.cql", isReadOnly: true)
+    .WithBindMount("../../db/scylla/001_create_octocon_schema.templated.cql", "/schema.cql", isReadOnly: true)
+    .WithBindMount("../../scripts/scylla/scripts/scylla-load-keyspaces.sh", "/scripts/scylla-load-keyspaces.sh", isReadOnly: true)
     .WithEnvironment("SCYLLA_USER", scyllaUser)
     .WithEnvironment("SCYLLA_PASSWORD", scyllaPassword)
     .WithEntrypoint("/bin/bash")
@@ -309,7 +309,7 @@ var scyllaLoadKeyspaces = builder.AddContainer(loadKeysName, loadKeysImage, load
 
 // --- CQL Auth Finalization (demotes app user to non-superuser after schema is loaded) ---
 var scyllaFinalizeAuth = builder.AddContainer("scylla-finalize-auth", loadKeysImage, loadKeysTag)
-    .WithBindMount("../../dev/scylla/scripts/scylla-finalize-auth.sh", "/scripts/scylla-finalize-auth.sh", isReadOnly: true)
+    .WithBindMount("../../scripts/scylla/scripts/scylla-finalize-auth.sh", "/scripts/scylla-finalize-auth.sh", isReadOnly: true)
     .WithVolume("scylla_recovery", "/recovery")
     .WithEnvironment("SCYLLA_USER", scyllaUser)
     .WithEnvironment("SCYLLA_PASSWORD", scyllaPassword)
