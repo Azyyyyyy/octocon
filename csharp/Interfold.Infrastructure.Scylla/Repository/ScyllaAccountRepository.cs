@@ -40,13 +40,41 @@ public sealed class ScyllaAccountRepository : IAccountRepository
             var normalizedSystemId = _keyspaceResolver.NormalizeSystemId(systemId);
             var keyspace = _keyspaceResolver.ResolveRegionalKeyspace(systemId);
 
-            var statement = new SimpleStatement(
-                $"UPDATE {keyspace}.users SET username = ?, updated_at = toTimestamp(now()) WHERE id = ?",
-                username,
-                normalizedSystemId
-            );
+            // Read old username to maintain lookup table
+            var oldRow = (await session.ExecuteAsync(new SimpleStatement(
+                $"SELECT username FROM {keyspace}.users WHERE id = ? LIMIT 1",
+                normalizedSystemId))).FirstOrDefault();
+            var oldUsername = oldRow?.GetValue<string?>("username");
 
-            await session.ExecuteAsync(statement);
+            var batch = new BatchStatement();
+            batch.Add(new SimpleStatement(
+                $"UPDATE {keyspace}.users SET username = ?, updated_at = toTimestamp(now()) WHERE id = ?",
+                username, normalizedSystemId));
+            batch.Add(new SimpleStatement(
+                $"UPDATE global.user_registry SET username = ?, updated_at = toTimestamp(now()) WHERE user_id = ?",
+                username, normalizedSystemId));
+
+            // Remove old lookup entry
+            if (!string.IsNullOrWhiteSpace(oldUsername))
+            {
+                batch.Add(new SimpleStatement(
+                    $"DELETE FROM {keyspace}.users_by_username WHERE username = ?", oldUsername));
+                batch.Add(new SimpleStatement(
+                    "DELETE FROM global.user_registry_by_username WHERE username = ?", oldUsername));
+            }
+
+            // Insert new lookup entry
+            if (!string.IsNullOrWhiteSpace(username))
+            {
+                batch.Add(new SimpleStatement(
+                    $"INSERT INTO {keyspace}.users_by_username (username, user_id) VALUES (?, ?)",
+                    username, normalizedSystemId));
+                batch.Add(new SimpleStatement(
+                    "INSERT INTO global.user_registry_by_username (username, user_id, region) VALUES (?, ?, ?)",
+                    username, normalizedSystemId, keyspace));
+            }
+
+            await session.ExecuteAsync(batch);
             return true;
         }, _options, cancellationToken);
     }
@@ -246,9 +274,9 @@ public sealed class ScyllaAccountRepository : IAccountRepository
             var normalizedSystemId = _keyspaceResolver.NormalizeSystemId(systemId);
             var keyspace = _keyspaceResolver.ResolveRegionalKeyspace(systemId);
 
-            // Checks that the user exists
+            // Fetch identity fields to clean up lookup tables
             var userRow = (await session.ExecuteAsync(new SimpleStatement(
-                $"SELECT id FROM {keyspace}.users WHERE id = ? LIMIT 1",
+                $"SELECT id, discord_id, email, username, apple_id, google_id FROM {keyspace}.users WHERE id = ? LIMIT 1",
                 normalizedSystemId))).FirstOrDefault();
 
             if (userRow is null)
@@ -259,6 +287,18 @@ public sealed class ScyllaAccountRepository : IAccountRepository
             var deleteBatch = new BatchStatement();
             deleteBatch.Add(new SimpleStatement($"DELETE FROM {keyspace}.users WHERE id = ?", normalizedSystemId));
             deleteBatch.Add(new SimpleStatement("DELETE FROM global.user_registry WHERE user_id = ?", normalizedSystemId));
+
+            // Clean up denormalized identity lookup tables
+            var identityColumns = new[] { "discord_id", "email", "username", "apple_id", "google_id" };
+            foreach (var col in identityColumns)
+            {
+                var value = userRow.GetValue<string?>(col);
+                if (!string.IsNullOrWhiteSpace(value))
+                {
+                    deleteBatch.Add(new SimpleStatement($"DELETE FROM {keyspace}.users_by_{col} WHERE {col} = ?", value));
+                    deleteBatch.Add(new SimpleStatement($"DELETE FROM global.user_registry_by_{col} WHERE {col} = ?", value));
+                }
+            }
 
             await session.ExecuteAsync(deleteBatch);
 
@@ -307,7 +347,7 @@ public sealed class ScyllaAccountRepository : IAccountRepository
 
             var session = await _sessionProvider.GetSessionAsync(cancellationToken);
             var query = new SimpleStatement(
-                $"SELECT user_id, region FROM global.user_registry WHERE {columnName} = ? LIMIT 1",
+                $"SELECT user_id, region FROM global.user_registry_by_{columnName} WHERE {columnName} = ? LIMIT 1",
                 value
             );
 
@@ -358,6 +398,18 @@ public sealed class ScyllaAccountRepository : IAccountRepository
                     $"INSERT INTO global.user_registry (user_id, {columnName}, region, inserted_at, updated_at) VALUES (?, ?, ?, toTimestamp(now()), toTimestamp(now()))",
                     newUserId,
                     value,
+                    newRegion
+                ))
+                // Maintain denormalized lookup tables
+                .Add(new SimpleStatement(
+                    $"INSERT INTO {keyspace}.users_by_{columnName} ({columnName}, user_id) VALUES (?, ?)",
+                    value,
+                    newUserId
+                ))
+                .Add(new SimpleStatement(
+                    $"INSERT INTO global.user_registry_by_{columnName} ({columnName}, user_id, region) VALUES (?, ?, ?)",
+                    value,
+                    newUserId,
                     newRegion
                 ));
 
@@ -431,6 +483,16 @@ public sealed class ScyllaAccountRepository : IAccountRepository
                 $"UPDATE global.user_registry SET {columnName} = ?, updated_at = toTimestamp(now()) WHERE user_id = ?",
                 value,
                 normalizedSystemId));
+            // Maintain denormalized lookup tables
+            linkBatch.Add(new SimpleStatement(
+                $"INSERT INTO {keyspace}.users_by_{columnName} ({columnName}, user_id) VALUES (?, ?)",
+                value,
+                normalizedSystemId));
+            linkBatch.Add(new SimpleStatement(
+                $"INSERT INTO global.user_registry_by_{columnName} ({columnName}, user_id, region) VALUES (?, ?, ?)",
+                value,
+                normalizedSystemId,
+                keyspace));
             await session.ExecuteAsync(linkBatch);
 
             return AccountLinkResult.Success;
@@ -445,6 +507,12 @@ public sealed class ScyllaAccountRepository : IAccountRepository
             var normalizedSystemId = _keyspaceResolver.NormalizeSystemId(systemId);
             var keyspace = _keyspaceResolver.ResolveRegionalKeyspace(systemId);
 
+            // Read old value to delete from lookup tables
+            var oldRow = (await session.ExecuteAsync(new SimpleStatement(
+                $"SELECT {columnName} FROM {keyspace}.users WHERE id = ? LIMIT 1",
+                normalizedSystemId))).FirstOrDefault();
+            var oldValue = oldRow?.GetValue<string?>(columnName);
+
             var unlinkBatch = new BatchStatement();
             unlinkBatch.Add(new SimpleStatement(
                 $"UPDATE {keyspace}.users SET {columnName} = ?, updated_at = toTimestamp(now()) WHERE id = ?",
@@ -454,6 +522,17 @@ public sealed class ScyllaAccountRepository : IAccountRepository
                 $"UPDATE global.user_registry SET {columnName} = ?, updated_at = toTimestamp(now()) WHERE user_id = ?",
                 null,
                 normalizedSystemId));
+
+            // Remove from denormalized lookup tables if old value existed
+            if (!string.IsNullOrWhiteSpace(oldValue))
+            {
+                unlinkBatch.Add(new SimpleStatement(
+                    $"DELETE FROM {keyspace}.users_by_{columnName} WHERE {columnName} = ?",
+                    oldValue));
+                unlinkBatch.Add(new SimpleStatement(
+                    $"DELETE FROM global.user_registry_by_{columnName} WHERE {columnName} = ?",
+                    oldValue));
+            }
 
             await session.ExecuteAsync(unlinkBatch);
             return true;

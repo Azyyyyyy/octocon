@@ -209,6 +209,19 @@ public sealed class ScyllaTagRepository : ITagRepository
                 normalizedSystemId,
                 tagGuid
             ));
+
+            // Clean up alter_tags_by_alter: find all alters with this tag and remove reverse entries
+            var tagAlters = await session.ExecuteAsync(new SimpleStatement(
+                $"SELECT alter_id FROM {keyspace}.alter_tags WHERE user_id = ? AND tag_id = ?",
+                normalizedSystemId, tagGuid));
+            foreach (var tagAlterRow in tagAlters)
+            {
+                var aid = tagAlterRow.GetValue<short>("alter_id");
+                deleteBatch.Add(new SimpleStatement(
+                    $"DELETE FROM {keyspace}.alter_tags_by_alter WHERE user_id = ? AND alter_id = ? AND tag_id = ?",
+                    normalizedSystemId, aid, tagGuid));
+            }
+
             await session.ExecuteAsync(deleteBatch);
 
             return true;
@@ -239,12 +252,19 @@ public sealed class ScyllaTagRepository : ITagRepository
                 return false;
             }
 
-            var insert = new SimpleStatement(
+            var insert = new BatchStatement();
+            insert.Add(new SimpleStatement(
                 $"INSERT INTO {keyspace}.alter_tags (user_id, tag_id, alter_id, inserted_at, updated_at) VALUES (?, ?, ?, toTimestamp(now()), toTimestamp(now()))",
                 normalizedSystemId,
                 tagGuid,
                 (short)alterId
-            );
+            ));
+            insert.Add(new SimpleStatement(
+                $"INSERT INTO {keyspace}.alter_tags_by_alter (user_id, alter_id, tag_id, inserted_at, updated_at) VALUES (?, ?, ?, toTimestamp(now()), toTimestamp(now()))",
+                normalizedSystemId,
+                (short)alterId,
+                tagGuid
+            ));
             await session.ExecuteAsync(insert);
 
             return true;
@@ -282,12 +302,19 @@ public sealed class ScyllaTagRepository : ITagRepository
                 return false;
             }
 
-            var delete = new SimpleStatement(
+            var delete = new BatchStatement();
+            delete.Add(new SimpleStatement(
                 $"DELETE FROM {keyspace}.alter_tags WHERE user_id = ? AND tag_id = ? AND alter_id = ?",
                 normalizedSystemId,
                 tagGuid,
                 (short)alterId
-            );
+            ));
+            delete.Add(new SimpleStatement(
+                $"DELETE FROM {keyspace}.alter_tags_by_alter WHERE user_id = ? AND alter_id = ? AND tag_id = ?",
+                normalizedSystemId,
+                (short)alterId,
+                tagGuid
+            ));
             await session.ExecuteAsync(delete);
 
             return true;

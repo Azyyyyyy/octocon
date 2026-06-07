@@ -315,7 +315,24 @@ public sealed class ScyllaJournalRepository : IJournalRepository
                 timestamp
             );
 
-            await session.ExecuteAsync(insert);
+            var insertLookup = new SimpleStatement(
+                $"INSERT INTO {keyspace}.alter_journals_by_alter (user_id, alter_id, id, title, content, color, pinned, locked, inserted_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                normalizedSystemId,
+                (short)command.AlterId,
+                entryId,
+                command.Title,
+                null,
+                null,
+                false,
+                false,
+                timestamp,
+                timestamp
+            );
+
+            var batch = new BatchStatement();
+            batch.Add(insert);
+            batch.Add(insertLookup);
+            await session.ExecuteAsync(batch);
             return entryId.ToString("N");
         }, _options, cancellationToken);
     }
@@ -366,41 +383,32 @@ public sealed class ScyllaJournalRepository : IJournalRepository
 
             if (command.Title is not null)
             {
-                var q = new SimpleStatement(
+                updateBatch.Add(new SimpleStatement(
                     $"UPDATE {keyspace}.alter_journals SET title = ?, updated_at = ? WHERE user_id = ? AND id = ? AND alter_id = ?",
-                    command.Title,
-                    timestamp,
-                    normalizedSystemId,
-                    entryGuid,
-                    (short)reference.AlterId
-                );
-                updateBatch.Add(q);
+                    command.Title, timestamp, normalizedSystemId, entryGuid, (short)reference.AlterId));
+                updateBatch.Add(new SimpleStatement(
+                    $"UPDATE {keyspace}.alter_journals_by_alter SET title = ?, updated_at = ? WHERE user_id = ? AND alter_id = ? AND id = ?",
+                    command.Title, timestamp, normalizedSystemId, (short)reference.AlterId, entryGuid));
             }
 
             if (command.Content is not null)
             {
-                var q = new SimpleStatement(
+                updateBatch.Add(new SimpleStatement(
                     $"UPDATE {keyspace}.alter_journals SET content = ?, updated_at = ? WHERE user_id = ? AND id = ? AND alter_id = ?",
-                    command.Content,
-                    timestamp,
-                    normalizedSystemId,
-                    entryGuid,
-                    (short)reference.AlterId
-                );
-                updateBatch.Add(q);
+                    command.Content, timestamp, normalizedSystemId, entryGuid, (short)reference.AlterId));
+                updateBatch.Add(new SimpleStatement(
+                    $"UPDATE {keyspace}.alter_journals_by_alter SET content = ?, updated_at = ? WHERE user_id = ? AND alter_id = ? AND id = ?",
+                    command.Content, timestamp, normalizedSystemId, (short)reference.AlterId, entryGuid));
             }
 
             if (command.Color is not null)
             {
-                var q = new SimpleStatement(
+                updateBatch.Add(new SimpleStatement(
                     $"UPDATE {keyspace}.alter_journals SET color = ?, updated_at = ? WHERE user_id = ? AND id = ? AND alter_id = ?",
-                    command.Color,
-                    timestamp,
-                    normalizedSystemId,
-                    entryGuid,
-                    (short)reference.AlterId
-                );
-                updateBatch.Add(q);
+                    command.Color, timestamp, normalizedSystemId, entryGuid, (short)reference.AlterId));
+                updateBatch.Add(new SimpleStatement(
+                    $"UPDATE {keyspace}.alter_journals_by_alter SET color = ?, updated_at = ? WHERE user_id = ? AND alter_id = ? AND id = ?",
+                    command.Color, timestamp, normalizedSystemId, (short)reference.AlterId, entryGuid));
             }
 
             if (!updateBatch.IsEmpty)
@@ -426,12 +434,19 @@ public sealed class ScyllaJournalRepository : IJournalRepository
             var normalizedSystemId = _keyspaceResolver.NormalizeSystemId(systemId);
             var keyspace = _keyspaceResolver.ResolveRegionalKeyspace(systemId);
 
-            var delete = new SimpleStatement(
+            var delete = new BatchStatement();
+            delete.Add(new SimpleStatement(
                 $"DELETE FROM {keyspace}.alter_journals WHERE user_id = ? AND id = ? AND alter_id = ?",
                 normalizedSystemId,
                 entryGuid,
                 (short)reference.AlterId
-            );
+            ));
+            delete.Add(new SimpleStatement(
+                $"DELETE FROM {keyspace}.alter_journals_by_alter WHERE user_id = ? AND alter_id = ? AND id = ?",
+                normalizedSystemId,
+                (short)reference.AlterId,
+                entryGuid
+            ));
             await session.ExecuteAsync(delete);
 
             return true;
@@ -452,14 +467,14 @@ public sealed class ScyllaJournalRepository : IJournalRepository
             var normalizedSystemId = _keyspaceResolver.NormalizeSystemId(systemId);
             var keyspace = _keyspaceResolver.ResolveRegionalKeyspace(systemId);
 
-            var q = new SimpleStatement(
+            var batch = new BatchStatement();
+            batch.Add(new SimpleStatement(
                 $"UPDATE {keyspace}.alter_journals SET locked = ?, updated_at = toTimestamp(now()) WHERE user_id = ? AND id = ? AND alter_id = ?",
-                locked,
-                normalizedSystemId,
-                entryGuid,
-                (short)reference.AlterId
-            );
-            await session.ExecuteAsync(q);
+                locked, normalizedSystemId, entryGuid, (short)reference.AlterId));
+            batch.Add(new SimpleStatement(
+                $"UPDATE {keyspace}.alter_journals_by_alter SET locked = ?, updated_at = toTimestamp(now()) WHERE user_id = ? AND alter_id = ? AND id = ?",
+                locked, normalizedSystemId, (short)reference.AlterId, entryGuid));
+            await session.ExecuteAsync(batch);
 
             return true;
         }, _options, cancellationToken);
@@ -479,14 +494,14 @@ public sealed class ScyllaJournalRepository : IJournalRepository
             var normalizedSystemId = _keyspaceResolver.NormalizeSystemId(systemId);
             var keyspace = _keyspaceResolver.ResolveRegionalKeyspace(systemId);
 
-            var q = new SimpleStatement(
+            var batch = new BatchStatement();
+            batch.Add(new SimpleStatement(
                 $"UPDATE {keyspace}.alter_journals SET pinned = ?, updated_at = toTimestamp(now()) WHERE user_id = ? AND id = ? AND alter_id = ?",
-                pinned,
-                normalizedSystemId,
-                entryGuid,
-                (short)reference.AlterId
-            );
-            await session.ExecuteAsync(q);
+                pinned, normalizedSystemId, entryGuid, (short)reference.AlterId));
+            batch.Add(new SimpleStatement(
+                $"UPDATE {keyspace}.alter_journals_by_alter SET pinned = ?, updated_at = toTimestamp(now()) WHERE user_id = ? AND alter_id = ? AND id = ?",
+                pinned, normalizedSystemId, (short)reference.AlterId, entryGuid));
+            await session.ExecuteAsync(batch);
 
             return true;
         }, _options, cancellationToken);
@@ -501,7 +516,7 @@ public sealed class ScyllaJournalRepository : IJournalRepository
             var keyspace = _keyspaceResolver.ResolveRegionalKeyspace(systemId);
 
             var query = new SimpleStatement(
-                $"SELECT id, user_id, alter_id, title, content, color, pinned, locked, inserted_at, updated_at FROM {keyspace}.alter_journals WHERE user_id = ? AND alter_id = ? ALLOW FILTERING",
+                $"SELECT id, user_id, alter_id, title, content, color, pinned, locked, inserted_at, updated_at FROM {keyspace}.alter_journals_by_alter WHERE user_id = ? AND alter_id = ?",
                 normalizedSystemId,
                 (short)alterId
             );

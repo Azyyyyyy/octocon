@@ -163,11 +163,13 @@ public sealed partial class ScyllaMigrationService(
         foreach (var keyspace in keyspaces)
         {
             var regionalRepl = RegionalReplicationFor(keyspace, dcs);
+            var tabletsEnabled = IsMultiDc(dcs) ? "true" : "false";
             var rendered = cqlTemplate
                 .Replace("{{KEYSPACE}}", keyspace)
                 .Replace("{{KEYSPACE_REPLICATION}}", regionalRepl)
                 .Replace("{{GLOBAL_REPLICATION}}", globalRepl)
-                .Replace("{{NAM_NT_REPLICATION}}", namNtRepl);
+                .Replace("{{NAM_NT_REPLICATION}}", namNtRepl)
+                .Replace("{{TABLETS_ENABLED}}", tabletsEnabled);
 
             logger.LogInformation("[scylla-migrate] Creating keyspaces for region '{Region}' (replication={Repl})...",
                 keyspace, regionalRepl);

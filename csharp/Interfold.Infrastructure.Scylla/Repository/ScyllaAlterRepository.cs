@@ -158,10 +158,41 @@ public sealed class ScyllaAlterRepository : IAlterRepository
             }
 
             UpdateIfNotNull(batch, keyspace, command, "proxy_name", command.ProxyName, normalizedSystemId, updatedAt);
-            UpdateIfNotNull(batch, keyspace, command, "alias", command.Alias, normalizedSystemId, updatedAt);
             UpdateIfNotNull(batch, keyspace, command, "untracked", command.Untracked, normalizedSystemId, updatedAt);
             UpdateIfNotNull(batch, keyspace, command, "archived", command.Archived, normalizedSystemId, updatedAt);
             UpdateIfNotNull(batch, keyspace, command, "pinned", command.Pinned, normalizedSystemId, updatedAt);
+
+            // Handle alias changes with lookup table maintenance
+            if (command.Alias is not null)
+            {
+                // Read old alias to remove from lookup table
+                var oldAliasRow = (await session.ExecuteAsync(new SimpleStatement(
+                    $"SELECT alias FROM {keyspace}.alters WHERE user_id = ? AND id = ? LIMIT 1",
+                    normalizedSystemId, (short)command.AlterId))).FirstOrDefault();
+                var oldAlias = oldAliasRow?.GetValue<string?>("alias");
+
+                // Update the base table
+                batch.Add(new SimpleStatement(
+                    $"UPDATE {keyspace}.alters SET alias = ?, updated_at = ? WHERE user_id = ? AND id = ?",
+                    command.Alias, updatedAt, normalizedSystemId, (short)command.AlterId));
+
+                // Remove old lookup entry
+                if (!string.IsNullOrWhiteSpace(oldAlias))
+                {
+                    batch.Add(new SimpleStatement(
+                        $"DELETE FROM {keyspace}.alters_by_alias WHERE user_id = ? AND alias = ?",
+                        normalizedSystemId, oldAlias));
+                }
+
+                // Insert new lookup entry (if not clearing alias)
+                var newAlias = command.Alias as string;
+                if (!string.IsNullOrWhiteSpace(newAlias))
+                {
+                    batch.Add(new SimpleStatement(
+                        $"INSERT INTO {keyspace}.alters_by_alias (user_id, alias, alter_id) VALUES (?, ?, ?)",
+                        normalizedSystemId, newAlias, (short)command.AlterId));
+                }
+            }
 
             await session.ExecuteAsync(batch);
 
@@ -216,7 +247,7 @@ public sealed class ScyllaAlterRepository : IAlterRepository
                 alterIdShort));
 
             var journalEntriesTask = session.ExecuteAsync(new SimpleStatement(
-                $"SELECT id FROM {keyspace}.alter_journals WHERE user_id = ? AND alter_id = ? ALLOW FILTERING",
+                $"SELECT id FROM {keyspace}.alter_journals_by_alter WHERE user_id = ? AND alter_id = ?",
                 normalizedSystemId,
                 alterIdShort));
 
@@ -225,12 +256,17 @@ public sealed class ScyllaAlterRepository : IAlterRepository
                 normalizedSystemId));
 
             var tagsTask = session.ExecuteAsync(new SimpleStatement(
-                $"SELECT tag_id FROM {keyspace}.alter_tags WHERE user_id = ? AND alter_id = ? ALLOW FILTERING",
+                $"SELECT tag_id FROM {keyspace}.alter_tags_by_alter WHERE user_id = ? AND alter_id = ?",
                 normalizedSystemId,
                 alterIdShort));
 
             var globalJournalAltersTask = session.ExecuteAsync(new SimpleStatement(
                 $"SELECT global_journal_id FROM {keyspace}.global_journal_alters WHERE user_id = ? AND alter_id = ? ALLOW FILTERING",
+                normalizedSystemId,
+                alterIdShort));
+
+            var aliasTask = session.ExecuteAsync(new SimpleStatement(
+                $"SELECT alias FROM {keyspace}.alters WHERE user_id = ? AND id = ? LIMIT 1",
                 normalizedSystemId,
                 alterIdShort));
 
@@ -242,7 +278,8 @@ public sealed class ScyllaAlterRepository : IAlterRepository
                 primaryTask,
                 tagsTask,
                 globalJournalAltersTask,
-                removePollsTask
+                removePollsTask,
+                aliasTask
             );
 
             var frontRows = await frontsTask;
@@ -250,33 +287,48 @@ public sealed class ScyllaAlterRepository : IAlterRepository
             var primaryFrontRow = (await primaryTask).FirstOrDefault();
             var membershipRows = await tagsTask;
             var globalJournalAlterRows = await globalJournalAltersTask;
+            var aliasRow = (await aliasTask).FirstOrDefault();
+            var alias = aliasRow?.GetValue<string?>("alias");
 
-            // Batch all front deletes
+            // Batch all front deletes (base table + denormalized fronts_by_alter)
             if (frontRows.Any())
             {
                 var frontBatch = new BatchStatement();
                 foreach (var frontRow in frontRows)
                 {
+                    var frontId = frontRow.GetValue<Guid>("id");
+                    var timeStart = frontRow.GetValue<DateTimeOffset>("time_start");
                     frontBatch.Add(new SimpleStatement(
                         $"DELETE FROM {keyspace}.fronts WHERE user_id = ? AND id = ? AND time_start = ?",
-                        normalizedSystemId,
-                        frontRow.GetValue<Guid>("id"),
-                        frontRow.GetValue<DateTimeOffset>("time_start")));
+                        normalizedSystemId, frontId, timeStart));
+                    frontBatch.Add(new SimpleStatement(
+                        $"DELETE FROM {keyspace}.fronts_by_alter WHERE user_id = ? AND alter_id = ? AND id = ? AND time_start = ?",
+                        normalizedSystemId, alterIdShort, frontId, timeStart));
+                    // fronts_by_time and fronts_by_end_time entries are only present for closed fronts;
+                    // delete unconditionally (no-op if not present)
+                    frontBatch.Add(new SimpleStatement(
+                        $"DELETE FROM {keyspace}.fronts_by_time WHERE user_id = ? AND time_start = ? AND time_end = ? AND id = ?",
+                        normalizedSystemId, timeStart, DateTimeOffset.MaxValue, frontId));
+                    frontBatch.Add(new SimpleStatement(
+                        $"DELETE FROM {keyspace}.fronts_by_end_time WHERE user_id = ? AND time_end = ? AND time_start = ? AND id = ?",
+                        normalizedSystemId, DateTimeOffset.MaxValue, timeStart, frontId));
                 }
                 await session.ExecuteAsync(frontBatch);
             }
 
-            // Batch all journal entry deletes
+            // Batch all journal entry deletes (base table + denormalized)
             if (journalEntryRows.Any())
             {
                 var journalBatch = new BatchStatement();
                 foreach (var row in journalEntryRows)
                 {
+                    var journalId = row.GetValue<Guid>("id");
                     journalBatch.Add(new SimpleStatement(
                         $"DELETE FROM {keyspace}.alter_journals WHERE user_id = ? AND id = ? AND alter_id = ?",
-                        normalizedSystemId,
-                        row.GetValue<Guid>("id"),
-                        alterIdShort));
+                        normalizedSystemId, journalId, alterIdShort));
+                    journalBatch.Add(new SimpleStatement(
+                        $"DELETE FROM {keyspace}.alter_journals_by_alter WHERE user_id = ? AND alter_id = ? AND id = ?",
+                        normalizedSystemId, alterIdShort, journalId));
                 }
                 await session.ExecuteAsync(journalBatch);
             }
@@ -289,7 +341,7 @@ public sealed class ScyllaAlterRepository : IAlterRepository
                     normalizedSystemId));
             }
 
-            // Batch all tag deletes
+            // Batch all tag deletes (base table + denormalized)
             if (membershipRows.Any())
             {
                 var tagBatch = new BatchStatement();
@@ -298,10 +350,12 @@ public sealed class ScyllaAlterRepository : IAlterRepository
                     var tagId = row.GetValue<Guid>("tag_id");
                     tagBatch.Add(new SimpleStatement(
                         $"DELETE FROM {keyspace}.alter_tags WHERE user_id = ? AND tag_id = ? AND alter_id = ?",
-                        normalizedSystemId,
-                        tagId,
-                        alterIdShort));
+                        normalizedSystemId, tagId, alterIdShort));
                 }
+                // Delete all entries in alter_tags_by_alter for this alter (single partition delete)
+                tagBatch.Add(new SimpleStatement(
+                    $"DELETE FROM {keyspace}.alter_tags_by_alter WHERE user_id = ? AND alter_id = ?",
+                    normalizedSystemId, alterIdShort));
                 await session.ExecuteAsync(tagBatch);
             }
 
@@ -318,6 +372,14 @@ public sealed class ScyllaAlterRepository : IAlterRepository
                         alterIdShort));
                 }
                 await session.ExecuteAsync(gjaBatch);
+            }
+
+            // Clean up alters_by_alias if alter had an alias
+            if (!string.IsNullOrWhiteSpace(alias))
+            {
+                await session.ExecuteAsync(new SimpleStatement(
+                    $"DELETE FROM {keyspace}.alters_by_alias WHERE user_id = ? AND alias = ?",
+                    normalizedSystemId, alias));
             }
 
             return true;

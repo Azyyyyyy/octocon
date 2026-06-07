@@ -29,12 +29,16 @@ public sealed class ScyllaNotificationTokenRepository : INotificationTokenReposi
             var now = DateTimeOffset.UtcNow;
             var normalizedSystemId = _keyspaceResolver.NormalizeSystemId(systemId);
 
-            var write = await session.PrepareAsync(@"
-                INSERT INTO global.notification_tokens (user_id, push_token, inserted_at, updated_at)
-                VALUES (?, ?, ?, ?)");
+            var batch = new BatchStatement();
+            batch.Add(new SimpleStatement(
+                "INSERT INTO global.notification_tokens (user_id, push_token, inserted_at, updated_at) VALUES (?, ?, ?, ?)",
+                normalizedSystemId, token, now.UtcDateTime, now.UtcDateTime));
+            batch.Add(new SimpleStatement(
+                "INSERT INTO global.notification_tokens_by_push_token (push_token, user_id) VALUES (?, ?)",
+                token, normalizedSystemId));
 
-            var addtion = await session.ExecuteAsync(write.Bind(normalizedSystemId, token, now.UtcDateTime, now.UtcDateTime));
-            return addtion is not null;
+            await session.ExecuteAsync(batch);
+            return true;
         }, _options, cancellationToken);
     }
 
@@ -45,20 +49,21 @@ public sealed class ScyllaNotificationTokenRepository : INotificationTokenReposi
             var session = await _sessionProvider.GetSessionAsync(cancellationToken);
 
             var findByToken = await session.PrepareAsync(@"
-                SELECT user_id, push_token FROM global.notification_tokens
+                SELECT user_id FROM global.notification_tokens_by_push_token
                 WHERE push_token = ?");
 
             var rows = await session.ExecuteAsync(findByToken.Bind(token));
             
-            // Batch all deletes instead of executing individually, 
-            // in case multiple entries exist with the same token (shouldn't happen, but just in case)
             var deleteBatch = new BatchStatement();
             foreach (var row in rows)
             {
+                var userId = row.GetValue<string>("user_id");
                 deleteBatch.Add(new SimpleStatement(
                     "DELETE FROM global.notification_tokens WHERE user_id = ? AND push_token = ?",
-                    row.GetValue<string>("user_id"),
-                    row.GetValue<string>("push_token")));
+                    userId, token));
+                deleteBatch.Add(new SimpleStatement(
+                    "DELETE FROM global.notification_tokens_by_push_token WHERE push_token = ? AND user_id = ?",
+                    token, userId));
             }
 
             if (!deleteBatch.IsEmpty)

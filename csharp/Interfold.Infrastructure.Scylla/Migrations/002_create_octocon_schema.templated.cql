@@ -70,11 +70,33 @@ CREATE TABLE IF NOT EXISTS {{KEYSPACE}}.users (
     PRIMARY KEY (id)
 );
 
-CREATE INDEX IF NOT EXISTS users_by_discord_id ON {{KEYSPACE}}.users (discord_id);
-CREATE INDEX IF NOT EXISTS users_by_email ON {{KEYSPACE}}.users (email);
-CREATE INDEX IF NOT EXISTS users_by_username ON {{KEYSPACE}}.users (username);
-CREATE INDEX IF NOT EXISTS users_by_apple_id ON {{KEYSPACE}}.users (apple_id);
-CREATE INDEX IF NOT EXISTS users_by_google_id ON {{KEYSPACE}}.users (google_id);
+-- =====================
+-- USER IDENTITY LOOKUP TABLES (denormalized, replaces secondary indexes)
+-- =====================
+CREATE TABLE IF NOT EXISTS {{KEYSPACE}}.users_by_discord_id (
+    discord_id text PRIMARY KEY,
+    user_id text
+);
+
+CREATE TABLE IF NOT EXISTS {{KEYSPACE}}.users_by_email (
+    email text PRIMARY KEY,
+    user_id text
+);
+
+CREATE TABLE IF NOT EXISTS {{KEYSPACE}}.users_by_username (
+    username text PRIMARY KEY,
+    user_id text
+);
+
+CREATE TABLE IF NOT EXISTS {{KEYSPACE}}.users_by_apple_id (
+    apple_id text PRIMARY KEY,
+    user_id text
+);
+
+CREATE TABLE IF NOT EXISTS {{KEYSPACE}}.users_by_google_id (
+    google_id text PRIMARY KEY,
+    user_id text
+);
 
 -- =====================
 -- ALTERS TABLE
@@ -102,7 +124,15 @@ CREATE TABLE IF NOT EXISTS {{KEYSPACE}}.alters (
     PRIMARY KEY (user_id, id)
 );
 
-CREATE INDEX IF NOT EXISTS alters_by_alias ON {{KEYSPACE}}.alters (alias);
+-- =====================
+-- ALTERS_BY_ALIAS LOOKUP TABLE (denormalized, replaces secondary index)
+-- =====================
+CREATE TABLE IF NOT EXISTS {{KEYSPACE}}.alters_by_alias (
+    user_id text,
+    alias text,
+    alter_id smallint,
+    PRIMARY KEY (user_id, alias)
+);
 
 -- =====================
 -- TAGS TABLE
@@ -132,7 +162,17 @@ CREATE TABLE IF NOT EXISTS {{KEYSPACE}}.alter_tags (
     PRIMARY KEY (user_id, tag_id, alter_id)
 );
 
-CREATE INDEX IF NOT EXISTS alter_tags_by_alter ON {{KEYSPACE}}.alter_tags (alter_id);
+-- =====================
+-- ALTER_TAGS_BY_ALTER LOOKUP TABLE (denormalized, replaces secondary index)
+-- =====================
+CREATE TABLE IF NOT EXISTS {{KEYSPACE}}.alter_tags_by_alter (
+    user_id text,
+    alter_id smallint,
+    tag_id uuid,
+    inserted_at timestamp,
+    updated_at timestamp,
+    PRIMARY KEY ((user_id, alter_id), tag_id)
+);
 
 -- =====================
 -- POLLS TABLE
@@ -209,7 +249,22 @@ CREATE TABLE IF NOT EXISTS {{KEYSPACE}}.alter_journals (
     PRIMARY KEY (user_id, id, alter_id)
 );
 
-CREATE INDEX IF NOT EXISTS alter_journals_by_alter ON {{KEYSPACE}}.alter_journals (alter_id);
+-- =====================
+-- ALTER_JOURNALS_BY_ALTER LOOKUP TABLE (denormalized, replaces secondary index)
+-- =====================
+CREATE TABLE IF NOT EXISTS {{KEYSPACE}}.alter_journals_by_alter (
+    user_id text,
+    alter_id smallint,
+    id uuid,
+    title text,
+    content text,
+    color text,
+    pinned boolean,
+    locked boolean,
+    inserted_at timestamp,
+    updated_at timestamp,
+    PRIMARY KEY ((user_id, alter_id), id)
+);
 
 -- =====================
 -- FRONTS TABLE
@@ -226,25 +281,52 @@ CREATE TABLE IF NOT EXISTS {{KEYSPACE}}.fronts (
     PRIMARY KEY (user_id, id, time_start)
 );
 
-CREATE MATERIALIZED VIEW IF NOT EXISTS {{KEYSPACE}}.fronts_by_alter AS
-    SELECT user_id, alter_id, id, comment, time_start, time_end, inserted_at, updated_at
-    FROM {{KEYSPACE}}.fronts
-    WHERE user_id IS NOT NULL AND alter_id IS NOT NULL AND id IS NOT NULL AND time_start IS NOT NULL
-    PRIMARY KEY (user_id, alter_id, id, time_start);
+-- =====================
+-- FRONTS_BY_ALTER LOOKUP TABLE (denormalized, replaces materialized view)
+-- =====================
+CREATE TABLE IF NOT EXISTS {{KEYSPACE}}.fronts_by_alter (
+    user_id text,
+    alter_id smallint,
+    id uuid,
+    comment text,
+    time_start timestamp,
+    time_end timestamp,
+    inserted_at timestamp,
+    updated_at timestamp,
+    PRIMARY KEY ((user_id, alter_id), id, time_start)
+);
 
-CREATE MATERIALIZED VIEW IF NOT EXISTS {{KEYSPACE}}.fronts_by_time AS
-    SELECT user_id, alter_id, id, comment, time_start, time_end, inserted_at, updated_at
-    FROM {{KEYSPACE}}.fronts
-    WHERE user_id IS NOT NULL AND time_start IS NOT NULL AND time_end IS NOT NULL
-            AND id IS NOT NULL
-        PRIMARY KEY (user_id, time_start, time_end, id);
+-- =====================
+-- FRONTS_BY_TIME LOOKUP TABLE (denormalized, replaces materialized view)
+-- Populated only when a front is closed (time_end is set).
+-- =====================
+CREATE TABLE IF NOT EXISTS {{KEYSPACE}}.fronts_by_time (
+    user_id text,
+    time_start timestamp,
+    time_end timestamp,
+    id uuid,
+    alter_id smallint,
+    comment text,
+    inserted_at timestamp,
+    updated_at timestamp,
+    PRIMARY KEY (user_id, time_start, time_end, id)
+);
 
-CREATE MATERIALIZED VIEW IF NOT EXISTS {{KEYSPACE}}.fronts_by_end_time AS
-    SELECT user_id, alter_id, id, comment, time_start, time_end, inserted_at, updated_at
-    FROM {{KEYSPACE}}.fronts
-    WHERE user_id IS NOT NULL AND time_start IS NOT NULL AND time_end IS NOT NULL
-            AND id IS NOT NULL
-        PRIMARY KEY (user_id, time_end, time_start, id);
+-- =====================
+-- FRONTS_BY_END_TIME LOOKUP TABLE (denormalized, replaces materialized view)
+-- Populated only when a front is closed (time_end is set).
+-- =====================
+CREATE TABLE IF NOT EXISTS {{KEYSPACE}}.fronts_by_end_time (
+    user_id text,
+    time_end timestamp,
+    time_start timestamp,
+    id uuid,
+    alter_id smallint,
+    comment text,
+    inserted_at timestamp,
+    updated_at timestamp,
+    PRIMARY KEY (user_id, time_end, time_start, id)
+);
 
 -- =====================
 -- SERVER_SETTINGS TABLE (Nam-specific)
@@ -268,7 +350,16 @@ CREATE TABLE IF NOT EXISTS nam.channel_blacklists (
     PRIMARY KEY (channel_id)
 );
 
-CREATE INDEX IF NOT EXISTS channel_blacklists_by_guild_id ON nam.channel_blacklists (guild_id);
+-- =====================
+-- CHANNEL_BLACKLISTS_BY_GUILD_ID LOOKUP TABLE (denormalized, replaces secondary index)
+-- =====================
+CREATE TABLE IF NOT EXISTS nam.channel_blacklists_by_guild_id (
+    guild_id text,
+    channel_id text,
+    inserted_at timestamp,
+    updated_at timestamp,
+    PRIMARY KEY (guild_id, channel_id)
+);
 
 -- =====================
 -- GLOBAL KEYSPACE TABLES
@@ -286,11 +377,38 @@ CREATE TABLE IF NOT EXISTS global.user_registry (
     PRIMARY KEY (user_id)
 );
 
-CREATE INDEX IF NOT EXISTS user_registry_by_discord_id ON global.user_registry (discord_id);
-CREATE INDEX IF NOT EXISTS user_registry_by_email ON global.user_registry (email);
-CREATE INDEX IF NOT EXISTS user_registry_by_username ON global.user_registry (username);
-CREATE INDEX IF NOT EXISTS user_registry_by_apple_id ON global.user_registry (apple_id);
-CREATE INDEX IF NOT EXISTS user_registry_by_google_id ON global.user_registry (google_id);
+-- =====================
+-- GLOBAL USER_REGISTRY LOOKUP TABLES (denormalized, replaces secondary indexes)
+-- =====================
+CREATE TABLE IF NOT EXISTS global.user_registry_by_discord_id (
+    discord_id text PRIMARY KEY,
+    user_id text,
+    region text
+);
+
+CREATE TABLE IF NOT EXISTS global.user_registry_by_email (
+    email text PRIMARY KEY,
+    user_id text,
+    region text
+);
+
+CREATE TABLE IF NOT EXISTS global.user_registry_by_username (
+    username text PRIMARY KEY,
+    user_id text,
+    region text
+);
+
+CREATE TABLE IF NOT EXISTS global.user_registry_by_apple_id (
+    apple_id text PRIMARY KEY,
+    user_id text,
+    region text
+);
+
+CREATE TABLE IF NOT EXISTS global.user_registry_by_google_id (
+    google_id text PRIMARY KEY,
+    user_id text,
+    region text
+);
 
 CREATE TABLE IF NOT EXISTS global.notification_tokens (
     user_id text,
@@ -300,7 +418,14 @@ CREATE TABLE IF NOT EXISTS global.notification_tokens (
     PRIMARY KEY (user_id, push_token)
 );
 
-CREATE INDEX IF NOT EXISTS notification_tokens_by_push_token ON global.notification_tokens (push_token);
+-- =====================
+-- NOTIFICATION_TOKENS_BY_PUSH_TOKEN LOOKUP TABLE (denormalized, replaces secondary index)
+-- =====================
+CREATE TABLE IF NOT EXISTS global.notification_tokens_by_push_token (
+    push_token text,
+    user_id text,
+    PRIMARY KEY (push_token, user_id)
+);
 
 CREATE TABLE IF NOT EXISTS global.friendships (
     user_id text,
@@ -312,7 +437,18 @@ CREATE TABLE IF NOT EXISTS global.friendships (
     PRIMARY KEY (user_id, friend_id)
 );
 
-CREATE INDEX IF NOT EXISTS friendships_by_friend_id ON global.friendships (friend_id);
+-- =====================
+-- FRIENDSHIPS_BY_FRIEND_ID LOOKUP TABLE (denormalized, replaces secondary index)
+-- =====================
+CREATE TABLE IF NOT EXISTS global.friendships_by_friend_id (
+    friend_id text,
+    user_id text,
+    level smallint,
+    since timestamp,
+    inserted_at timestamp,
+    updated_at timestamp,
+    PRIMARY KEY (friend_id, user_id)
+);
 
 CREATE TABLE IF NOT EXISTS global.friend_requests (
     from_id text,
@@ -323,7 +459,17 @@ CREATE TABLE IF NOT EXISTS global.friend_requests (
     PRIMARY KEY (from_id, to_id)
 );
 
-CREATE INDEX IF NOT EXISTS friend_requests_by_to_id ON global.friend_requests (to_id);
+-- =====================
+-- FRIEND_REQUESTS_BY_TO_ID LOOKUP TABLE (denormalized, replaces secondary index)
+-- =====================
+CREATE TABLE IF NOT EXISTS global.friend_requests_by_to_id (
+    to_id text,
+    from_id text,
+    date_sent timestamp,
+    inserted_at timestamp,
+    updated_at timestamp,
+    PRIMARY KEY (to_id, from_id)
+);
 
 -- =====================
 -- METRICS KEYSPACE (nam_nt)
