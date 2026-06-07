@@ -66,6 +66,16 @@ if (!builder.ExecutionContext.IsPublishMode)
             "--project csharp/Interfold.AppHost");
     }
 
+    var scyllaUserValue = builder.Configuration["Parameters:scylla-user"];
+    if (string.IsNullOrEmpty(scyllaUserValue) || scyllaUserValue == "cassandra")
+    {
+        throw new InvalidOperationException(
+            "SCYLLA_USER must be set to a non-default value. " +
+            "The well-known default 'cassandra' is not allowed.\n" +
+            "Fix: dotnet user-secrets set \"Parameters:scylla-user\" \"<your-username>\" " +
+            "--project csharp/Interfold.AppHost");
+    }
+
     var postgresPasswordValue = builder.Configuration["Parameters:postgres-password"];
     if (string.IsNullOrEmpty(postgresPasswordValue) || postgresPasswordValue == "postgres")
     {
@@ -73,6 +83,16 @@ if (!builder.ExecutionContext.IsPublishMode)
             "POSTGRES_PASSWORD must be set to a non-default value. " +
             "The well-known default 'postgres' is not allowed.\n" +
             "Fix: dotnet user-secrets set \"Parameters:postgres-password\" \"<your-secure-password>\" " +
+            "--project csharp/Interfold.AppHost");
+    }
+
+    var postgresUserValue = builder.Configuration["Parameters:postgres-user"];
+    if (string.IsNullOrEmpty(postgresUserValue) || postgresUserValue == "postgres")
+    {
+        throw new InvalidOperationException(
+            "POSTGRES_USER must be set to a non-default value. " +
+            "The well-known default 'postgres' is not allowed.\n" +
+            "Fix: dotnet user-secrets set \"Parameters:postgres-user\" \"<your-username>\" " +
             "--project csharp/Interfold.AppHost");
     }
 }
@@ -90,7 +110,7 @@ var webHttpsPort = Port("web-https", 8081);
 // The container starts with a disposable init superuser (pg_init). The bootstrap
 // script then creates the real app user (non-superuser) and an admin account.
 // We can't demote the cluster owner, so we use a separate init account.
-var msgDb = builder.AddContainer("msg-db", "timescale/timescaledb", "latest-pg16")
+var msgDb = builder.AddContainer("msg-db", "timescale/timescaledb", "latest-pg18")
     .WithContainerNetworkAlias("msg-db")
     .WithEnvironment("POSTGRES_USER", "db_init")
     .WithEnvironment("POSTGRES_PASSWORD", postgresPassword)
@@ -113,7 +133,7 @@ var msgDb = builder.AddContainer("msg-db", "timescale/timescaledb", "latest-pg16
     });
 
 // --- PostgreSQL Auth Bootstrap (creates app user, admin account, scrambles init) ---
-var pgBootstrapAuth = builder.AddContainer("pg-bootstrap-auth", "timescale/timescaledb", "latest-pg16")
+var pgBootstrapAuth = builder.AddContainer("pg-bootstrap-auth", "timescale/timescaledb", "latest-pg18")
     .WithBindMount("../../scripts/postgres/postgres-bootstrap-auth.sh", "/scripts/postgres-bootstrap-auth.sh", isReadOnly: true)
     .WithVolume("pg_recovery", "/recovery")
     .WithEnvironment("PG_INIT_PASSWORD", postgresPassword)
@@ -142,11 +162,9 @@ var mode = builder.Configuration["Parameters:scylla-mode"] ?? "single";
 if (mode == "cassandra")
 {
     // --- Cassandra 4.1 (low-end fallback) ---
-    var cassandra = builder.AddContainer("cassandra", "cassandra", "4.1")
+    var cassandra = builder.AddContainer("cassandra", "cassandra", "5")
         .WithContainerNetworkAlias("cassandra")
         .WithEnvironment("CASSANDRA_CLUSTER_NAME", "OctoCluster")
-        .WithEnvironment("CASSANDRA_AUTHENTICATOR", "PasswordAuthenticator")
-        .WithEnvironment("CASSANDRA_AUTHORIZER", "CassandraAuthorizer")
         .WithEnvironment("CASSANDRA_LISTEN_ADDRESS", "cassandra")
         .WithEnvironment("CASSANDRA_BROADCAST_ADDRESS", "cassandra")
         .WithEnvironment("CASSANDRA_BROADCAST_RPC_ADDRESS", "cassandra")
@@ -178,7 +196,7 @@ if (mode == "cassandra")
         });
 
     loadKeysImage = "cassandra";
-    loadKeysTag = "4.1";
+    loadKeysTag = "5";
     loadKeysWaitTarget = cassandra;
     scyllaEndpointOwner = cassandra;
     scyllaFirstHost = "cassandra";
@@ -197,7 +215,7 @@ else
         var name = regions.Length > 1 ? $"scylla-{region}" : "scylla";
         var seeds = previousNode is null ? $"--seeds={name}" : $"--seeds=scylla-{regions[0]},scylla-{regions[1]}";
 
-        var node = builder.AddContainer(name, "scylladb/scylla", "2025.1")
+        var node = builder.AddContainer(name, "scylladb/scylla", "2026.1")
             .WithContainerNetworkAlias(name)
             .WithArgs(seeds, "--smp", "1", "--memory", "750M", "--overprovisioned", "1",
                 "--developer-mode", "1", "--authenticator", "PasswordAuthenticator",
@@ -237,7 +255,7 @@ else
     var firstNode = regions.Length > 1 ? $"scylla-{regions[0]}" : "scylla";
 
     loadKeysImage = "scylladb/scylla";
-    loadKeysTag = "2025.1";
+    loadKeysTag = "2026.1";
     loadKeysWaitTarget = previousNode!;
     scyllaFirstHost = firstNode;
 }
@@ -282,7 +300,7 @@ var api = builder.AddProject<Projects.Interfold_Api>("interfold-api")
     .WithEnvironment("OCTOCON_SCYLLA_ADMIN_USERNAME",
         ReferenceExpression.Create($"{scyllaUser}_admin"))
     .WithEnvironment("OCTOCON_SCYLLA_ADMIN_PASSWORD", scyllaAdminPassword)
-    .WithEnvironment("OCTOCON_SCYLLA_SINGLE_KEYSPACE", mode == "single" ? "true" : "false")
+    .WithEnvironment("OCTOCON_SCYLLA_SINGLE_KEYSPACE", mode == "multi" ? "false" : "true")
     .WithEnvironment("OCTOCON_POSTGRES_CONNECTION",
         ReferenceExpression.Create($"Host={pgEndpoint.Property(EndpointProperty.Host)};Port={pgEndpoint.Property(EndpointProperty.Port)};Database=octocon;Username={postgresUser};Password={postgresPassword}"))
     .WithEnvironment("OCTOCON_POSTGRES_ADMIN_CONNECTION",

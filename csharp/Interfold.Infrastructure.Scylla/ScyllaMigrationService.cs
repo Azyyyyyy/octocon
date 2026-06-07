@@ -30,36 +30,58 @@ public sealed partial class ScyllaMigrationService(
 
         logger.LogInformation("[scylla-migrate] Applying ScyllaDB schema migrations...");
 
-        var cluster = Cluster.Builder()
-            .AddContactPoints(options.ScyllaContactPoints)
-            .WithLoadBalancingPolicy(new DCAwareRoundRobinPolicy(options.ScyllaLocalDatacenter))
-            .WithCredentials(options.ScyllaAdminUsername, options.ScyllaAdminPassword)
-            .WithQueryTimeout(30000)
-            .WithSocketOptions(new SocketOptions()
-                .SetConnectTimeoutMillis(15000)
-                .SetKeepAlive(true))
-            .Build();
+        // Ensure we get an authenticated connection. Cassandra's PasswordAuthenticator
+        // may not be enforcing auth immediately after startup, causing the driver to
+        // connect anonymously. We retry until LIST ROLES succeeds (requires auth).
+        var cluster = BuildCluster();
+        var session = await cluster.ConnectAsync();
+
+        for (var authAttempt = 0; authAttempt < 10; authAttempt++)
+        {
+            try
+            {
+                await session.ExecuteAsync(new SimpleStatement("LIST ROLES"));
+                logger.LogInformation("[scylla-migrate] Authenticated as '{User}'.", options.ScyllaAdminUsername);
+                break;
+            }
+            catch (UnauthorizedException)
+            {
+                if (authAttempt >= 9) throw;
+                logger.LogWarning("[scylla-migrate] Connection is anonymous — auth not ready, retrying in 3s (attempt {Attempt}/10)...",
+                    authAttempt + 1);
+                session.Dispose();
+                await cluster.ShutdownAsync();
+                await Task.Delay(3000);
+                cluster = BuildCluster();
+                session = await cluster.ConnectAsync();
+            }
+            catch (AuthenticationException)
+            {
+                if (authAttempt >= 9) throw;
+                logger.LogWarning("[scylla-migrate] Auth rejected — admin role may not exist yet, retrying in 3s (attempt {Attempt}/10)...",
+                    authAttempt + 1);
+                session.Dispose();
+                await cluster.ShutdownAsync();
+                await Task.Delay(3000);
+                cluster = BuildCluster();
+                session = await cluster.ConnectAsync();
+            }
+        }
 
         try
         {
-            var session = await cluster.ConnectAsync();
+            var visibleDcs = await DiscoverDatacenters(session);
+            var isScylla = await DetectScyllaDb(session);
+            logger.LogInformation("[scylla-migrate] Visible datacenters: {DCs}, database: {Db}",
+                string.Join(", ", visibleDcs), isScylla ? "ScyllaDB" : "Cassandra");
 
-            try
-            {
-                var visibleDcs = await DiscoverDatacenters(session);
-                logger.LogInformation("[scylla-migrate] Visible datacenters: {DCs}", string.Join(", ", visibleDcs));
-
-                await ApplyKeyspaces(session, visibleDcs);
-                await ApplySchema(session);
-                await GrantPermissions(session);
-            }
-            finally
-            {
-                session.Dispose();
-            }
+            await ApplyKeyspaces(session, visibleDcs, isScylla);
+            await ApplySchema(session);
+            await GrantPermissions(session);
         }
         finally
         {
+            session.Dispose();
             await cluster.ShutdownAsync();
         }
 
@@ -71,6 +93,17 @@ public sealed partial class ScyllaMigrationService(
     public Task StoppingAsync(CancellationToken cancellationToken) => Task.CompletedTask;
     public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
     public Task StoppedAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+
+    private Cluster BuildCluster() =>
+        Cluster.Builder()
+            .AddContactPoints(options.ScyllaContactPoints)
+            .WithLoadBalancingPolicy(new DCAwareRoundRobinPolicy(options.ScyllaLocalDatacenter))
+            .WithCredentials(options.ScyllaAdminUsername, options.ScyllaAdminPassword)
+            .WithQueryTimeout(30000)
+            .WithSocketOptions(new SocketOptions()
+                .SetConnectTimeoutMillis(15000)
+                .SetKeepAlive(true))
+            .Build();
 
     // --- DC Discovery ---
 
@@ -147,9 +180,27 @@ public sealed partial class ScyllaMigrationService(
         return NtsReplication(dcs, "nam");
     }
 
+    // --- Database Detection ---
+
+    private static async Task<bool> DetectScyllaDb(ISession session)
+    {
+        try
+        {
+            var rs = await session.ExecuteAsync(new SimpleStatement("SELECT cluster_name FROM system.local"));
+            // ScyllaDB clusters have system_schema.scylla_tables; try a lightweight probe
+            await session.ExecuteAsync(new SimpleStatement(
+                "SELECT keyspace_name FROM system_schema.scylla_tables LIMIT 1"));
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
     // --- Keyspace Creation ---
 
-    private async Task ApplyKeyspaces(ISession session, HashSet<string> dcs)
+    private async Task ApplyKeyspaces(ISession session, HashSet<string> dcs, bool isScylla)
     {
         var cqlTemplate = GetEmbeddedResource("001_create_octocon_keyspaces.cql");
         var globalRepl = GlobalReplication(dcs);
@@ -163,13 +214,19 @@ public sealed partial class ScyllaMigrationService(
         foreach (var keyspace in keyspaces)
         {
             var regionalRepl = RegionalReplicationFor(keyspace, dcs);
-            var tabletsEnabled = IsMultiDc(dcs) ? "true" : "false";
+            var tabletsClause = isScylla && IsMultiDc(dcs)
+                ? " AND tablets = {'enabled': true}"
+                : "";
+            var tabletsClauseDisabled = isScylla
+                ? " AND tablets = {'enabled': false}"
+                : "";
             var rendered = cqlTemplate
                 .Replace("{{KEYSPACE}}", keyspace)
                 .Replace("{{KEYSPACE_REPLICATION}}", regionalRepl)
                 .Replace("{{GLOBAL_REPLICATION}}", globalRepl)
                 .Replace("{{NAM_NT_REPLICATION}}", namNtRepl)
-                .Replace("{{TABLETS_ENABLED}}", tabletsEnabled);
+                .Replace("{{TABLETS_CLAUSE_DISABLED}}", tabletsClauseDisabled)
+                .Replace("{{TABLETS_CLAUSE}}", tabletsClause);
 
             logger.LogInformation("[scylla-migrate] Creating keyspaces for region '{Region}' (replication={Repl})...",
                 keyspace, regionalRepl);
@@ -203,6 +260,13 @@ public sealed partial class ScyllaMigrationService(
         if (string.IsNullOrWhiteSpace(appUser))
         {
             logger.LogWarning("[scylla-migrate] No app user configured — skipping permission grants.");
+            return;
+        }
+
+        // Skip grants when app user is the same as admin (e.g. default Cassandra superuser)
+        if (string.Equals(appUser, options.ScyllaAdminUsername, StringComparison.OrdinalIgnoreCase))
+        {
+            logger.LogInformation("[scylla-migrate] App user is the admin user — skipping permission grants.");
             return;
         }
 
