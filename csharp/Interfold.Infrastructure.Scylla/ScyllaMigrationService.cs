@@ -104,9 +104,12 @@ public sealed partial class ScyllaMigrationService(
     private static string SimpleReplication() =>
         "{'class': 'SimpleStrategy', 'replication_factor': '1'}";
 
-    private static string NtsReplication(params string[] dcs)
+    private static string NtsReplication(HashSet<string> visibleDcs, params string[] preferredDcs)
     {
-        var pairs = string.Join(", ", dcs.Select(dc => $"'{dc}': '1'"));
+        // Only include DCs that actually exist in the cluster
+        var actualDcs = preferredDcs.Where(visibleDcs.Contains).ToArray();
+        if (actualDcs.Length == 0) actualDcs = [visibleDcs.First()];
+        var pairs = string.Join(", ", actualDcs.Select(dc => $"'{dc}': '1'"));
         return $"{{'class': 'NetworkTopologyStrategy', {pairs}}}";
     }
 
@@ -116,14 +119,14 @@ public sealed partial class ScyllaMigrationService(
 
         return keyspace switch
         {
-            "nam" => NtsReplication("nam", "eur", "sam"),
-            "eur" => dcs.Contains("eur") ? NtsReplication("nam", "eur", "sas") : NtsReplication("nam", "sam", "sas"),
-            "sam" => NtsReplication("nam", "sam", "eas"),
-            "sas" => dcs.Contains("sas") ? NtsReplication("nam", "sas", "ocn") : NtsReplication("nam", "sas", "gdpr"),
-            "eas" => dcs.Contains("eas") ? NtsReplication("nam", "eas", "ocn") : NtsReplication("nam", "eas", "gdpr"),
-            "ocn" => dcs.Contains("ocn") ? NtsReplication("nam", "ocn", "gdpr") : NtsReplication("nam", "ocn", "sas"),
-            "gdpr" => dcs.Contains("gdpr") ? NtsReplication("nam", "gdpr", "eur") : NtsReplication("nam", "eur", "ocn"),
-            _ => NtsReplication("nam", "eur", "sam")
+            "nam" => NtsReplication(dcs, "nam", "eur", "sam"),
+            "eur" => dcs.Contains("eur") ? NtsReplication(dcs, "nam", "eur", "sas") : NtsReplication(dcs, "nam", "sam", "sas"),
+            "sam" => NtsReplication(dcs, "nam", "sam", "eas"),
+            "sas" => dcs.Contains("sas") ? NtsReplication(dcs, "nam", "sas", "ocn") : NtsReplication(dcs, "nam", "sas", "gdpr"),
+            "eas" => dcs.Contains("eas") ? NtsReplication(dcs, "nam", "eas", "ocn") : NtsReplication(dcs, "nam", "eas", "gdpr"),
+            "ocn" => dcs.Contains("ocn") ? NtsReplication(dcs, "nam", "ocn", "gdpr") : NtsReplication(dcs, "nam", "ocn", "sas"),
+            "gdpr" => dcs.Contains("gdpr") ? NtsReplication(dcs, "nam", "gdpr", "eur") : NtsReplication(dcs, "nam", "eur", "ocn"),
+            _ => NtsReplication(dcs, "nam", "eur", "sam")
         };
     }
 
@@ -135,13 +138,13 @@ public sealed partial class ScyllaMigrationService(
         var allDcs = new[] { "nam", "eur", "sam", "sas", "eas", "ocn", "gdpr" }
             .Where(dcs.Contains)
             .ToArray();
-        return NtsReplication(allDcs);
+        return NtsReplication(dcs, allDcs);
     }
 
     private static string NamNtReplication(HashSet<string> dcs)
     {
         if (!IsMultiDc(dcs)) return SimpleReplication();
-        return NtsReplication("nam");
+        return NtsReplication(dcs, "nam");
     }
 
     // --- Keyspace Creation ---
