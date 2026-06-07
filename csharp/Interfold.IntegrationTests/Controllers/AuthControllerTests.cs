@@ -1,4 +1,4 @@
-﻿using System.Net;
+using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using Interfold.Contracts.Configuration;
@@ -144,7 +144,7 @@ public sealed class AuthControllerTests : BaseEndpointTest
     {
         factory
             .WithConfiguration("OCTOCON_DEEPLINK_ADDRESS", "octocon://app")
-            .WithConfiguration("OCTOCON_REGION", "nam");
+            .WithConfiguration("OCTOCON_SCYLLA_KEYSPACE", "nam");
 
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
         {

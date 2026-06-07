@@ -1,0 +1,37 @@
+{
+  "profiles": {
+    "Octocon.Api": {
+      "commandName": "Project",
+      "launchBrowser": true,
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Development",
+        "ASPNETCORE_URLS": "http://api.octocon.app;https://api.octocon.app",
+        "OCTOCON_DEV_ALLOW_HEADER_PRINCIPAL": "true",
+        "OCTOCON_SCYLLA_USERNAME": "<set-via-user-secrets>",
+        "OCTOCON_SCYLLA_PASSWORD": "<set-via-user-secrets>",
+        "OCTOCON_REGION": "nam",
+        "OCTOCON_POSTGRES_CONNECTION": "<set-via-user-secrets>",
+        "OCTOCON_SCYLLA_KEYSPACE": "nam",
+        "OCTOCON_SCYLLA_DATACENTER": "nam",
+        "OCTOCON_SCYLLA_CONTACT_POINTS": "localhost",
+        "OCTOCON_PERSISTENCE": "inmemory",
+        "OCTOCON_OTLP_ENDPOINT": "",
+        "OCTOCON_AUTH_CHALLENGE_GOOGLE_ENDPOINT": "https://accounts.google.com/o/oauth2/v2/auth",
+        "OCTOCON_AUTH_CALLBACK_BASE_URL": "https://api.octocon.app",
+        "OCTOCON_GOOGLE_OAUTH_CLIENT_ID": "<your-google-client-id>",
+        "OCTOCON_AUTH_CHALLENGE_GOOGLE_PARAMS": "client_id=<your-google-client-id>,response_type=code,scope=https://www.googleapis.com/auth/userinfo.email",
+        "OCTOCON_FRONTEND": "http://localhost:8080/",
+        "OCTOCON_BETA_FRONTEND": "http://localhost:8080/",
+        "OCTOCON_DEEPLINK_ADDRESS": "http://localhost:8080/deep",
+        "OCTOCON_AUTH_CHALLENGE_DISCORD_ENDPOINT": "https://discord.com/api/oauth2/authorize",
+        "OCTOCON_DISCORD_OAUTH_CLIENT_ID": "<your-discord-client-id>",
+        "OCTOCON_AUTH_CHALLENGE_DISCORD_PARAMS": "response_type=code,scope=identify",
+        "OCTOCON_NODE_GROUP": "primary",
+        "OCTOCON_AUTH_RSA_PRIVATE_KEY_FILE": "<path-to-scripts/keys/encryption-private.pem>",
+        "OCTOCON_AUTH_RSA_PUBLIC_KEY_FILE": "<path-to-scripts/keys/encryption-public.pem>",
+        "OCTOCON_COMPATIBILITY_MODE": "false"
+      },
+      "launchUrl": "https://api.octocon.app/swagger/index.html"
+    }
+  }
+}

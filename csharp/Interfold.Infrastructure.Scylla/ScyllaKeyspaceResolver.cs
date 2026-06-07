@@ -4,6 +4,7 @@ namespace Interfold.Infrastructure.Scylla;
 
 public interface IScyllaKeyspaceResolver
 {
+    string DefaultKeyspace { get; }
     string ResolveRegionalKeyspace(string systemId);
     string ResolveGlobalKeyspace();
     string NormalizeSystemId(string systemId);
@@ -17,6 +18,8 @@ public sealed class ScyllaKeyspaceResolver : IScyllaKeyspaceResolver
     {
         _regionContext = regionContext;
     }
+
+    public string DefaultKeyspace => _regionContext.CurrentRegion;
 
     public string ResolveRegionalKeyspace(string systemId)
     {

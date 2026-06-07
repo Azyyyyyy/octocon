@@ -73,6 +73,13 @@ builder.Services.AddCors(options =>
     });
 });
 
+// --- Secrets Bootstrap ---
+// Registered BEFORE persistence services so its StartingAsync executes first.
+// Reads admin credentials + OAuth secrets from internal.secrets and patches configuration
+// before migration services attempt to use them. Dependencies (ISecretsStore, etc.) are
+// resolved after the DI container is fully built, so registration order doesn't matter for DI.
+builder.Services.AddHostedService<SecretsBootstrapService>();
+
 // --- Dependency Injection ---
 builder.Services.AddInterfoldCluster(builder.Configuration);
 builder.Services.AddInterfoldPersistence(builder.Configuration);

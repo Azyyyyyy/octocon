@@ -1,4 +1,4 @@
-﻿using System.Net;
+using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using Interfold.IntegrationTests.Attributes;
@@ -413,7 +413,7 @@ public class AltersControllerTests : BaseEndpointTest
     public async Task AlterCreate_IdempotentReplay_WorksAgainstLiveAdapters([InterfoldFactoryGenerator] InterfoldWebApplicationFactory factory)
     {
         factory
-            .WithConfiguration("OCTOCON_REGION", IntegrationTestEnvironment.GetVariable("OCTOCON_TEST_REGION", "nam"));
+            .WithConfiguration("OCTOCON_SCYLLA_KEYSPACE", IntegrationTestEnvironment.GetVariable("OCTOCON_TEST_REGION", "nam"));
 
         using var client = factory.CreateClient();
 

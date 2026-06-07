@@ -1,5 +1,6 @@
 using System.Reflection;
 using Interfold.Contracts.Configuration;
+using Interfold.Contracts.Secrets;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Npgsql;
@@ -7,24 +8,36 @@ using Npgsql;
 namespace Interfold.Infrastructure.Postgres;
 
 /// <summary>
-/// Applies embedded SQL migrations at startup using the admin connection string.
+/// Applies embedded SQL migrations at startup using admin credentials from ISecretsStore.
+/// Derives the admin connection string from the app connection + admin password from secrets.
 /// Runs before the app accepts traffic (IHostedLifecycleService.StartingAsync).
 /// </summary>
 public sealed class PostgresMigrationService(
     PersistenceConfiguration options,
+    ISecretsStore secretsStore,
     ILogger<PostgresMigrationService> logger) : IHostedLifecycleService
 {
     public async Task StartingAsync(CancellationToken cancellationToken)
     {
-        if (string.IsNullOrWhiteSpace(options.PostgresAdminConnectionString))
+        // Build admin connection from app connection + admin credentials from secrets store
+        var adminUsername = await secretsStore.GetAsync("postgres:admin_username", cancellationToken);
+        var adminPassword = await secretsStore.GetAsync("postgres:admin_password", cancellationToken);
+        if (string.IsNullOrWhiteSpace(adminUsername) ||
+            string.IsNullOrWhiteSpace(adminPassword) ||
+            string.IsNullOrWhiteSpace(options.PostgresConnectionString))
         {
-            logger.LogInformation("[pg-migrate] No admin connection string configured — skipping migrations.");
+            logger.LogInformation("[pg-migrate] No admin credentials in secrets store — skipping migrations.");
             return;
         }
 
+        var connBuilder = new NpgsqlConnectionStringBuilder(options.PostgresConnectionString);
+        connBuilder.Username = adminUsername;
+        connBuilder.Password = adminPassword;
+        var adminConnectionString = connBuilder.ConnectionString;
+
         logger.LogInformation("[pg-migrate] Applying PostgreSQL schema migrations...");
 
-        await using var connection = new NpgsqlConnection(options.PostgresAdminConnectionString);
+        await using var connection = new NpgsqlConnection(adminConnectionString);
         await connection.OpenAsync(cancellationToken);
 
         var migrations = GetMigrationScripts();

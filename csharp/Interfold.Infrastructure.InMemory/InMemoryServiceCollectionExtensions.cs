@@ -1,5 +1,6 @@
 ﻿using Interfold.Contracts;
 using Interfold.Contracts.Configuration;
+using Interfold.Contracts.Secrets;
 using Interfold.Domain.Abstractions;
 using Interfold.Domain.Abstractions.Repository;
 using Interfold.Infrastructure.DependencyInjection;
@@ -25,7 +26,8 @@ public static class InMemoryServiceCollectionExtensions
         PersistenceConfiguration options)
     {
             var pipeline = services
-            .AddSingleton<IRegionContext>(_ => new InMemoryRegionContext(options.DefaultRegion))
+            .AddSingleton<IRegionContext>(_ => new InMemoryRegionContext(options.ScyllaKeyspace))
+            .AddSingleton<ISecretsStore, InMemorySecretsStore>()
             .AddSingleton<INotificationTokenRepository, InMemoryNotificationTokenRepository>()
             .AddSingleton<IEncryptionStateRepository, InMemoryEncryptionStateRepository>()
             .AddSingleton<IAccountRepository, InMemoryAccountRepository>()

@@ -2,31 +2,54 @@ using System.Reflection;
 using System.Text.RegularExpressions;
 using Cassandra;
 using Interfold.Contracts.Configuration;
+using Interfold.Contracts.Secrets;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
 namespace Interfold.Infrastructure.Scylla;
 
 /// <summary>
-/// Applies embedded CQL migrations at startup using admin credentials.
+/// Applies embedded CQL migrations at startup using admin credentials from ISecretsStore.
 /// Creates keyspaces for all regions, applies schema, and grants DML permissions to the app user.
 /// Supports both single-node (SimpleStrategy) and multi-DC (NetworkTopologyStrategy) deployments.
 /// Runs before the app accepts traffic (IHostedLifecycleService.StartingAsync).
 /// </summary>
 public sealed partial class ScyllaMigrationService(
     PersistenceConfiguration options,
+    ISecretsStore secretsStore,
+    IConfiguration configuration,
     ILogger<ScyllaMigrationService> logger) : IHostedLifecycleService
 {
     private static readonly string[] RegionalKeyspaces = ["nam", "eur", "sam", "sas", "eas", "ocn", "gdpr"];
 
+    private string? _adminUsername;
+    private string? _adminPassword;
+    private string[]? _contactPoints;
+    private string? _datacenter;
+    private string? _appUsername;
+    private string? _keyspace;
+
     public async Task StartingAsync(CancellationToken cancellationToken)
     {
-        if (string.IsNullOrWhiteSpace(options.ScyllaAdminUsername) ||
-            string.IsNullOrWhiteSpace(options.ScyllaAdminPassword))
+        // Read admin credentials from secrets store
+        _adminUsername = await secretsStore.GetAsync("scylla:admin_username", cancellationToken);
+        _adminPassword = await secretsStore.GetAsync("scylla:admin_password", cancellationToken);
+
+        if (string.IsNullOrWhiteSpace(_adminUsername) ||
+            string.IsNullOrWhiteSpace(_adminPassword))
         {
-            logger.LogInformation("[scylla-migrate] No admin credentials configured — skipping migrations.");
+            logger.LogInformation("[scylla-migrate] No admin credentials in secrets store — skipping migrations.");
             return;
         }
+
+        // Read connection details via unified resolver
+        _contactPoints = await ScyllaConfigResolver.GetContactPointsAsync(secretsStore, cancellationToken);
+        _datacenter = await ScyllaConfigResolver.GetDatacenterAsync(secretsStore, cancellationToken);
+        _appUsername = await ScyllaConfigResolver.GetUsernameAsync(secretsStore, cancellationToken);
+
+        // Keyspace: env var override (for multi-instance) > secrets store > default "nam"
+        _keyspace = await ScyllaConfigResolver.GetKeyspaceAsync(configuration, secretsStore, cancellationToken);
 
         logger.LogInformation("[scylla-migrate] Applying ScyllaDB schema migrations...");
 
@@ -41,7 +64,7 @@ public sealed partial class ScyllaMigrationService(
             try
             {
                 await session.ExecuteAsync(new SimpleStatement("LIST ROLES"));
-                logger.LogInformation("[scylla-migrate] Authenticated as '{User}'.", options.ScyllaAdminUsername);
+                logger.LogInformation("[scylla-migrate] Authenticated as '{User}'.", _adminUsername);
                 break;
             }
             catch (UnauthorizedException)
@@ -86,6 +109,11 @@ public sealed partial class ScyllaMigrationService(
         }
 
         logger.LogInformation("[scylla-migrate] All migrations applied.");
+
+        // Clear admin credentials from memory.
+        _adminUsername = null;
+        _adminPassword = null;
+        logger.LogInformation("[scylla-migrate] Admin credentials cleared from memory.");
     }
 
     public Task StartAsync(CancellationToken cancellationToken) => Task.CompletedTask;
@@ -96,9 +124,9 @@ public sealed partial class ScyllaMigrationService(
 
     private Cluster BuildCluster() =>
         Cluster.Builder()
-            .AddContactPoints(options.ScyllaContactPoints)
-            .WithLoadBalancingPolicy(new DCAwareRoundRobinPolicy(options.ScyllaLocalDatacenter))
-            .WithCredentials(options.ScyllaAdminUsername, options.ScyllaAdminPassword)
+            .AddContactPoints(_contactPoints!)
+            .WithLoadBalancingPolicy(new DCAwareRoundRobinPolicy(_datacenter!))
+            .WithCredentials(_adminUsername, _adminPassword)
             .WithQueryTimeout(30000)
             .WithSocketOptions(new SocketOptions()
                 .SetConnectTimeoutMillis(15000)
@@ -206,8 +234,8 @@ public sealed partial class ScyllaMigrationService(
         var globalRepl = GlobalReplication(dcs);
         var namNtRepl = NamNtReplication(dcs);
 
-        var keyspaces = options.ScyllaSingleKeyspace
-            ? [options.ScyllaKeyspace]
+        var keyspaces = options.IsSingleScyllaInstance
+            ? [_keyspace!]
             : RegionalKeyspaces;
 
         // Create keyspaces for target regions
@@ -240,8 +268,8 @@ public sealed partial class ScyllaMigrationService(
     {
         var cqlTemplate = GetEmbeddedResource("002_create_octocon_schema.templated.cql");
 
-        var keyspaces = options.ScyllaSingleKeyspace
-            ? [options.ScyllaKeyspace]
+        var keyspaces = options.IsSingleScyllaInstance
+            ? [_keyspace!]
             : RegionalKeyspaces;
 
         foreach (var keyspace in keyspaces)
@@ -256,7 +284,7 @@ public sealed partial class ScyllaMigrationService(
 
     private async Task GrantPermissions(ISession session)
     {
-        var appUser = options.ScyllaUsername;
+        var appUser = _appUsername;
         if (string.IsNullOrWhiteSpace(appUser))
         {
             logger.LogWarning("[scylla-migrate] No app user configured — skipping permission grants.");
@@ -264,7 +292,7 @@ public sealed partial class ScyllaMigrationService(
         }
 
         // Skip grants when app user is the same as admin (e.g. default Cassandra superuser)
-        if (string.Equals(appUser, options.ScyllaAdminUsername, StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(appUser, _adminUsername, StringComparison.OrdinalIgnoreCase))
         {
             logger.LogInformation("[scylla-migrate] App user is the admin user — skipping permission grants.");
             return;
@@ -272,8 +300,8 @@ public sealed partial class ScyllaMigrationService(
 
         logger.LogInformation("[scylla-migrate] Granting DML permissions to '{AppUser}'...", appUser);
 
-        var keyspaces = options.ScyllaSingleKeyspace
-            ? [options.ScyllaKeyspace]
+        var keyspaces = options.IsSingleScyllaInstance
+            ? [_keyspace!]
             : RegionalKeyspaces;
 
         // Grant on regional keyspaces

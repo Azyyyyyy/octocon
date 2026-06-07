@@ -8,18 +8,25 @@ set -euo pipefail
 #   2. Create a dedicated admin superuser (<PGUSER>_admin) with a random password
 #   3. Create the application database owned by admin
 #   4. Grant DML-only privileges (SELECT, INSERT, UPDATE, DELETE) to app user
-#   5. Scramble the cluster owner (db_init) password
+#   5. Create the internal.secrets table and grant app user access
+#   6. Seed secrets from environment variables into internal.secrets
+#   7. Scramble the cluster owner (db_init) password
 #
 # The container starts with a disposable init superuser 'db_init' (cluster owner).
 # We can't fully lock or demote the cluster owner in PostgreSQL, so instead we
-# randomize its password and save it to recovery.
-#
-# Schema DDL is applied by postgres-load-schema.sh using the admin account.
-# The app user has NO DDL privileges — cannot CREATE/ALTER/DROP tables.
+# randomize its password. The admin password is generated randomly and stored
+# directly in internal.secrets — it is never exposed via output or env vars.
 #
 # Required environment variables:
 #   PGUSER       - App-level username (will be non-superuser)
 #   PGPASSWORD   - App-level password
+#
+# Optional environment variables (secrets to seed):
+#   OCTOCON_GOOGLE_OAUTH_CLIENT_SECRET
+#   OCTOCON_DISCORD_OAUTH_CLIENT_SECRET
+#   OCTOCON_ENCRYPTION_PEPPER
+#   SCYLLA_USER           - Scylla app username (derives admin username as <user>_admin)
+#   SCYLLA_ADMIN_PASSWORD - Scylla admin password (stored in secrets for API)
 #
 # The container's POSTGRES_PASSWORD (used by pg_init) is passed separately via
 # PG_INIT_PASSWORD so we can connect as the cluster owner during bootstrap.
@@ -35,7 +42,6 @@ INIT_PASSWORD="${PG_INIT_PASSWORD:?PG_INIT_PASSWORD is required}"
 APP_USER="${PGUSER:-postgres}"
 APP_PASSWORD="${PGPASSWORD:?PGPASSWORD is required}"
 ADMIN_USER="${APP_USER}_admin"
-RECOVERY_DIR="${RECOVERY_PATH:-/recovery}"
 
 # --- Guard: reject the well-known default password ---
 if [ "$APP_PASSWORD" = "postgres" ]; then
@@ -109,7 +115,7 @@ END
 "
 
 # --- Step 2: Create dedicated admin superuser with random password ---
-ADMIN_PASS="${PG_ADMIN_PASSWORD:-$(head -c 32 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 32)}"
+ADMIN_PASS=$(head -c 32 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 32)
 
 echo "[pg-auth-bootstrap] Creating admin superuser '${ADMIN_USER}'..."
 psql_as_init -c "
@@ -158,46 +164,72 @@ psql_as_init_db -c "ALTER DEFAULT PRIVILEGES FOR ROLE \"${ADMIN_USER}\" IN SCHEM
 psql_as_init_db -c "GRANT USAGE ON ALL SEQUENCES IN SCHEMA public TO \"${APP_USER}\";"
 psql_as_init_db -c "ALTER DEFAULT PRIVILEGES FOR ROLE \"${ADMIN_USER}\" IN SCHEMA public GRANT USAGE ON SEQUENCES TO \"${APP_USER}\";"
 
-# --- Step 5: Scramble the cluster owner password ---
+# --- Step 5: Create internal.secrets table ---
+# Must happen here (before migrations) because PostgresMigrationService reads admin
+# credentials from this table via the app user. The DDL and GRANT are also in
+# Migrations/000 and 001 as idempotent insurance for non-Aspire environments.
+echo "[pg-auth-bootstrap] Creating internal.secrets table..."
+
+# Helper to run SQL against the application database as admin
+psql_as_admin_db() {
+  PGPASSWORD="$ADMIN_PASS" psql -v ON_ERROR_STOP=1 -h "$DB_HOST" -U "$ADMIN_USER" -d "$DB_NAME" "$@"
+}
+
+psql_as_admin_db -f /scripts/000_create_secrets_table.sql
+
+# Grant app user read-only access to internal schema and secrets table
+psql_as_admin_db -c "
+GRANT USAGE ON SCHEMA internal TO \"${APP_USER}\";
+GRANT SELECT ON internal.secrets TO \"${APP_USER}\";
+"
+
+# --- Step 6: Seed secrets from environment variables ---
+echo "[pg-auth-bootstrap] Seeding secrets..."
+
+upsert_secret() {
+  local key="$1"
+  local value="$2"
+  if [ -z "$value" ]; then
+    return
+  fi
+  # Use psql variables to avoid SQL injection from secret values.
+  # Variable interpolation (:'var') only works when SQL is read from stdin, not with -c.
+  psql_as_admin_db \
+    -v "secret_key=$key" -v "secret_value=$value" <<'UPSERT_SQL'
+    INSERT INTO internal.secrets (key, value, created_by, updated_at)
+    VALUES (:'secret_key', :'secret_value', 'bootstrap', now())
+    ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now();
+UPSERT_SQL
+  echo "[pg-auth-bootstrap]   Seeded: $key"
+}
+
+upsert_secret "oauth:google:client_secret" "${OCTOCON_GOOGLE_OAUTH_CLIENT_SECRET:-}"
+upsert_secret "oauth:discord:client_secret" "${OCTOCON_DISCORD_OAUTH_CLIENT_SECRET:-}"
+upsert_secret "encryption:pepper" "${OCTOCON_ENCRYPTION_PEPPER:-}"
+
+# Seed admin credentials (these are the ONLY source for migration services)
+upsert_secret "postgres:admin_username" "${ADMIN_USER}"
+upsert_secret "postgres:admin_password" "${ADMIN_PASS}"
+SCYLLA_ADMIN_USER="${SCYLLA_USER:-cassandra}_admin"
+upsert_secret "scylla:admin_username" "${SCYLLA_ADMIN_USER}"
+upsert_secret "scylla:admin_password" "${SCYLLA_ADMIN_PASSWORD:-}"
+
+# Seed Scylla connection details (read by app services via ISecretsStore)
+upsert_secret "scylla:contact_points" "${SCYLLA_CONTACT_POINTS:-127.0.0.1}"
+upsert_secret "scylla:local_datacenter" "${SCYLLA_DATACENTER:-datacenter1}"
+upsert_secret "scylla:username" "${SCYLLA_USER:-}"
+upsert_secret "scylla:password" "${SCYLLA_PASSWORD:-}"
+upsert_secret "scylla:keyspace" "${SCYLLA_KEYSPACE:-nam}"
+
+# --- Step 7: Scramble the cluster owner password ---
 INIT_SCRAMBLED_PASS=$(head -c 32 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 32)
 echo "[pg-auth-bootstrap] Scrambling cluster owner '${INIT_USER}' password..."
 psql_as_init -c "ALTER ROLE \"${INIT_USER}\" WITH PASSWORD '${INIT_SCRAMBLED_PASS}';"
 
-# --- Save recovery credentials ---
-mkdir -p "$RECOVERY_DIR" 2>/dev/null || true
-
-cat > "${RECOVERY_DIR}/pg-admin-credentials.txt" 2>/dev/null <<EOF || true
-# PostgreSQL admin superuser for schema migrations and emergency access.
-# This account has SUPERUSER and LOGIN privileges.
-username=${ADMIN_USER}
-password=${ADMIN_PASS}
-host=${DB_HOST}
-database=${DB_NAME}
-created_at=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-
-# Usage:
-#   PGPASSWORD='${ADMIN_PASS}' psql -h ${DB_HOST} -U '${ADMIN_USER}' -d ${DB_NAME}
-#
-# To temporarily grant superuser to app user:
-#   ALTER ROLE "${APP_USER}" WITH SUPERUSER;
-# Then revoke after:
-#   ALTER ROLE "${APP_USER}" WITH NOSUPERUSER;
-EOF
-
-cat > "${RECOVERY_DIR}/pg-init-scrambled.txt" 2>/dev/null <<EOF || true
-# Cluster owner account (cannot be fully locked in PostgreSQL).
-# Password has been scrambled. Use admin account for superuser operations.
-username=${INIT_USER}
-password=${INIT_SCRAMBLED_PASS}
-scrambled_at=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-EOF
-
-chmod 600 "${RECOVERY_DIR}/pg-admin-credentials.txt" "${RECOVERY_DIR}/pg-init-scrambled.txt" 2>/dev/null || true
-
 echo "[pg-auth-bootstrap] ========================================"
 echo "[pg-auth-bootstrap] ADMIN ACCOUNT: ${ADMIN_USER}"
-echo "[pg-auth-bootstrap] Credentials saved to: ${RECOVERY_DIR}/pg-admin-credentials.txt"
 echo "[pg-auth-bootstrap] Cluster owner '${INIT_USER}': password scrambled"
 echo "[pg-auth-bootstrap] App user '${APP_USER}': DML-only (SELECT/INSERT/UPDATE/DELETE)"
+echo "[pg-auth-bootstrap] Secrets table: internal.secrets (seeded)"
 echo "[pg-auth-bootstrap] ========================================"
 echo "[pg-auth-bootstrap] Bootstrap complete."

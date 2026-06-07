@@ -52,7 +52,7 @@ public class WebSocketTests : BaseEndpointTest
     {
         factory
             .WithConfiguration("OCTOCON_DEEPLINK_ADDRESS", "octocon://app")
-            .WithConfiguration("OCTOCON_REGION", "nam")
+            .WithConfiguration("OCTOCON_SCYLLA_KEYSPACE", "nam")
             .WithConfiguration("OCTOCON_SOCKET_BATCH_BYTES_THRESHOLD", "1");
 
         var wsClient = factory.Server.CreateWebSocketClient();
@@ -89,7 +89,7 @@ public class WebSocketTests : BaseEndpointTest
     {
         factory
             .WithConfiguration("OCTOCON_DEEPLINK_ADDRESS", "octocon://app")
-            .WithConfiguration("OCTOCON_REGION", "nam");
+            .WithConfiguration("OCTOCON_SCYLLA_KEYSPACE", "nam");
 
         var wsClient = factory.Server.CreateWebSocketClient();
         string socketToken = await CreateRandomToken(factory, "sys-phx-ios-batch");
@@ -132,7 +132,7 @@ public class WebSocketTests : BaseEndpointTest
     {
         factory
             .WithConfiguration("OCTOCON_DEEPLINK_ADDRESS", "octocon://app")
-            .WithConfiguration("OCTOCON_REGION", "nam");
+            .WithConfiguration("OCTOCON_SCYLLA_KEYSPACE", "nam");
 
         var wsClient = factory.Server.CreateWebSocketClient();
         string socketToken = await CreateRandomToken(factory, "sys-phx-rate-limit");
@@ -164,7 +164,7 @@ public class WebSocketTests : BaseEndpointTest
     {
         factory
             .WithConfiguration("OCTOCON_DEEPLINK_ADDRESS", "octocon://app")
-            .WithConfiguration("OCTOCON_REGION", "nam");
+            .WithConfiguration("OCTOCON_SCYLLA_KEYSPACE", "nam");
 
         var wsClient = factory.Server.CreateWebSocketClient();
         string socketToken = await CreateRandomToken(factory, "sys-front-push");
@@ -362,7 +362,7 @@ public class WebSocketTests : BaseEndpointTest
     {
         factory
             .WithConfiguration("OCTOCON_DEEPLINK_ADDRESS", "octocon://app")
-            .WithConfiguration("OCTOCON_REGION", "nam");
+            .WithConfiguration("OCTOCON_SCYLLA_KEYSPACE", "nam");
 
         var wsClient = factory.Server.CreateWebSocketClient();
         string socketToken = await CreateRandomToken(factory, "sys-domain-fanout");
@@ -474,7 +474,7 @@ public class WebSocketTests : BaseEndpointTest
     {
         factory
             .WithConfiguration("OCTOCON_DEEPLINK_ADDRESS", "octocon://app")
-            .WithConfiguration("OCTOCON_REGION", "nam");
+            .WithConfiguration("OCTOCON_SCYLLA_KEYSPACE", "nam");
 
         const string senderSystemId = "sys-friend-sender";
         const string recipientSystemId = "sys-friend-recipient";
@@ -548,7 +548,7 @@ public class WebSocketTests : BaseEndpointTest
     {
         factory
             .WithConfiguration("OCTOCON_DEEPLINK_ADDRESS", "octocon://app")
-            .WithConfiguration("OCTOCON_REGION", "nam");
+            .WithConfiguration("OCTOCON_SCYLLA_KEYSPACE", "nam");
 
         const string senderSystemId = "sys-accept-sender";
         const string recipientSystemId = "sys-accept-recipient";
@@ -654,7 +654,7 @@ public class WebSocketTests : BaseEndpointTest
     {
         factory
             .WithConfiguration("OCTOCON_DEEPLINK_ADDRESS", "octocon://app")
-            .WithConfiguration("OCTOCON_REGION", "nam");
+            .WithConfiguration("OCTOCON_SCYLLA_KEYSPACE", "nam");
 
         const string senderSystemId = "sys-reject-sender";
         const string recipientSystemId = "sys-reject-recipient";
@@ -752,7 +752,7 @@ public class WebSocketTests : BaseEndpointTest
     {
         factory
             .WithConfiguration("OCTOCON_DEEPLINK_ADDRESS", "octocon://app")
-            .WithConfiguration("OCTOCON_REGION", "nam");
+            .WithConfiguration("OCTOCON_SCYLLA_KEYSPACE", "nam");
 
         const string senderSystemId = "sys-cancel-sender";
         const string recipientSystemId = "sys-cancel-recipient";
@@ -845,7 +845,7 @@ public class WebSocketTests : BaseEndpointTest
     {
         factory
             .WithConfiguration("OCTOCON_DEEPLINK_ADDRESS", "octocon://app")
-            .WithConfiguration("OCTOCON_REGION", "nam");
+            .WithConfiguration("OCTOCON_SCYLLA_KEYSPACE", "nam");
 
         const string senderSystemId = "sys-remove-sender";
         const string recipientSystemId = "sys-remove-recipient";
@@ -974,7 +974,7 @@ public class WebSocketTests : BaseEndpointTest
     {
         factory
             .WithConfiguration("OCTOCON_DEEPLINK_ADDRESS", "octocon://app")
-            .WithConfiguration("OCTOCON_REGION", "nam");
+            .WithConfiguration("OCTOCON_SCYLLA_KEYSPACE", "nam");
         
         const string senderSystemId = "sys-trust-sender";
         const string recipientSystemId = "sys-trust-recipient";
@@ -1122,7 +1122,7 @@ public class WebSocketTests : BaseEndpointTest
     {
         factory
             .WithConfiguration("OCTOCON_DEEPLINK_ADDRESS", "octocon://app")
-            .WithConfiguration("OCTOCON_REGION", "nam");
+            .WithConfiguration("OCTOCON_SCYLLA_KEYSPACE", "nam");
 
         const string systemAId = "sys-mutual-a";
         const string systemBId = "sys-mutual-b";

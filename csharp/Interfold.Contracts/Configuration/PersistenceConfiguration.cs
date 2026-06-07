@@ -4,13 +4,17 @@ namespace Interfold.Contracts.Configuration;
 /// Database and persistence configuration for Scylla, PostgreSQL, and retry logic.
 /// Binds from environment variables with OCTOCON_ prefix:
 ///   - OCTOCON_PERSISTENCE (scylla-postgres or inmemory)
-///   - OCTOCON_REGION (default: nam)
+///   - OCTOCON_SCYLLA_KEYSPACE (per-instance region/keyspace; default: nam)
 ///   - OCTOCON_POSTGRES_CONNECTION
-///   - OCTOCON_POSTGRES_ADMIN_CONNECTION (admin for schema migrations)
-///   - OCTOCON_SCYLLA_* (keyspace, datacenter, contact points, credentials)
-///   - OCTOCON_SCYLLA_ADMIN_USERNAME / OCTOCON_SCYLLA_ADMIN_PASSWORD
+///   - OCTOCON_SINGLE_SCYLLA_INSTANCE
 ///   - OCTOCON_DB_RETRY_* (retry strategy parameters)
 ///   - OCTOCON_HYDRATION_MAX_CONCURRENCY
+///
+/// Scylla connection details (contact_points, datacenter, username, password, keyspace)
+/// and admin credentials are stored in internal.secrets (PostgreSQL) and read directly
+/// by services via ISecretsStore. The keyspace and region are unified:
+/// OCTOCON_SCYLLA_KEYSPACE controls both the Scylla session default keyspace and the
+/// instance's assigned region for new-account creation and query routing.
 /// </summary>
 public sealed class PersistenceConfiguration
 {
@@ -23,47 +27,27 @@ public sealed class PersistenceConfiguration
     public string Mode { get; set; } = "scylla-postgres";
 
     /// <summary>
-    /// Default region for data locality and keyspace selection.
+    /// Instance region/keyspace identity. Controls both the Scylla session default
+    /// keyspace and the region used for new-account creation and query routing.
     /// Values: nam, eur, ocn, eas, sam, sas, gdpr
     /// Default: 'nam'
+    /// Env: OCTOCON_SCYLLA_KEYSPACE
     /// </summary>
-    public string DefaultRegion { get; set; } = "nam";
+    public string ScyllaKeyspace { get; set; } = "nam";
 
     /// <summary>
     /// PostgreSQL connection string.
-    /// Default: 'Host=localhost;Port=5432;Database=octocon;Username=octocon;Password=octocon'
     /// Env: OCTOCON_POSTGRES_CONNECTION
     /// </summary>
-    public string PostgresConnectionString { get; set; } =
-        "Host=localhost;Port=5432;Database=octocon;Username=octocon;Password=octocon";
-
-    /// <summary>
-    /// PostgreSQL admin connection string used for schema migrations at startup.
-    /// If null/empty, migrations are skipped.
-    /// Env: OCTOCON_POSTGRES_ADMIN_CONNECTION
-    /// </summary>
-    public string? PostgresAdminConnectionString { get; set; }
-
-    /// <summary>
-    /// Scylla admin username for schema migrations at startup.
-    /// If null/empty, migrations are skipped.
-    /// Env: OCTOCON_SCYLLA_ADMIN_USERNAME
-    /// </summary>
-    public string? ScyllaAdminUsername { get; set; }
-
-    /// <summary>
-    /// Scylla admin password (paired with ScyllaAdminUsername).
-    /// Env: OCTOCON_SCYLLA_ADMIN_PASSWORD
-    /// </summary>
-    public string? ScyllaAdminPassword { get; set; }
+    public string PostgresConnectionString { get; set; } = "";
 
     /// <summary>
     /// When true, the migration service only creates the single keyspace specified by
     /// ScyllaKeyspace instead of all regional keyspaces. Useful for dev/single-instance setups.
     /// Default: false
-    /// Env: OCTOCON_SCYLLA_SINGLE_KEYSPACE
+    /// Env: OCTOCON_SINGLE_SCYLLA_INSTANCE
     /// </summary>
-    public bool ScyllaSingleKeyspace { get; set; } = false;
+    public bool IsSingleScyllaInstance { get; set; } = false;
 
     /// <summary>
     /// Compatibility mode for Scylla-only operation in 'scylla-postgres' mode.
@@ -73,39 +57,6 @@ public sealed class PersistenceConfiguration
     /// Env: OCTOCON_COMPATIBILITY_MODE
     /// </summary>
     public bool CompatibilityMode { get; set; } = false;
-
-    /// <summary>
-    /// Scylla default keyspace (typically matches region).
-    /// Default: 'nam' (matches DefaultRegion)
-    /// Env: OCTOCON_SCYLLA_KEYSPACE
-    /// </summary>
-    public string ScyllaKeyspace { get; set; } = "nam";
-
-    /// <summary>
-    /// Scylla local datacenter name for driver locality awareness.
-    /// Default: 'datacenter1'
-    /// Env: OCTOCON_SCYLLA_DATACENTER
-    /// </summary>
-    public string ScyllaLocalDatacenter { get; set; } = "datacenter1";
-
-    /// <summary>
-    /// Scylla contact points (comma-separated, parsed from OCTOCON_SCYLLA_CONTACT_POINTS).
-    /// Default: ['127.0.0.1']
-    /// Env: OCTOCON_SCYLLA_CONTACT_POINTS (comma/space separated)
-    /// </summary>
-    public string[] ScyllaContactPoints { get; set; } = ["127.0.0.1"];
-
-    /// <summary>
-    /// Scylla authentication username (null = no auth).
-    /// Env: OCTOCON_SCYLLA_USERNAME
-    /// </summary>
-    public string? ScyllaUsername { get; set; }
-
-    /// <summary>
-    /// Scylla authentication password (paired with ScyllaUsername).
-    /// Env: OCTOCON_SCYLLA_PASSWORD
-    /// </summary>
-    public string? ScyllaPassword { get; set; }
 
     /// <summary>
     /// Maximum number of retry attempts for transient database failures.

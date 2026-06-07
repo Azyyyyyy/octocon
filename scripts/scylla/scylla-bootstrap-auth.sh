@@ -9,7 +9,7 @@ set -euo pipefail
 #   3. Lock the default 'cassandra' account
 #
 # The API's migration service handles DDL and permission grants at startup using admin creds.
-# The admin account credentials are saved to /recovery/ for emergency use.
+# Admin credentials are logged to stdout (visible in container logs).
 #
 # Required environment variables:
 #   SCYLLA_USER           - App-level username (non-superuser)
@@ -27,7 +27,6 @@ DB_HOST="${1:?Usage: scylla-bootstrap-auth.sh <db-host>}"
 DEFAULT_USER="cassandra"
 DEFAULT_PASSWORD="cassandra"
 ADMIN_USER="${SCYLLA_USER}_admin"
-RECOVERY_DIR="${RECOVERY_PATH:-/recovery}"
 
 # --- Guard: reject the well-known default password ---
 if [ "$SCYLLA_PASSWORD" = "$DEFAULT_PASSWORD" ]; then
@@ -123,41 +122,15 @@ else
     "ALTER ROLE '${DEFAULT_USER}' WITH PASSWORD = '${CASSANDRA_RANDOM_PASS}' AND LOGIN = false;"
 fi
 
-# --- Save recovery credentials ---
-mkdir -p "$RECOVERY_DIR" 2>/dev/null || true
-
-cat > "${RECOVERY_DIR}/admin-credentials.txt" 2>/dev/null <<EOF || true
-# Admin superuser for schema migrations and emergency access.
-# This account has SUPERUSER = true and LOGIN = true.
-username=${ADMIN_USER}
-password=${ADMIN_PASS}
-created_at=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-
-# Usage:
-#   cqlsh ${DB_HOST} -u '${ADMIN_USER}' -p '${ADMIN_PASS}'
-EOF
-
-cat > "${RECOVERY_DIR}/cassandra-locked.txt" 2>/dev/null <<EOF || true
-# The default 'cassandra' account has been locked (LOGIN = false).
-# To re-enable (requires admin):
-#   cqlsh -u '${ADMIN_USER}' -e "ALTER ROLE '${DEFAULT_USER}' WITH LOGIN = true;"
-username=${DEFAULT_USER}
-password=${CASSANDRA_RANDOM_PASS}
-locked_at=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-EOF
-
-chmod 600 "${RECOVERY_DIR}/admin-credentials.txt" "${RECOVERY_DIR}/cassandra-locked.txt" 2>/dev/null || true
-
+# --- Summary (credentials visible in container logs only) ---
 echo "[auth-bootstrap] ========================================"
 echo "[auth-bootstrap] ADMIN ACCOUNT: ${ADMIN_USER}"
-echo "[auth-bootstrap] Credentials saved to: ${RECOVERY_DIR}/admin-credentials.txt"
 echo "[auth-bootstrap] ========================================"
 if [ "$SCYLLA_USER" = "$DEFAULT_USER" ]; then
   echo "[auth-bootstrap] Default '${DEFAULT_USER}' account: ACTIVE (is app user)"
 else
   echo "[auth-bootstrap] Default '${DEFAULT_USER}' account: LOCKED"
 fi
-echo "[auth-bootstrap] Credentials saved to: ${RECOVERY_DIR}/cassandra-locked.txt"
 echo "[auth-bootstrap] App user '${SCYLLA_USER}': non-superuser (DML-only, grants managed by API)"
 echo "[auth-bootstrap] ========================================"
 echo "[auth-bootstrap] Bootstrap complete."

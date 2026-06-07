@@ -34,7 +34,7 @@ services.AddSingleton<IConfiguration>(new ConfigurationManager());
 InMemoryServiceCollectionExtensions.Register();
 services.AddInterfoldPersistence(Interfold.Contracts.PersistenceMode.InMemory, cfg =>
 {
-	cfg.DefaultRegion = "nam";
+	cfg.ScyllaKeyspace = "nam";
 	cfg.CompatibilityMode = true; // safer defaults for a utility
 });
 

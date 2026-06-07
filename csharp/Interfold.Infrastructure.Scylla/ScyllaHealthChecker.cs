@@ -1,6 +1,8 @@
 ﻿using Cassandra;
 using Interfold.Contracts.Configuration;
+using Interfold.Contracts.Secrets;
 using Interfold.Infrastructure.Persistence;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 
 namespace Interfold.Infrastructure.Scylla;
@@ -33,11 +35,19 @@ public class ScyllaHealthChecker : IHealthCheck
 
     private readonly IScyllaSessionProvider _scyllaSessionProvider;
     private readonly PersistenceConfiguration _options;
+    private readonly ISecretsStore _secretsStore;
+    private readonly IConfiguration _configuration;
 
-    public ScyllaHealthChecker(IScyllaSessionProvider scyllaSessionProvider, PersistenceConfiguration options)
+    public ScyllaHealthChecker(
+        IScyllaSessionProvider scyllaSessionProvider,
+        PersistenceConfiguration options,
+        ISecretsStore secretsStore,
+        IConfiguration configuration)
     {
         _scyllaSessionProvider = scyllaSessionProvider;
         _options = options;
+        _secretsStore = secretsStore;
+        _configuration = configuration;
     }
     
     public async Task<HealthCheckResult> CheckHealthAsync(HealthCheckContext context, CancellationToken cancellationToken = new CancellationToken())
@@ -47,7 +57,8 @@ public class ScyllaHealthChecker : IHealthCheck
             return await DatabaseTransientRetry.ExecuteScyllaAsync(async () =>
             {
                 var session = await _scyllaSessionProvider.GetSessionAsync(cancellationToken);
-                var regionalKeyspace = _options.ScyllaKeyspace;
+
+                var regionalKeyspace = await ScyllaConfigResolver.GetKeyspaceAsync(_configuration, _secretsStore, cancellationToken);
 
                 var missingGlobal = await GetMissingTablesAsync(
                     session,

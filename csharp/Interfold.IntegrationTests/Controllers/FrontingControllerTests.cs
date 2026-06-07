@@ -1,4 +1,4 @@
-﻿using System.Net;
+using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using Interfold.IntegrationTests.Attributes;
@@ -39,7 +39,7 @@ public class FrontingControllerTests : BaseEndpointTest
     {
         factory
             .WithConfiguration("OCTOCON_DEEPLINK_ADDRESS", "octocon://app")
-            .WithConfiguration("OCTOCON_REGION", "nam");
+            .WithConfiguration("OCTOCON_SCYLLA_KEYSPACE", "nam");
 
         using var client = factory.CreateClient();
 

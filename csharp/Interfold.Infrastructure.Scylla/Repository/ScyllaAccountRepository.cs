@@ -355,7 +355,7 @@ public sealed class ScyllaAccountRepository : IAccountRepository
             if (row is not null)
             {
                 var userId = NormalizeRegistryUserId(row.GetValue<string>("user_id"));
-                var region = row.GetValue<string?>("region") ?? _options.DefaultRegion;
+                var region = row.GetValue<string?>("region") ?? _keyspaceResolver.DefaultKeyspace;
                 return $"{region}:{userId}";
             }
 
@@ -383,7 +383,7 @@ public sealed class ScyllaAccountRepository : IAccountRepository
             const string idChars = "abcdefghijklmnopqrstuvwxyz";
 
             // User doesn't exist; auto-create new account
-            var newRegion = _options.DefaultRegion; //TODO: Maybe look into geoip-based region resolution here instead of just defaulting?
+            var newRegion = _keyspaceResolver.DefaultKeyspace; //TODO: Maybe look into geoip-based region resolution here instead of just defaulting?
             var newUserId = Random.Shared.GetString(idChars, 7);
             var keyspace = newRegion; // ResolveRegionalKeyspace would just return the newRegion
 

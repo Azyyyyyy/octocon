@@ -47,11 +47,13 @@ builder.AddDockerComposeEnvironment("docker-compose")
 // --- Parameters (set via user-secrets or environment variables) ---
 var postgresUser = builder.AddParameter("postgres-user");
 var postgresPassword = builder.AddParameter("postgres-password", secret: true);
-var postgresAdminPassword = builder.AddParameter("postgres-admin-password", secret: true);
 var scyllaUser = builder.AddParameter("scylla-user");
 var scyllaPassword = builder.AddParameter("scylla-password", secret: true);
 var scyllaAdminPassword = builder.AddParameter("scylla-admin-password", secret: true);
 var encryptionPrivateKey = builder.AddParameter("encryption-private-key", secret: true);
+var googleOAuthClientSecret = builder.AddParameter("google-oauth-client-secret", secret: true);
+var discordOAuthClientSecret = builder.AddParameter("discord-oauth-client-secret", secret: true);
+var encryptionPepper = builder.AddParameter("encryption-pepper", secret: true);
 
 // --- Reject well-known default passwords at startup (dev mode only; compose relies on shell guard) ---
 if (!builder.ExecutionContext.IsPublishMode)
@@ -132,24 +134,6 @@ var msgDb = builder.AddContainer("msg-db", "timescale/timescaledb", "latest-pg18
         };
     });
 
-// --- PostgreSQL Auth Bootstrap (creates app user, admin account, scrambles init) ---
-var pgBootstrapAuth = builder.AddContainer("pg-bootstrap-auth", "timescale/timescaledb", "latest-pg18")
-    .WithBindMount("../../scripts/postgres/postgres-bootstrap-auth.sh", "/scripts/postgres-bootstrap-auth.sh", isReadOnly: true)
-    .WithVolume("pg_recovery", "/recovery")
-    .WithEnvironment("PG_INIT_PASSWORD", postgresPassword)
-    .WithEnvironment("PG_ADMIN_PASSWORD", postgresAdminPassword)
-    .WithEnvironment("PGUSER", postgresUser)
-    .WithEnvironment("PGPASSWORD", postgresPassword)
-    .WithEntrypoint("/bin/bash")
-    .WithArgs("/scripts/postgres-bootstrap-auth.sh", "msg-db", "octocon")
-    .WaitFor(msgDb)
-    .PublishAsDockerComposeService((_, service) =>
-    {
-        service.Networks = ["postgres"];
-        if (service.DependsOn.TryGetValue("msg-db", out var dep))
-            dep.Condition = "service_healthy";
-    });
-
 // --- ScyllaDB / Cassandra (conditional on launch profile) ---
 IResourceBuilder<ContainerResource>? scyllaEndpointOwner = null;
 string loadKeysImage;
@@ -187,7 +171,7 @@ if (mode == "cassandra")
             service.Networks = ["scylla"];
             service.Healthcheck = new Healthcheck
             {
-                Test = ["CMD-SHELL", "cqlsh -u cassandra -p cassandra -e 'describe cluster' || nodetool status | grep -q '^UN'"],
+                Test = ["CMD-SHELL", "cqlsh -u $CQLSH_USER -p $CQLSH_PASSWORD -e 'describe cluster' || nodetool status | grep -q '^UN'"],
                 Interval = "15s",
                 Timeout = "10s",
                 Retries = 20,
@@ -263,7 +247,6 @@ else
 // --- CQL Auth Bootstrap (creates admin superuser, app user as non-superuser, locks cassandra) ---
 var scyllaBootstrapAuth = builder.AddContainer("scylla-bootstrap-auth", loadKeysImage, loadKeysTag)
     .WithBindMount("../../scripts/scylla/scylla-bootstrap-auth.sh", "/scripts/scylla-bootstrap-auth.sh", isReadOnly: true)
-    .WithVolume("scylla_recovery", "/recovery")
     .WithEnvironment("SCYLLA_USER", scyllaUser)
     .WithEnvironment("SCYLLA_PASSWORD", scyllaPassword)
     .WithEnvironment("SCYLLA_ADMIN_PASSWORD", scyllaAdminPassword)
@@ -282,7 +265,33 @@ var scyllaBootstrapAuth = builder.AddContainer("scylla-bootstrap-auth", loadKeys
 
 // --- Endpoint references (resolve to localhost:{hostPort} in dev, container:{targetPort} in compose) ---
 var pgEndpoint = msgDb.GetEndpoint("postgres");
-var scyllaEndpoint = scyllaEndpointOwner!.GetEndpoint("cql");
+
+// --- PostgreSQL Auth Bootstrap (creates app user, admin account, seeds secrets) ---
+var pgBootstrapAuth = builder.AddContainer("pg-bootstrap-auth", "timescale/timescaledb", "latest-pg18")
+    .WithBindMount("../../scripts/postgres/postgres-bootstrap-auth.sh", "/scripts/postgres-bootstrap-auth.sh", isReadOnly: true)
+    .WithBindMount("../../csharp/Interfold.Infrastructure.Postgres/Migrations/000_create_secrets_table.sql", "/scripts/000_create_secrets_table.sql", isReadOnly: true)
+    .WithEnvironment("PG_INIT_PASSWORD", postgresPassword)
+    .WithEnvironment("PGUSER", postgresUser)
+    .WithEnvironment("PGPASSWORD", postgresPassword)
+    .WithEnvironment("SCYLLA_USER", scyllaUser)
+    .WithEnvironment("SCYLLA_PASSWORD", scyllaPassword)
+    .WithEnvironment("SCYLLA_ADMIN_PASSWORD", scyllaAdminPassword)
+    .WithEnvironment("SCYLLA_CONTACT_POINTS",
+        builder.ExecutionContext.IsPublishMode ? scyllaFirstHost : "localhost")
+    .WithEnvironment("SCYLLA_DATACENTER", "nam")
+    .WithEnvironment("SCYLLA_KEYSPACE", "nam")
+    .WithEnvironment("OCTOCON_GOOGLE_OAUTH_CLIENT_SECRET", googleOAuthClientSecret)
+    .WithEnvironment("OCTOCON_DISCORD_OAUTH_CLIENT_SECRET", discordOAuthClientSecret)
+    .WithEnvironment("OCTOCON_ENCRYPTION_PEPPER", encryptionPepper)
+    .WithEntrypoint("/bin/bash")
+    .WithArgs("/scripts/postgres-bootstrap-auth.sh", "msg-db", "octocon")
+    .WaitFor(msgDb)
+    .PublishAsDockerComposeService((_, service) =>
+    {
+        service.Networks = ["postgres"];
+        if (service.DependsOn.TryGetValue("msg-db", out var dep))
+            dep.Condition = "service_healthy";
+    });
 
 // --- Interfold API (from source) ---
 var api = builder.AddProject<Projects.Interfold_Api>("interfold-api")
@@ -290,21 +299,9 @@ var api = builder.AddProject<Projects.Interfold_Api>("interfold-api")
     .WithHttpsEndpoint(port: apiHttpsPort, targetPort: 5101, name: "https")
     .WithHttpHealthCheck("/health/ready", endpointName: "http")
     .WithEnvironment("OCTOCON_PERSISTENCE", "scylla-postgres")
-    .WithEnvironment("OCTOCON_REGION", "nam")
-    .WithEnvironment("OCTOCON_SCYLLA_CONTACT_POINTS",
-        ReferenceExpression.Create($"{scyllaEndpoint.Property(EndpointProperty.Host)}"))
-    .WithEnvironment("OCTOCON_SCYLLA_KEYSPACE", "nam")
-    .WithEnvironment("OCTOCON_SCYLLA_DATACENTER", "nam")
-    .WithEnvironment("OCTOCON_SCYLLA_USERNAME", scyllaUser)
-    .WithEnvironment("OCTOCON_SCYLLA_PASSWORD", scyllaPassword)
-    .WithEnvironment("OCTOCON_SCYLLA_ADMIN_USERNAME",
-        ReferenceExpression.Create($"{scyllaUser}_admin"))
-    .WithEnvironment("OCTOCON_SCYLLA_ADMIN_PASSWORD", scyllaAdminPassword)
-    .WithEnvironment("OCTOCON_SCYLLA_SINGLE_KEYSPACE", mode == "multi" ? "false" : "true")
+    .WithEnvironment("OCTOCON_SINGLE_SCYLLA_INSTANCE", mode == "multi" ? "false" : "true")
     .WithEnvironment("OCTOCON_POSTGRES_CONNECTION",
         ReferenceExpression.Create($"Host={pgEndpoint.Property(EndpointProperty.Host)};Port={pgEndpoint.Property(EndpointProperty.Port)};Database=octocon;Username={postgresUser};Password={postgresPassword}"))
-    .WithEnvironment("OCTOCON_POSTGRES_ADMIN_CONNECTION",
-        ReferenceExpression.Create($"Host={pgEndpoint.Property(EndpointProperty.Host)};Port={pgEndpoint.Property(EndpointProperty.Port)};Database=octocon;Username={postgresUser}_admin;Password={postgresAdminPassword}"))
     .WithEnvironment("ENCRYPTION_PRIVATE_KEY", encryptionPrivateKey)
     .WithExternalHttpEndpoints()
     .WaitForCompletion(pgBootstrapAuth)

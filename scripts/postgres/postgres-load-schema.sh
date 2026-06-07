@@ -3,31 +3,15 @@ set -euo pipefail
 
 # Usage: postgres-load-schema.sh <db-host> <db-name> <schema-file> [schema-file...]
 #
-# Uses admin credentials from recovery volume (created by postgres-bootstrap-auth.sh)
-# to apply schema files. The admin account owns the database and has DDL privileges.
+# Applies schema files using admin credentials provided via environment variables.
+# The admin account owns the database and has DDL privileges.
 #
 # Required environment variables:
-#   RECOVERY_PATH  - Path to recovery volume (default: /recovery)
-#
-# The script no longer needs PGUSER/PGPASSWORD since it reads admin creds from recovery.
+#   PG_ADMIN_USER     - Admin username (e.g. octocon_admin)
+#   PG_ADMIN_PASSWORD - Admin password
 
-RECOVERY_DIR="${RECOVERY_PATH:-/recovery}"
-ADMIN_CREDS_FILE="${RECOVERY_DIR}/pg-admin-credentials.txt"
-
-# --- Load admin credentials from recovery volume ---
-if [ ! -f "$ADMIN_CREDS_FILE" ]; then
-  echo "[pg-load-schema] ERROR: Admin credentials file not found at ${ADMIN_CREDS_FILE}."
-  echo "[pg-load-schema]        Did postgres-bootstrap-auth run successfully?"
-  exit 1
-fi
-
-DB_USER=$(grep -E "^username=" "$ADMIN_CREDS_FILE" | head -1 | cut -d= -f2-)
-DB_PASS=$(grep -E "^password=" "$ADMIN_CREDS_FILE" | head -1 | cut -d= -f2-)
-
-if [ -z "${DB_USER:-}" ] || [ -z "${DB_PASS:-}" ]; then
-  echo "[pg-load-schema] ERROR: Could not read admin credentials from ${ADMIN_CREDS_FILE}."
-  exit 1
-fi
+DB_USER="${PG_ADMIN_USER:?PG_ADMIN_USER is required}"
+DB_PASS="${PG_ADMIN_PASSWORD:?PG_ADMIN_PASSWORD is required}"
 
 export PGPASSWORD="$DB_PASS"
 

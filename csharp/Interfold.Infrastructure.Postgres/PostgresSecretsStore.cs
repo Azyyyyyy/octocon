@@ -1,0 +1,46 @@
+using Interfold.Contracts.Secrets;
+using Npgsql;
+
+namespace Interfold.Infrastructure.Postgres;
+
+public sealed class PostgresSecretsStore(IPostgresConnectionFactory connectionFactory) : ISecretsStore
+{
+    public async Task<string?> GetAsync(string key, CancellationToken cancellationToken = default)
+    {
+        await using var conn = await connectionFactory.OpenConnectionAsync(cancellationToken);
+        await using var cmd = new NpgsqlCommand("SELECT value FROM internal.secrets WHERE key = @key", conn);
+        cmd.Parameters.AddWithValue("key", key);
+        var result = await cmd.ExecuteScalarAsync(cancellationToken);
+        return result as string;
+    }
+
+    public async Task<string> GetRequiredAsync(string key, CancellationToken cancellationToken = default)
+    {
+        var value = await GetAsync(key, cancellationToken);
+        return value ?? throw new InvalidOperationException($"Required secret '{key}' not found in secrets store.");
+    }
+
+    public async Task<IReadOnlyList<SecretEntry>> ListAsync(CancellationToken cancellationToken = default)
+    {
+        await using var conn = await connectionFactory.OpenConnectionAsync(cancellationToken);
+        await using var cmd = new NpgsqlCommand(
+            "SELECT key, value, created_by, created_at, updated_at, expires_at, rotated_from FROM internal.secrets ORDER BY key",
+            conn);
+        await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+
+        var results = new List<SecretEntry>();
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            results.Add(new SecretEntry(
+                Key: reader.GetString(0),
+                Value: reader.GetString(1),
+                CreatedBy: reader.GetString(2),
+                CreatedAt: reader.GetDateTime(3),
+                UpdatedAt: reader.GetDateTime(4),
+                ExpiresAt: reader.IsDBNull(5) ? null : reader.GetDateTime(5),
+                RotatedFrom: reader.IsDBNull(6) ? null : reader.GetString(6)));
+        }
+
+        return results;
+    }
+}
