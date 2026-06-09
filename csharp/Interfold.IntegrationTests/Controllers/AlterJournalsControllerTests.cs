@@ -1,19 +1,20 @@
-﻿using System.Net;
+using System.Net;
 using System.Net.Http.Json;
-using Interfold.IntegrationTests.Attributes;
 using Interfold.IntegrationTests.TestServices;
 using Microsoft.AspNetCore.Mvc.Testing;
 
 namespace Interfold.IntegrationTests.Controllers;
 
 [Category("Alter Journals")]
-public class AlterJournalsControllerTests : BaseEndpointTest
+[ClassDataSource<InMemoryWebFactoryFixture>(Shared = SharedType.PerTestSession)]
+[ClassDataSource<ScyllaWebFactoryFixture>(Shared = SharedType.PerTestSession)]
+[ClassDataSource<CassandraWebFactoryFixture>(Shared = SharedType.PerTestSession)]
+public class AlterJournalsControllerTests(IWebFactoryFixture fixture) : BaseEndpointTest
 {
-    [Test, ApiIntegration, Category("Index")]
-    [CombinedDataSources]
-    public async Task AlterJournal_ListWhenEmpty_ReturnsDataAsEmptyArray([InterfoldFactoryGenerator] InterfoldWebApplicationFactory factory)
+    [Test, Category("Index")]
+    public async Task AlterJournal_ListWhenEmpty_ReturnsDataAsEmptyArray()
     {
-        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions());
+        using var client = fixture.Factory.CreateClient(new WebApplicationFactoryClientOptions());
 
         var principal = "parity-alter-journal-empty-list";
         var alterId = await CreateAlterAsync(client, principal, "NoJournalAlter");
@@ -33,11 +34,10 @@ public class AlterJournalsControllerTests : BaseEndpointTest
         }
     }
 
-    [Test, ApiIntegration]
-    [CombinedDataSources]
-    public async Task AlterJournal_NestedCreate_Returns201WithDataAndReplay([InterfoldFactoryGenerator] InterfoldWebApplicationFactory factory)
+    [Test]
+    public async Task AlterJournal_NestedCreate_Returns201WithDataAndReplay()
     {
-        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        using var client = fixture.Factory.CreateClient(new WebApplicationFactoryClientOptions
         {
             AllowAutoRedirect = false
         });
@@ -107,11 +107,10 @@ public class AlterJournalsControllerTests : BaseEndpointTest
         await Assert.That(deleteRes.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
     }
 
-    [Test, ApiIntegration]
-    [CombinedDataSources]
-    public async Task AlterJournal_ShowAfterDelete_Returns404([InterfoldFactoryGenerator] InterfoldWebApplicationFactory factory)
+    [Test]
+    public async Task AlterJournal_ShowAfterDelete_Returns404()
     {
-        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        using var client = fixture.Factory.CreateClient(new WebApplicationFactoryClientOptions
         {
             AllowAutoRedirect = false
         });

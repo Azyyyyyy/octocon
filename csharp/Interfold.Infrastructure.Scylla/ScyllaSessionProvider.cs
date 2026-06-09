@@ -32,14 +32,16 @@ public sealed class ScyllaSessionProvider : IScyllaSessionProvider
     {
         return await DatabaseTransientRetry.ExecuteScyllaAsync(async () =>
         {
-            var contactPoints = await ScyllaConfigResolver.GetContactPointsAsync(_secretsStore);
+            var contactPoints = await ScyllaConfigResolver.GetContactPointsAsync(_configuration, _secretsStore);
             var datacenter = await ScyllaConfigResolver.GetDatacenterAsync(_secretsStore);
             var username = await ScyllaConfigResolver.GetUsernameAsync(_secretsStore);
             var password = await ScyllaConfigResolver.GetPasswordAsync(_secretsStore);
             var keyspace = await ScyllaConfigResolver.GetKeyspaceAsync(_configuration, _secretsStore);
+            var port = await ScyllaConfigResolver.GetPortAsync(_configuration, _secretsStore);
 
             var builder = Cluster.Builder()
                 .AddContactPoints(contactPoints)
+                .WithPort(port)
                 .WithLoadBalancingPolicy(new DCAwareRoundRobinPolicy(datacenter))
                 .WithReconnectionPolicy(new ExponentialReconnectionPolicy(1000, 30000))
                 .WithQueryTimeout(10000)

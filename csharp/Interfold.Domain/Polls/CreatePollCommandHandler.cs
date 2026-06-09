@@ -37,8 +37,7 @@ public sealed class CreatePollCommandHandler : ICommandHandler<CreatePollCommand
         if (!string.IsNullOrWhiteSpace(command.Payload.Description) && command.Payload.Description.Length > 2000)
             return RejectInvariant(command, "poll:description_too_long");
 
-        // Validate poll type: accept both Elixir names (single_choice, multiple_choice, approval) and legacy names (vote, choice)
-        var validTypes = new[] { "single_choice", "vote", "multiple_choice", "choice", "approval" };
+        var validTypes = new[] { "vote", "choice", "approval" };
         if (!validTypes.Any(t => string.Equals(command.Payload.Type, t, StringComparison.OrdinalIgnoreCase)))
             return RejectInvariant(command, "poll:type_invalid");
 

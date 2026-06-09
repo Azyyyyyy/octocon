@@ -1,12 +1,14 @@
+using System.Collections.Concurrent;
+
 namespace Interfold.Api.Socket;
 
-static class SocketJoinRateLimiter
+public sealed class SocketJoinRateLimiter(TimeProvider timeProvider)
 {
-    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, Queue<DateTimeOffset>> _windows =
-        new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, Queue<DateTimeOffset>> _windows = new(StringComparer.Ordinal);
 
-    public static bool Allow(string systemId, DateTimeOffset now)
+    public bool Allow(string systemId)
     {
+        var now = timeProvider.GetUtcNow();
         var queue = _windows.GetOrAdd(systemId, _ => new Queue<DateTimeOffset>());
         lock (queue)
         {

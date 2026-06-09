@@ -109,7 +109,7 @@ internal static class DatabaseTransientRetry
 
     private static bool IsPostgresTransient(Exception exception) => exception switch
     {
-        NpgsqlException npgsqlException => npgsqlException.IsTransient,
+        NpgsqlException npgsqlException => npgsqlException.IsTransient || npgsqlException.InnerException is System.IO.EndOfStreamException,
         TimeoutException => true,
         _ => false
     };

@@ -29,6 +29,7 @@ public sealed partial class ScyllaMigrationService(
     private string? _datacenter;
     private string? _appUsername;
     private string? _keyspace;
+    private int _port;
 
     public async Task StartingAsync(CancellationToken cancellationToken)
     {
@@ -44,9 +45,10 @@ public sealed partial class ScyllaMigrationService(
         }
 
         // Read connection details via unified resolver
-        _contactPoints = await ScyllaConfigResolver.GetContactPointsAsync(secretsStore, cancellationToken);
+        _contactPoints = await ScyllaConfigResolver.GetContactPointsAsync(configuration, secretsStore, cancellationToken);
         _datacenter = await ScyllaConfigResolver.GetDatacenterAsync(secretsStore, cancellationToken);
         _appUsername = await ScyllaConfigResolver.GetUsernameAsync(secretsStore, cancellationToken);
+        _port = await ScyllaConfigResolver.GetPortAsync(configuration, secretsStore, cancellationToken);
 
         // Keyspace: env var override (for multi-instance) > secrets store > default "nam"
         _keyspace = await ScyllaConfigResolver.GetKeyspaceAsync(configuration, secretsStore, cancellationToken);
@@ -125,6 +127,7 @@ public sealed partial class ScyllaMigrationService(
     private Cluster BuildCluster() =>
         Cluster.Builder()
             .AddContactPoints(_contactPoints!)
+            .WithPort(_port)
             .WithLoadBalancingPolicy(new DCAwareRoundRobinPolicy(_datacenter!))
             .WithCredentials(_adminUsername, _adminPassword)
             .WithQueryTimeout(30000)

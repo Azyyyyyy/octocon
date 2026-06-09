@@ -29,8 +29,8 @@ public sealed class ScyllaMappingRegressionTests : BaseEndpointTest
     {
         using (Assert.Multiple())
         {
-            await Assert.That(ScyllaPollRepository.ToPollCode("single_choice")).IsEqualTo((short)0);
-            await Assert.That(ScyllaPollRepository.ToPollCode("multiple_choice")).IsEqualTo((short)1);
+            await Assert.That(ScyllaPollRepository.ToPollCode("vote")).IsEqualTo((short)0);
+            await Assert.That(ScyllaPollRepository.ToPollCode("choice")).IsEqualTo((short)1);
             await Assert.That(ScyllaPollRepository.ToPollCode("approval")).IsEqualTo((short)2);
             await Assert.That(ScyllaPollRepository.ToPollCode("unknown-type")).IsEqualTo((short)0);
 

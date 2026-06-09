@@ -6,28 +6,46 @@ using System.Net.Sockets;
 
 var builder = DistributedApplication.CreateBuilder(args);
 
-// --- Health checks for the Aspire dashboard ---
-builder.Services.AddHealthChecks()
-    .AddCheck("msg-db-health", () =>
-    {
-        try
+// --- Configurable host ports (must be declared before health checks reference them) ---
+int Port(string name, int fallback) => int.TryParse(builder.Configuration[$"Ports:{name}"], out var p) ? p : fallback;
+var postgresPort = Port("postgres", 4200);
+var scyllaPort = Port("scylla", 9042);
+var apiHttpPort = Port("api-http", 5000);
+var apiHttpsPort = Port("api-https", 5001);
+var webHttpPort = Port("web-http", 8080);
+var webHttpsPort = Port("web-https", 8081);
+
+// --- Optional feature flags (used by integration tests to disable API/web and use ephemeral containers) ---
+var includeApi = !string.Equals(builder.Configuration["Parameters:include-api"], "false", StringComparison.OrdinalIgnoreCase);
+var persistentContainers = !string.Equals(builder.Configuration["Parameters:persistent-containers"], "false", StringComparison.OrdinalIgnoreCase);
+
+// --- Health checks for the Aspire dashboard (only when API is included) ---
+// In test mode (include-api=false), Aspire randomizes host ports, so TcpClient
+// health checks would fail. Without health checks, WaitFor() uses Running state.
+if (includeApi)
+{
+    builder.Services.AddHealthChecks()
+        .AddCheck("msg-db-health", () =>
         {
-            using var tcp = new TcpClient();
-            tcp.Connect("localhost", 4200);
-            return HealthCheckResult.Healthy();
-        }
-        catch { return HealthCheckResult.Unhealthy(); }
-    })
-    .AddCheck("scylla-health", () =>
-    {
-        try
+            try
+            {
+                using var tcp = new TcpClient();
+                tcp.Connect("localhost", postgresPort);
+                return HealthCheckResult.Healthy();
+            }
+            catch { return HealthCheckResult.Unhealthy(); }
+        })
+        .AddCheck("scylla-health", () =>
         {
-            using var tcp = new TcpClient();
-            tcp.Connect("localhost", 9042);
-            return HealthCheckResult.Healthy();
-        }
-        catch { return HealthCheckResult.Unhealthy(); }
-    });
+            try
+            {
+                using var tcp = new TcpClient();
+                tcp.Connect("localhost", scyllaPort);
+                return HealthCheckResult.Healthy();
+            }
+            catch { return HealthCheckResult.Unhealthy(); }
+        });
+}
 
 // --- Docker Compose publish target with network isolation ---
 builder.AddDockerComposeEnvironment("docker-compose")
@@ -99,15 +117,6 @@ if (!builder.ExecutionContext.IsPublishMode)
     }
 }
 
-// --- Configurable host ports ---
-int Port(string name, int fallback) => int.TryParse(builder.Configuration[$"Ports:{name}"], out var p) ? p : fallback;
-var postgresPort = Port("postgres", 4200);
-var scyllaPort = Port("scylla", 9042);
-var apiHttpPort = Port("api-http", 5000);
-var apiHttpsPort = Port("api-https", 5001);
-var webHttpPort = Port("web-http", 8080);
-var webHttpsPort = Port("web-https", 8081);
-
 // --- PostgreSQL (TimescaleDB) ---
 // The container starts with a disposable init superuser (pg_init). The bootstrap
 // script then creates the real app user (non-superuser) and an admin account.
@@ -117,10 +126,7 @@ var msgDb = builder.AddContainer("msg-db", "timescale/timescaledb", "latest-pg18
     .WithEnvironment("POSTGRES_USER", "db_init")
     .WithEnvironment("POSTGRES_PASSWORD", postgresPassword)
     .WithEnvironment("PGDATA", "/var/lib/postgresql/data/pgdata")
-    .WithVolume("msg_pgdata", "/var/lib/postgresql/data")
     .WithEndpoint(port: postgresPort, targetPort: 5432, name: "postgres", scheme: "tcp")
-    .WithHealthCheck("msg-db-health")
-    .WithLifetime(ContainerLifetime.Persistent)
     .PublishAsDockerComposeService((_, service) =>
     {
         service.Networks = ["postgres"];
@@ -133,6 +139,13 @@ var msgDb = builder.AddContainer("msg-db", "timescale/timescaledb", "latest-pg18
             StartPeriod = "15s"
         };
     });
+if (includeApi)
+    msgDb.WithHealthCheck("msg-db-health");
+if (persistentContainers)
+{
+    msgDb.WithVolume("msg_pgdata", "/var/lib/postgresql/data");
+    msgDb.WithLifetime(ContainerLifetime.Persistent);
+}
 
 // --- ScyllaDB / Cassandra (conditional on launch profile) ---
 IResourceBuilder<ContainerResource>? scyllaEndpointOwner = null;
@@ -161,11 +174,8 @@ if (mode == "cassandra")
         .WithEnvironment("CQLSH_PASSWORD", scyllaPassword)
         .WithBindMount("../../scripts/cassandra/enable-mv.sh", "/enable-mv.sh", isReadOnly: true)
         .WithBindMount("../../db/scylla/cassandra-rackdc.nam.properties", "/etc/cassandra/cassandra-rackdc.properties", isReadOnly: true)
-        .WithVolume("cassandra_data", "/var/lib/cassandra")
         .WithEndpoint(port: scyllaPort, targetPort: 9042, name: "cql", scheme: "tcp")
-        .WithHealthCheck("scylla-health")
         .WithEntrypoint("/enable-mv.sh")
-        .WithLifetime(ContainerLifetime.Persistent)
         .PublishAsDockerComposeService((_, service) =>
         {
             service.Networks = ["scylla"];
@@ -178,6 +188,14 @@ if (mode == "cassandra")
                 StartPeriod = "30s"
             };
         });
+
+    if (includeApi)
+        cassandra.WithHealthCheck("scylla-health");
+    if (persistentContainers)
+    {
+        cassandra.WithVolume("cassandra_data", "/var/lib/cassandra");
+        cassandra.WithLifetime(ContainerLifetime.Persistent);
+    }
 
     loadKeysImage = "cassandra";
     loadKeysTag = "5";
@@ -207,8 +225,6 @@ else
                 "--endpoint-snitch", "GossipingPropertyFileSnitch",
                 "--api-address", "0.0.0.0", "--broadcast-address", name)
             .WithBindMount($"../../db/scylla/cassandra-rackdc.{region}.properties", "/etc/scylla/cassandra-rackdc.properties", isReadOnly: true)
-            .WithVolume(regions.Length > 1 ? $"scylla_{region}_data" : "scylla_data", "/var/lib/scylla")
-            .WithLifetime(ContainerLifetime.Persistent)
             .WithEnvironment("CQLSH_USER", scyllaUser)
             .WithEnvironment("CQLSH_PASSWORD", scyllaPassword)
             .PublishAsDockerComposeService((_, service) =>
@@ -224,10 +240,16 @@ else
                 };
             });
 
+        if (persistentContainers)
+        {
+            node.WithVolume(regions.Length > 1 ? $"scylla_{region}_data" : "scylla_data", "/var/lib/scylla");
+            node.WithLifetime(ContainerLifetime.Persistent);
+        }
+
         if (previousNode is null)
         {
             node.WithEndpoint(port: scyllaPort, targetPort: 9042, name: "cql", scheme: "tcp");
-            node.WithHealthCheck("scylla-health");
+            if (includeApi) node.WithHealthCheck("scylla-health");
             scyllaEndpointOwner = node;
         }
         else
@@ -252,7 +274,6 @@ var scyllaBootstrapAuth = builder.AddContainer("scylla-bootstrap-auth", loadKeys
     .WithEnvironment("SCYLLA_ADMIN_PASSWORD", scyllaAdminPassword)
     .WithEntrypoint("/bin/bash")
     .WithArgs("/scripts/scylla-bootstrap-auth.sh", scyllaFirstHost)
-    .WaitFor(loadKeysWaitTarget)
     .PublishAsDockerComposeService((_, service) =>
     {
         service.Networks = ["scylla"];
@@ -262,6 +283,10 @@ var scyllaBootstrapAuth = builder.AddContainer("scylla-bootstrap-auth", loadKeys
                 dep.Condition = "service_healthy";
         }
     });
+// In test mode (include-api=false), skip Aspire-level WaitFor — the bootstrap script
+// has its own CQL retry loop and Aspire's WaitFor can hang in testing environments.
+if (includeApi)
+    scyllaBootstrapAuth.WaitFor(loadKeysWaitTarget);
 
 // --- Endpoint references (resolve to localhost:{hostPort} in dev, container:{targetPort} in compose) ---
 var pgEndpoint = msgDb.GetEndpoint("postgres");
@@ -278,6 +303,7 @@ var pgBootstrapAuth = builder.AddContainer("pg-bootstrap-auth", "timescale/times
     .WithEnvironment("SCYLLA_ADMIN_PASSWORD", scyllaAdminPassword)
     .WithEnvironment("SCYLLA_CONTACT_POINTS",
         builder.ExecutionContext.IsPublishMode ? scyllaFirstHost : "localhost")
+    .WithEnvironment("SCYLLA_PORT", scyllaPort.ToString())
     .WithEnvironment("SCYLLA_DATACENTER", "nam")
     .WithEnvironment("SCYLLA_KEYSPACE", "nam")
     .WithEnvironment("OCTOCON_GOOGLE_OAUTH_CLIENT_SECRET", googleOAuthClientSecret)
@@ -293,31 +319,34 @@ var pgBootstrapAuth = builder.AddContainer("pg-bootstrap-auth", "timescale/times
             dep.Condition = "service_healthy";
     });
 
-// --- Interfold API (from source) ---
-var api = builder.AddProject<Projects.Interfold_Api>("interfold-api")
-    .WithHttpEndpoint(port: apiHttpPort, targetPort: 5100, name: "http")
-    .WithHttpsEndpoint(port: apiHttpsPort, targetPort: 5101, name: "https")
-    .WithHttpHealthCheck("/health/ready", endpointName: "http")
-    .WithEnvironment("OCTOCON_PERSISTENCE", "scylla-postgres")
-    .WithEnvironment("OCTOCON_SINGLE_SCYLLA_INSTANCE", mode == "multi" ? "false" : "true")
-    .WithEnvironment("OCTOCON_POSTGRES_CONNECTION",
-        ReferenceExpression.Create($"Host={pgEndpoint.Property(EndpointProperty.Host)};Port={pgEndpoint.Property(EndpointProperty.Port)};Database=octocon;Username={postgresUser};Password={postgresPassword}"))
-    .WithEnvironment("ENCRYPTION_PRIVATE_KEY", encryptionPrivateKey)
-    .WithExternalHttpEndpoints()
-    .WaitForCompletion(pgBootstrapAuth)
-    .WaitForCompletion(scyllaBootstrapAuth)
-    .PublishAsDockerComposeService((_, service) =>
-    {
-        service.Networks = ["scylla", "postgres", "api"];
-        service.Healthcheck = new Healthcheck
+// --- Interfold API (from source, skipped when include-api=false for integration tests) ---
+if (includeApi)
+{
+    var api = builder.AddProject<Projects.Interfold_Api>("interfold-api")
+        .WithHttpEndpoint(port: apiHttpPort, targetPort: 5100, name: "http")
+        .WithHttpsEndpoint(port: apiHttpsPort, targetPort: 5101, name: "https")
+        .WithHttpHealthCheck("/health/ready", endpointName: "http")
+        .WithEnvironment("OCTOCON_PERSISTENCE", "scylla-postgres")
+        .WithEnvironment("OCTOCON_SINGLE_SCYLLA_INSTANCE", mode == "multi" ? "false" : "true")
+        .WithEnvironment("OCTOCON_POSTGRES_CONNECTION",
+            ReferenceExpression.Create($"Host={pgEndpoint.Property(EndpointProperty.Host)};Port={pgEndpoint.Property(EndpointProperty.Port)};Database=octocon;Username={postgresUser};Password={postgresPassword}"))
+        .WithEnvironment("ENCRYPTION_PRIVATE_KEY", encryptionPrivateKey)
+        .WithExternalHttpEndpoints()
+        .WaitForCompletion(pgBootstrapAuth)
+        .WaitForCompletion(scyllaBootstrapAuth)
+        .PublishAsDockerComposeService((_, service) =>
         {
-            Test = ["CMD", "curl", "-f", "http://localhost:5100/health/ready"],
-            Interval = "15s",
-            Timeout = "5s",
-            Retries = 10,
-            StartPeriod = "20s"
-        };
-    });
+            service.Networks = ["scylla", "postgres", "api"];
+            service.Healthcheck = new Healthcheck
+            {
+                Test = ["CMD", "curl", "-f", "http://localhost:5100/health/ready"],
+                Interval = "15s",
+                Timeout = "5s",
+                Retries = 10,
+                StartPeriod = "20s"
+            };
+        });
+}
 
 // --- Octocon Web (pre-built container, optional) ---
 var includeWeb = !string.Equals(builder.Configuration["Parameters:include-web"], "false", StringComparison.OrdinalIgnoreCase);

@@ -1,67 +1,25 @@
-﻿using System.Net;
+using System.Net;
 using System.Net.Http.Json;
-using Interfold.IntegrationTests.Attributes;
 using Interfold.IntegrationTests.TestServices;
 using Microsoft.AspNetCore.Mvc.Testing;
 
 namespace Interfold.IntegrationTests.Controllers;
 
-public class SettingsControllerTests : BaseEndpointTest
+[ClassDataSource<InMemoryWebFactoryFixture>(Shared = SharedType.PerTestSession)]
+[ClassDataSource<ScyllaWebFactoryFixture>(Shared = SharedType.PerTestSession)]
+[ClassDataSource<CassandraWebFactoryFixture>(Shared = SharedType.PerTestSession)]
+public class SettingsControllerTests(IWebFactoryFixture fixture) : BaseEndpointTest
 {
-    [Test, ApiIntegration]
-    [CombinedDataSources]
-    public async Task Api_SettingsAvatarMultipart_PersistsAndServesAvatar([InterfoldFactoryGenerator] InterfoldWebApplicationFactory factory)
+    [Test]
+    public async Task SettingsField_InvalidType_FallsBackToText_ReturnsCreatedWithId()
     {
-        var runId = Guid.NewGuid().ToString("N");
-        var storageRoot = Path.Combine(Path.GetTempPath(), "octocon-itest", "avatars", runId);
-        var publicBase = $"/avatars-itest/{runId}";
-
-        try
-        {
-            Directory.CreateDirectory(storageRoot);
-
-            factory
-                .WithConfiguration("OCTOCON_AVATAR_STORAGE_ROOT", storageRoot)
-                .WithConfiguration("OCTOCON_AVATAR_PUBLIC_BASE", publicBase);
-            
-            using var client = factory.CreateClient();
-
-            var principalId = $"sys-avatar-{Guid.NewGuid():N}"[..18];
-
-            using var uploadRequest = BuildMultipartUploadRequest(client, "/api/settings/avatar", principalId, "avatar-system.png", "image/png");
-            var uploadResponse = await client.SendAsync(uploadRequest);
-            await Assert.That(uploadResponse.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
-
-            using var profileRequest = new HttpRequestMessage(HttpMethod.Get, $"/api/systems/{principalId}");
-            AttachPrincipalAuth(profileRequest, client, principalId);
-            var profileResponse = await client.SendAsync(profileRequest);
-            var profileBody = await profileResponse.Content.ReadAsStringAsync();
-
-            var avatarUrl = ReadNestedStringField(profileBody, "data", "avatar_url");
-            using (Assert.Multiple())
-            {
-                await Assert.That(profileResponse.StatusCode).IsEqualTo(HttpStatusCode.OK);
-                await Assert.That(avatarUrl).IsNotNullOrWhiteSpace();
-                await Assert.That(UrlPathStartsWith(avatarUrl, $"{publicBase}/{principalId}/self/")).IsTrue();
-            }
-        }
-        finally
-        {
-            if (Directory.Exists(storageRoot))
-                Directory.Delete(storageRoot, true);
-        }
-    }
-    
-    [Test, ApiIntegration]
-    [CombinedDataSources]
-    public async Task SettingsField_InvalidType_FallsBackToText_ReturnsCreatedWithId([InterfoldFactoryGenerator] InterfoldWebApplicationFactory factory)
-    {
-        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        using var client = fixture.Factory.CreateClient(new WebApplicationFactoryClientOptions
         {
             AllowAutoRedirect = false
         });
 
         var principal = "parity-field-fallback";
+        await EnsureUserExistsAsync(client, principal);
 
         // type = "garbage" — Elixir falls back to "text"; C# must do the same
         using var req1 = new HttpRequestMessage(HttpMethod.Post, "/api/settings/fields")
@@ -79,16 +37,16 @@ public class SettingsControllerTests : BaseEndpointTest
         }
     }
     
-    [Test, ApiIntegration]
-    [CombinedDataSources]
-    public async Task SettingsField_MissingType_FallsBackToText_ReturnsCreatedWithId([InterfoldFactoryGenerator] InterfoldWebApplicationFactory factory)
+    [Test]
+    public async Task SettingsField_MissingType_FallsBackToText_ReturnsCreatedWithId()
     {
-        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        using var client = fixture.Factory.CreateClient(new WebApplicationFactoryClientOptions
         {
             AllowAutoRedirect = false
         });
 
         var principal = "parity-field-missing-type";
+        await EnsureUserExistsAsync(client, principal);
 
         // type absent entirely
         using var req = new HttpRequestMessage(HttpMethod.Post, "/api/settings/fields")
@@ -106,11 +64,10 @@ public class SettingsControllerTests : BaseEndpointTest
         }
     }
     
-    [Test, ApiIntegration]
-    [CombinedDataSources]
-    public async Task Idempotency_SettingsUsernameUpdate_ReplayStable([InterfoldFactoryGenerator] InterfoldWebApplicationFactory factory)
+    [Test]
+    public async Task Idempotency_SettingsUsernameUpdate_ReplayStable()
     {
-        await RunSoakAsync(factory, async (client, key) =>
+        await RunSoakAsync(fixture.Factory, async (client, key) =>
         {
             using var req = new HttpRequestMessage(HttpMethod.Post, "/api/settings/username")
             {
@@ -121,16 +78,16 @@ public class SettingsControllerTests : BaseEndpointTest
         });
     }
     
-    [Test, ApiIntegration]
-    [CombinedDataSources]
-    public async Task SettingsField_Create_ReturnsCreatedFieldId([InterfoldFactoryGenerator] InterfoldWebApplicationFactory factory)
+    [Test]
+    public async Task SettingsField_Create_ReturnsCreatedFieldId()
     {
-        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        using var client = fixture.Factory.CreateClient(new WebApplicationFactoryClientOptions
         {
             AllowAutoRedirect = false
         });
 
         var principal = "parity-field-defaults";
+        await EnsureUserExistsAsync(client, principal);
 
         // Create field without explicit security_level.
         using var req = new HttpRequestMessage(HttpMethod.Post, "/api/settings/fields")

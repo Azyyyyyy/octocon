@@ -68,6 +68,7 @@ public static async Task HandleUserSocketAsync(HttpContext context)
     using var sendGate = new SemaphoreSlim(1, 1);
     using var pushCts = CancellationTokenSource.CreateLinkedTokenSource(context.RequestAborted);
     var eventBus = context.RequestServices.GetRequiredService<IClusterEventBus>();
+    var rateLimiter = context.RequestServices.GetRequiredService<SocketJoinRateLimiter>();
     var frontingRepository = context.RequestServices.GetRequiredService<IFrontingRepository>();
     var alterRepository = context.RequestServices.GetRequiredService<IAlterRepository>();
     var tagRepository = context.RequestServices.GetRequiredService<ITagRepository>();
@@ -208,7 +209,7 @@ public static async Task HandleUserSocketAsync(HttpContext context)
                 && string.Equals(payloadToken, token, StringComparison.Ordinal)
                 && tokenAuthorized)
             {
-                if (!SocketJoinRateLimiter.Allow(requestedSystemId, DateTimeOffset.UtcNow))
+                if (!rateLimiter.Allow(requestedSystemId))
                 {
                     await SendPhoenixReplyAsync(
                         socket,

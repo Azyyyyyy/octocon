@@ -17,16 +17,15 @@ namespace Interfold.Infrastructure.DependencyInjection;
 public static partial class ServiceCollectionExtensions
 {
     private static readonly ConcurrentDictionary<PersistenceMode, List<Func<IServiceCollection, PersistenceConfiguration, IServiceCollection>>> PersistenceReg = [];
+    private static readonly Lock PersistenceRegLock = new();
 
     internal static void AddPersistenceMode(PersistenceMode persistenceMode, Func<IServiceCollection, PersistenceConfiguration, IServiceCollection> reg)
     {
-        if (!PersistenceReg.TryGetValue(persistenceMode, out var regs))
+        lock (PersistenceRegLock)
         {
-            regs = [];
-            PersistenceReg.GetOrAdd(persistenceMode, regs);
+            var regs = PersistenceReg.GetOrAdd(persistenceMode, _ => []);
+            regs.Add(reg);
         }
-
-        regs.Add(reg);
     }
     
     public static IServiceCollection AddInterfoldPersistence(

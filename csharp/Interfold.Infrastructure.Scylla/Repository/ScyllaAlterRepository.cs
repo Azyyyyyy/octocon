@@ -18,7 +18,7 @@ public sealed class ScyllaAlterRepository : IAlterRepository
     private readonly IPollRepository _pollRepository;
     private readonly PersistenceConfiguration _options;
     private readonly ILogger<ScyllaAlterRepository> _logger;
-    private static readonly ConcurrentDictionary<string, byte> UdtMappings = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly ConcurrentDictionary<(int ClusterId, string Keyspace), byte> UdtMappings = new();
 
     public ScyllaAlterRepository(
         IScyllaSessionProvider sessionProvider,
@@ -690,7 +690,8 @@ public sealed class ScyllaAlterRepository : IAlterRepository
 
     public static void EnsureAlterFieldUdtMapping(ISession session, string keyspace)
     {
-        if (UdtMappings.ContainsKey(keyspace))
+        var key = (System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(session.Cluster), keyspace);
+        if (UdtMappings.ContainsKey(key))
         {
             return;
         }
@@ -700,7 +701,7 @@ public sealed class ScyllaAlterRepository : IAlterRepository
                 .Map(f => f.Id, "id")
                 .Map(f => f.Value, "value"));
 
-        UdtMappings.TryAdd(keyspace, 0);
+        UdtMappings.TryAdd(key, 0);
     }
 
     public sealed class AlterFieldUdt

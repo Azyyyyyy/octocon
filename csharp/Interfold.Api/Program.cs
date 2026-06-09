@@ -106,6 +106,8 @@ if (persistenceConfig.Mode == "scylla-postgres")
     }
 }
 builder.Services.AddSingleton<IAvatarStorage, LocalAvatarStorage>();
+builder.Services.AddSingleton(TimeProvider.System);
+builder.Services.AddSingleton<Interfold.Api.Socket.SocketJoinRateLimiter>();
 
 builder.Services.AddTransient<HttpLoggingHandler>();
 

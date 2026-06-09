@@ -12,10 +12,8 @@ public sealed class ScyllaPollRepository : IPollRepository
 {
     private static readonly Dictionary<string, short> PollTypeToCode = new(StringComparer.OrdinalIgnoreCase)
     {
-        ["single_choice"] = 0,
-        ["vote"] = 0,  // Alias for single_choice
-        ["multiple_choice"] = 1,
-        ["choice"] = 1,  // Alias for multiple_choice
+        ["vote"] = 0,
+        ["choice"] = 1,
         ["approval"] = 2
     };
 

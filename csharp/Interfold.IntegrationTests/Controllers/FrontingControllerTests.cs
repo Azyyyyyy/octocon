@@ -1,20 +1,21 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
-using Interfold.IntegrationTests.Attributes;
 using Interfold.IntegrationTests.TestServices;
 using Microsoft.AspNetCore.Mvc.Testing;
 
 namespace Interfold.IntegrationTests.Controllers;
 
-public class FrontingControllerTests : BaseEndpointTest
+[ClassDataSource<InMemoryWebFactoryFixture>(Shared = SharedType.PerTestSession)]
+[ClassDataSource<ScyllaWebFactoryFixture>(Shared = SharedType.PerTestSession)]
+[ClassDataSource<CassandraWebFactoryFixture>(Shared = SharedType.PerTestSession)]
+public class FrontingControllerTests(IWebFactoryFixture fixture) : BaseEndpointTest
 {
     
-    [Test, ApiIntegration]
-    [CombinedDataSources]
-    public async Task FrontStart_LegacyIdField_Returns201([InterfoldFactoryGenerator] InterfoldWebApplicationFactory factory)
+    [Test]
+    public async Task FrontStart_LegacyIdField_Returns201()
     {
-        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        using var client = fixture.Factory.CreateClient(new WebApplicationFactoryClientOptions
         {
             AllowAutoRedirect = false
         });
@@ -33,15 +34,14 @@ public class FrontingControllerTests : BaseEndpointTest
         await Assert.That(res.StatusCode).IsEqualTo(HttpStatusCode.Created);
     }
 
-    [Test, ApiIntegration]
-    [CombinedDataSources]
-    public async Task Api_FrontHistoryBetween_IncludesEndedFronts([InterfoldFactoryGenerator] InterfoldWebApplicationFactory factory)
+    [Test]
+    public async Task Api_FrontHistoryBetween_IncludesEndedFronts()
     {
-        factory
+        fixture.Factory            
             .WithConfiguration("OCTOCON_DEEPLINK_ADDRESS", "octocon://app")
             .WithConfiguration("OCTOCON_SCYLLA_KEYSPACE", "nam");
 
-        using var client = factory.CreateClient();
+        using var client = fixture.Factory.CreateClient();
 
         var startAnchor = DateTimeOffset.UtcNow.AddMinutes(-1).ToUnixTimeSeconds();
 

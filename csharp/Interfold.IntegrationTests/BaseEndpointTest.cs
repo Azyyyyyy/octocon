@@ -222,6 +222,8 @@ public class BaseEndpointTest
         client.DefaultRequestHeaders.Remove("X-Interfold-Principal");
         client.DefaultRequestHeaders.Add("X-Interfold-Principal", "soak-default-principal");
 
+        await EnsureUserExistsAsync(client, "soak-default-principal");
+
         var key = Guid.NewGuid().ToString("N");
 
         for (var i = 0; i < SoakRepeatCount; i++)
@@ -278,6 +280,8 @@ public class BaseEndpointTest
 
     internal static async Task<int> CreateAlterAsync(HttpClient client, string principal, string name)
     {
+        await EnsureUserExistsAsync(client, principal);
+
         using var req = new HttpRequestMessage(HttpMethod.Post, "/api/systems/me/alters");
         req.Content = JsonContent.Create(new { name });
         AttachPrincipalAuth(req, client, principal);
@@ -307,6 +311,8 @@ public class BaseEndpointTest
 
     internal static async Task<string> CreateTagAsync(HttpClient client, string principal, string name)
     {
+        await EnsureUserExistsAsync(client, principal);
+
         using var req = new HttpRequestMessage(HttpMethod.Post, "/api/systems/me/tags");
         req.Content = JsonContent.Create(new { name });
         AttachPrincipalAuth(req, client, principal);
@@ -542,6 +548,10 @@ public class BaseEndpointTest
 
         var token = AuthHelper.CreateToken(authConfig, expiresAt, now, jti, systemId);
         await rev.RecordTokenAsync(jti, systemId, expiresAt, CancellationToken.None);
+
+        // Ensure user row exists in backing store (required for Scylla/Cassandra)
+        using var client = factory.CreateClient();
+        await EnsureUserExistsAsync(client, systemId);
         
         return token;
     }

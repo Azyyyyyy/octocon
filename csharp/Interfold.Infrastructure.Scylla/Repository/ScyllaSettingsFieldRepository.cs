@@ -29,7 +29,7 @@ public sealed class ScyllaSettingsFieldRepository : ISettingsFieldRepository
     private readonly IScyllaSessionProvider _sessionProvider;
     private readonly IScyllaKeyspaceResolver _keyspaceResolver;
     private readonly PersistenceConfiguration _options;
-    private static readonly ConcurrentDictionary<string, byte> UdtMappings = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly ConcurrentDictionary<(int ClusterId, string Keyspace), byte> UdtMappings = new();
 
     public ScyllaSettingsFieldRepository(
         IScyllaSessionProvider sessionProvider,
@@ -85,11 +85,7 @@ public sealed class ScyllaSettingsFieldRepository : ISettingsFieldRepository
             var keyspace = _keyspaceResolver.ResolveRegionalKeyspace(systemId);
             EnsureFieldUdtMapping(session, keyspace);
 
-            var fields = await LoadFieldsAsync(session, keyspace, normalizedSystemId);
-            if (fields is null)
-            {
-                return null;
-            }
+            var fields = await LoadFieldsAsync(session, keyspace, normalizedSystemId) ?? [];
 
             var fieldId = Guid.NewGuid();
             fields.Add(CreateFieldUdt(session, keyspace, fieldId, name, type, securityLevel, locked));
@@ -327,7 +323,8 @@ public sealed class ScyllaSettingsFieldRepository : ISettingsFieldRepository
 
     private static void EnsureFieldUdtMapping(ISession session, string keyspace)
     {
-        if (UdtMappings.ContainsKey(keyspace))
+        var key = (System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(session.Cluster), keyspace);
+        if (UdtMappings.ContainsKey(key))
         {
             return;
         }
@@ -341,7 +338,7 @@ public sealed class ScyllaSettingsFieldRepository : ISettingsFieldRepository
                 .Map(f => f.Locked, "locked")
                 .Map(f => f.SecurityLevel, "security_level"));
 
-        UdtMappings.TryAdd(keyspace, 0);
+        UdtMappings.TryAdd(key, 0);
     }
 
     private static short ParseType(string type)

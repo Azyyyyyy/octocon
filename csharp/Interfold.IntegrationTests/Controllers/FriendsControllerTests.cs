@@ -1,6 +1,11 @@
-﻿namespace Interfold.IntegrationTests.Controllers;
+﻿using Interfold.IntegrationTests.TestServices;
 
-public class FriendsControllerTests : BaseEndpointTest
+namespace Interfold.IntegrationTests.Controllers;
+
+[ClassDataSource<InMemoryWebFactoryFixture>(Shared = SharedType.PerTestSession)]
+[ClassDataSource<ScyllaWebFactoryFixture>(Shared = SharedType.PerTestSession)]
+[ClassDataSource<CassandraWebFactoryFixture>(Shared = SharedType.PerTestSession)]
+public class FriendsControllerTests(IWebFactoryFixture fixture) : BaseEndpointTest
 {
     //TODO: MAKE
 }

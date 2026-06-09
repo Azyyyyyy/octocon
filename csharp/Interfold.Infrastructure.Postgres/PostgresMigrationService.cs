@@ -17,6 +17,9 @@ public sealed class PostgresMigrationService(
     ISecretsStore secretsStore,
     ILogger<PostgresMigrationService> logger) : IHostedLifecycleService
 {
+    // Advisory lock key used to serialize migrations across concurrent hosts sharing the same DB.
+    private const long MigrationAdvisoryLockId = 8675309_2024_0001;
+
     public async Task StartingAsync(CancellationToken cancellationToken)
     {
         // Build admin connection from app connection + admin credentials from secrets store
@@ -40,15 +43,31 @@ public sealed class PostgresMigrationService(
         await using var connection = new NpgsqlConnection(adminConnectionString);
         await connection.OpenAsync(cancellationToken);
 
-        var migrations = GetMigrationScripts();
-        foreach (var (name, sql) in migrations)
+        // Acquire session-level advisory lock to prevent concurrent migration runs
+        await using (var lockCmd = new NpgsqlCommand("SELECT pg_advisory_lock(@key)", connection))
         {
-            logger.LogInformation("[pg-migrate] Applying: {Migration}", name);
-            await using var cmd = new NpgsqlCommand(sql, connection);
-            await cmd.ExecuteNonQueryAsync(cancellationToken);
+            lockCmd.Parameters.AddWithValue("key", MigrationAdvisoryLockId);
+            await lockCmd.ExecuteNonQueryAsync(cancellationToken);
         }
 
-        logger.LogInformation("[pg-migrate] All migrations applied ({Count} files).", migrations.Count);
+        try
+        {
+            var migrations = GetMigrationScripts();
+            foreach (var (name, sql) in migrations)
+            {
+                logger.LogInformation("[pg-migrate] Applying: {Migration}", name);
+                await using var cmd = new NpgsqlCommand(sql, connection);
+                await cmd.ExecuteNonQueryAsync(cancellationToken);
+            }
+
+            logger.LogInformation("[pg-migrate] All migrations applied ({Count} files).", migrations.Count);
+        }
+        finally
+        {
+            await using var unlockCmd = new NpgsqlCommand("SELECT pg_advisory_unlock(@key)", connection);
+            unlockCmd.Parameters.AddWithValue("key", MigrationAdvisoryLockId);
+            await unlockCmd.ExecuteNonQueryAsync(cancellationToken);
+        }
     }
 
     public Task StartAsync(CancellationToken cancellationToken) => Task.CompletedTask;

@@ -1,18 +1,19 @@
-﻿using System.Net;
+using System.Net;
 using System.Net.Http.Json;
-using Interfold.IntegrationTests.Attributes;
 using Interfold.IntegrationTests.TestServices;
 using Microsoft.AspNetCore.Mvc.Testing;
 
 namespace Interfold.IntegrationTests.Controllers;
 
-public class PublicSystemsControllerTests : BaseEndpointTest
+[ClassDataSource<InMemoryWebFactoryFixture>(Shared = SharedType.PerTestSession)]
+[ClassDataSource<ScyllaWebFactoryFixture>(Shared = SharedType.PerTestSession)]
+[ClassDataSource<CassandraWebFactoryFixture>(Shared = SharedType.PerTestSession)]
+public class PublicSystemsControllerTests(IWebFactoryFixture fixture) : BaseEndpointTest
 {
-    [Test, ApiIntegration]
-    [CombinedDataSources]
-    public async Task PublicBatch_SelfLookup_Returns403InvalidEndpoint([InterfoldFactoryGenerator] InterfoldWebApplicationFactory factory)
+    [Test]
+    public async Task PublicBatch_SelfLookup_Returns403InvalidEndpoint()
     {
-        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        using var client = fixture.Factory.CreateClient(new WebApplicationFactoryClientOptions
         {
             AllowAutoRedirect = false
         });
@@ -33,11 +34,10 @@ public class PublicSystemsControllerTests : BaseEndpointTest
         }
     }
 
-    [Test, ApiIntegration, Skip("Need to rework")] //Well all of them really...
-    [CombinedDataSources]
-    public async Task Visibility_NonFriendFriendTrusted_AppliesToFronting([InterfoldFactoryGenerator] InterfoldWebApplicationFactory factory)
+    [Test, Skip("Need to rework")] //Well all of them really...
+    public async Task Visibility_NonFriendFriendTrusted_AppliesToFronting()
     {
-        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        using var client = fixture.Factory.CreateClient(new WebApplicationFactoryClientOptions
         {
             AllowAutoRedirect = false
         });
@@ -93,11 +93,10 @@ public class PublicSystemsControllerTests : BaseEndpointTest
         await AssertContainsAsync(client, $"/api/systems/{owner}/fronting", trusted, alterPrivate.ToString(), expectedPresent: false);
     }
 
-    [Test, ApiIntegration]
-    [CombinedDataSources]
-    public async Task PublicAlter_PrivateSecurity_Returns404ForAnonymous([InterfoldFactoryGenerator] InterfoldWebApplicationFactory factory)
+    [Test]
+    public async Task PublicAlter_PrivateSecurity_Returns404ForAnonymous()
     {
-        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        using var client = fixture.Factory.CreateClient(new WebApplicationFactoryClientOptions
         {
             AllowAutoRedirect = false
         });
@@ -119,11 +118,10 @@ public class PublicSystemsControllerTests : BaseEndpointTest
         await Assert.That(publicRes.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
     }
 
-    [Test, ApiIntegration]
-    [CombinedDataSources]
-    public async Task Visibility_NonFriendFriendTrusted_AppliesAcrossPublicReads([InterfoldFactoryGenerator] InterfoldWebApplicationFactory factory)
+    [Test]
+    public async Task Visibility_NonFriendFriendTrusted_AppliesAcrossPublicReads()
     {
-        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        using var client = fixture.Factory.CreateClient(new WebApplicationFactoryClientOptions
         {
             AllowAutoRedirect = false
         });
@@ -173,11 +171,10 @@ public class PublicSystemsControllerTests : BaseEndpointTest
         await AssertContainsAsync(client, $"/api/systems/{owner}/alters/{alterPrivate}", trusted, "alter_not_found", expectedPresent: true, expectedStatus: HttpStatusCode.NotFound);
     }
 
-    [Test, ApiIntegration]
-    [CombinedDataSources]
-    public async Task PublicTag_PrivateSecurity_Returns404ForAnonymous([InterfoldFactoryGenerator] InterfoldWebApplicationFactory factory)
+    [Test]
+    public async Task PublicTag_PrivateSecurity_Returns404ForAnonymous()
     {
-        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        using var client = fixture.Factory.CreateClient(new WebApplicationFactoryClientOptions
         {
             AllowAutoRedirect = false
         });
@@ -199,11 +196,10 @@ public class PublicSystemsControllerTests : BaseEndpointTest
         await Assert.That(publicRes.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
     }
 
-    [Test, ApiIntegration]
-    [CombinedDataSources]
-    public async Task Visibility_NonFriendFriendTrusted_AppliesToTags([InterfoldFactoryGenerator] InterfoldWebApplicationFactory factory)
+    [Test]
+    public async Task Visibility_NonFriendFriendTrusted_AppliesToTags()
     {
-        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        using var client = fixture.Factory.CreateClient(new WebApplicationFactoryClientOptions
         {
             AllowAutoRedirect = false
         });

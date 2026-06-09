@@ -1,19 +1,20 @@
-﻿using System.Net;
+using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
-using Interfold.IntegrationTests.Attributes;
 using Interfold.IntegrationTests.TestServices;
 using Microsoft.AspNetCore.Mvc.Testing;
 
 namespace Interfold.IntegrationTests.Controllers;
 
-public class TagsControllerTests : BaseEndpointTest
+[ClassDataSource<InMemoryWebFactoryFixture>(Shared = SharedType.PerTestSession)]
+[ClassDataSource<ScyllaWebFactoryFixture>(Shared = SharedType.PerTestSession)]
+[ClassDataSource<CassandraWebFactoryFixture>(Shared = SharedType.PerTestSession)]
+public class TagsControllerTests(IWebFactoryFixture fixture) : BaseEndpointTest
 {
-    [Test, ApiIntegration]
-    [CombinedDataSources]
-    public async Task Idempotency_TagCreate_ReplayStable([InterfoldFactoryGenerator] InterfoldWebApplicationFactory factory)
+    [Test]
+    public async Task Idempotency_TagCreate_ReplayStable()
     {
-        await RunSoakAsync(factory, async (client, key) =>
+        await RunSoakAsync(fixture.Factory, async (client, key) =>
         {
             using var req = new HttpRequestMessage(HttpMethod.Post, "/api/systems/me/tags")
             {
@@ -25,10 +26,9 @@ public class TagsControllerTests : BaseEndpointTest
     }
     
     [Test]
-    [CombinedDataSources]
-    public async Task TagParent_SetAndRemove_Returns204([InterfoldFactoryGenerator] InterfoldWebApplicationFactory factory)
+    public async Task TagParent_SetAndRemove_Returns204()
     {
-        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        using var client = fixture.Factory.CreateClient(new WebApplicationFactoryClientOptions
         {
             AllowAutoRedirect = false
         });

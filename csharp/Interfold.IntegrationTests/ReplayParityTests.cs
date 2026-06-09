@@ -1,4 +1,3 @@
-using Interfold.IntegrationTests.Attributes;
 using Microsoft.AspNetCore.Mvc.Testing;
 using System.Text;
 using System.Text.Json;
@@ -16,7 +15,10 @@ namespace Interfold.IntegrationTests;
 /// </para>
 /// Gated on <c>OCTOCON_RUN_API_INTEGRATION=true</c>.
 /// </summary>
-public sealed class ReplayParityTests : BaseEndpointTest
+[ClassDataSource<InMemoryWebFactoryFixture>(Shared = SharedType.PerTestSession)]
+[ClassDataSource<ScyllaWebFactoryFixture>(Shared = SharedType.PerTestSession)]
+[ClassDataSource<CassandraWebFactoryFixture>(Shared = SharedType.PerTestSession)]
+public sealed class ReplayParityTests(IWebFactoryFixture fixture) : BaseEndpointTest
 {
     public static IEnumerable<string> GetReplayFiles()
     {
@@ -29,11 +31,11 @@ public sealed class ReplayParityTests : BaseEndpointTest
         yield return "friendship-lifecycle.trace.json";
     }
     
-    [Test, ApiIntegration]
+    [Test]
     [CombinedDataSources]
-    public async Task Replay_PassesAllSteps([InterfoldFactoryGenerator] InterfoldWebApplicationFactory factory, [MethodDataSource(typeof(ReplayParityTests), nameof(GetReplayFiles))] string fixtureFileName)
+    public async Task Replay_PassesAllSteps([MethodDataSource(typeof(ReplayParityTests), nameof(GetReplayFiles))] string fixtureFileName)
     {
-        await RunTraceAsync(factory, fixtureFileName);
+        await RunTraceAsync(fixture.Factory, fixtureFileName);
     }
 
     // -----------------------------------------------------------------------
@@ -55,6 +57,18 @@ public sealed class ReplayParityTests : BaseEndpointTest
         {
             AllowAutoRedirect = false
         });
+
+        // Seed all principals referenced in the trace so Scylla/Cassandra
+        // backends have the user rows before operations execute.
+        var principals = trace.Steps
+            .Select(s => s.PrincipalId)
+            .Where(p => !string.IsNullOrWhiteSpace(p))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        foreach (var principal in principals)
+        {
+            await EnsureUserExistsAsync(client, principal!);
+        }
 
         // Mutable variable store for {varName} substitutions across steps.
         var vars = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);

@@ -1,16 +1,17 @@
-﻿using System.Net.Http.Json;
-using Interfold.IntegrationTests.Attributes;
+using System.Net.Http.Json;
 using Interfold.IntegrationTests.TestServices;
 
 namespace Interfold.IntegrationTests.Controllers;
 
-public class JournalsControllerTests : BaseEndpointTest
+[ClassDataSource<InMemoryWebFactoryFixture>(Shared = SharedType.PerTestSession)]
+[ClassDataSource<ScyllaWebFactoryFixture>(Shared = SharedType.PerTestSession)]
+[ClassDataSource<CassandraWebFactoryFixture>(Shared = SharedType.PerTestSession)]
+public class JournalsControllerTests(IWebFactoryFixture fixture) : BaseEndpointTest
 {
-    [Test, ApiIntegration]
-    [CombinedDataSources]
-    public async Task Idempotency_GlobalJournalCreate_ReplayStable([InterfoldFactoryGenerator] InterfoldWebApplicationFactory factory)
+    [Test]
+    public async Task Idempotency_GlobalJournalCreate_ReplayStable()
     {
-        await RunSoakAsync(factory, async (client, key) =>
+        await RunSoakAsync(fixture.Factory, async (client, key) =>
         {
             using var req = new HttpRequestMessage(HttpMethod.Post, "/api/journals")
             {

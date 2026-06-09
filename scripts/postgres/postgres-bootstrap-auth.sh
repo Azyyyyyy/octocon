@@ -220,6 +220,7 @@ upsert_secret "scylla:local_datacenter" "${SCYLLA_DATACENTER:-datacenter1}"
 upsert_secret "scylla:username" "${SCYLLA_USER:-}"
 upsert_secret "scylla:password" "${SCYLLA_PASSWORD:-}"
 upsert_secret "scylla:keyspace" "${SCYLLA_KEYSPACE:-nam}"
+upsert_secret "scylla:port" "${SCYLLA_PORT:-9042}"
 
 # --- Step 7: Scramble the cluster owner password ---
 INIT_SCRAMBLED_PASS=$(head -c 32 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 32)

@@ -1,18 +1,19 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
-using Interfold.IntegrationTests.Attributes;
 using Interfold.IntegrationTests.Models;
 using Interfold.IntegrationTests.TestServices;
 using Microsoft.AspNetCore.Mvc.Testing;
 
 namespace Interfold.IntegrationTests.Controllers;
 
-public class AltersControllerTests : BaseEndpointTest
+[ClassDataSource<InMemoryWebFactoryFixture>(Shared = SharedType.PerTestSession)]
+[ClassDataSource<ScyllaWebFactoryFixture>(Shared = SharedType.PerTestSession)]
+[ClassDataSource<CassandraWebFactoryFixture>(Shared = SharedType.PerTestSession)]
+public class AltersControllerTests(IWebFactoryFixture fixture) : BaseEndpointTest
 {
-    [Test, ApiIntegration]
-    [CombinedDataSources]
-    public async Task Api_AlterAvatarMultipart_PersistsAndReflectsOnPublicAlter([InterfoldFactoryGenerator] InterfoldWebApplicationFactory factory)
+    [Test]
+    public async Task Api_AlterAvatarMultipart_PersistsAndReflectsOnPublicAlter()
     {
         var runId = Guid.NewGuid().ToString("N");
         var storageRoot = Path.Combine(Path.GetTempPath(), "octocon-itest", "avatars", runId);
@@ -22,11 +23,11 @@ public class AltersControllerTests : BaseEndpointTest
         {
             Directory.CreateDirectory(storageRoot);
 
-            factory
+            fixture.Factory                
                 .WithConfiguration("OCTOCON_AVATAR_STORAGE_ROOT", storageRoot)
                 .WithConfiguration("OCTOCON_AVATAR_PUBLIC_BASE", publicBase);
             
-            using var client = factory.CreateClient();
+            using var client = fixture.Factory.CreateClient();
 
             var principalId = $"sys-alter-avatar-{Guid.NewGuid():N}"[..24];
 
@@ -95,11 +96,10 @@ public class AltersControllerTests : BaseEndpointTest
         }
     }
     
-    [Test, ApiIntegration]
-    [CombinedDataSources]
-    public async Task FieldSecurityLevelByRelationship_AppliesCorrectly([InterfoldFactoryGenerator] InterfoldWebApplicationFactory factory)
+    [Test]
+    public async Task FieldSecurityLevelByRelationship_AppliesCorrectly()
     {
-        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        using var client = fixture.Factory.CreateClient(new WebApplicationFactoryClientOptions
         {
             AllowAutoRedirect = false
         });
@@ -185,11 +185,10 @@ public class AltersControllerTests : BaseEndpointTest
         }
     }
     
-    [Test, ApiIntegration]
-    [CombinedDataSources]
-    public async Task CustomFields_FieldSecurityLevelByRelationship_AppliesCorrectly([InterfoldFactoryGenerator] InterfoldWebApplicationFactory factory)
+    [Test]
+    public async Task CustomFields_FieldSecurityLevelByRelationship_AppliesCorrectly()
     {
-        using var client = factory.CreateClient();
+        using var client = fixture.Factory.CreateClient();
 
         var owner = "settings-guarded-fields-owner";
         var nonFriend = "settings-guarded-fields-nonfriend";
@@ -270,11 +269,10 @@ public class AltersControllerTests : BaseEndpointTest
         }
     }
 
-    [Test, ApiIntegration]
-    [CombinedDataSources]
-    public async Task AlterJournal_ListWhenEmpty_ReturnsDataAsEmptyArray([InterfoldFactoryGenerator] InterfoldWebApplicationFactory factory)
+    [Test]
+    public async Task AlterJournal_ListWhenEmpty_ReturnsDataAsEmptyArray()
     {
-        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        using var client = fixture.Factory.CreateClient(new WebApplicationFactoryClientOptions
         {
             AllowAutoRedirect = false
         });
@@ -297,11 +295,10 @@ public class AltersControllerTests : BaseEndpointTest
         }
     }
 
-    [Test, ApiIntegration]
-    [CombinedDataSources]
-    public async Task AlterJournal_NestedCreate_Returns201WithDataAndReplay([InterfoldFactoryGenerator] InterfoldWebApplicationFactory factory)
+    [Test]
+    public async Task AlterJournal_NestedCreate_Returns201WithDataAndReplay()
     {
-        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        using var client = fixture.Factory.CreateClient(new WebApplicationFactoryClientOptions
         {
             AllowAutoRedirect = false
         });
@@ -374,11 +371,10 @@ public class AltersControllerTests : BaseEndpointTest
         await Assert.That(deleteRes.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
     }
 
-    [Test, ApiIntegration]
-    [CombinedDataSources]
-    public async Task AlterJournal_ShowAfterDelete_Returns404([InterfoldFactoryGenerator] InterfoldWebApplicationFactory factory)
+    [Test]
+    public async Task AlterJournal_ShowAfterDelete_Returns404()
     {
-        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        using var client = fixture.Factory.CreateClient(new WebApplicationFactoryClientOptions
         {
             AllowAutoRedirect = false
         });
@@ -408,14 +404,13 @@ public class AltersControllerTests : BaseEndpointTest
         await Assert.That(showRes.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
     }
     
-    [Test, ApiIntegration]
-    [CombinedDataSources]
-    public async Task AlterCreate_IdempotentReplay_WorksAgainstLiveAdapters([InterfoldFactoryGenerator] InterfoldWebApplicationFactory factory)
+    [Test]
+    public async Task AlterCreate_IdempotentReplay_WorksAgainstLiveAdapters()
     {
-        factory
-            .WithConfiguration("OCTOCON_SCYLLA_KEYSPACE", IntegrationTestEnvironment.GetVariable("OCTOCON_TEST_REGION", "nam"));
+        fixture.Factory            
+            .WithConfiguration("OCTOCON_SCYLLA_KEYSPACE", "nam");
 
-        using var client = factory.CreateClient();
+        using var client = fixture.Factory.CreateClient();
 
         var systemId = $"itest-{Guid.NewGuid():N}"[..14];
         var idempotencyKey = Guid.NewGuid().ToString("N");
@@ -469,11 +464,10 @@ public class AltersControllerTests : BaseEndpointTest
         }
     }
     
-    [Test, ApiIntegration]
-    [CombinedDataSources]
-    public async Task OperationalHealth_GuardedPaths_GetGuardedAsync_Succeeds([InterfoldFactoryGenerator] InterfoldWebApplicationFactory factory)
+    [Test]
+    public async Task OperationalHealth_GuardedPaths_GetGuardedAsync_Succeeds()
     {
-        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        using var client = fixture.Factory.CreateClient(new WebApplicationFactoryClientOptions
         {
             AllowAutoRedirect = false
         });
@@ -488,11 +482,10 @@ public class AltersControllerTests : BaseEndpointTest
         await Assert.That(res.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
     }
     
-    [Test, ApiIntegration]
-    [CombinedDataSources]
-    public async Task Idempotency_AlterCreate_ReplayStable([InterfoldFactoryGenerator] InterfoldWebApplicationFactory factory)
+    [Test]
+    public async Task Idempotency_AlterCreate_ReplayStable()
     {
-        await RunSoakAsync(factory, async (client, key) =>
+        await RunSoakAsync(fixture.Factory, async (client, key) =>
         {
             using var req = new HttpRequestMessage(HttpMethod.Post, "/api/systems/me/alters")
             {

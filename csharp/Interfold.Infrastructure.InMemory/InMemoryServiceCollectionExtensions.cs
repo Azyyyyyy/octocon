@@ -11,12 +11,11 @@ namespace Interfold.Infrastructure.InMemory;
 
 public static class InMemoryServiceCollectionExtensions
 {
-    private static bool _added;
+    private static int _added;
     public static void Register()
     {
-        if (!_added)
+        if (Interlocked.Exchange(ref _added, 1) == 0)
         {
-            _added = true;
             ServiceCollectionExtensions.AddPersistenceMode(PersistenceMode.InMemory, AddInMemoryPersistence);
         }
     }

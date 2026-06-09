@@ -1,4 +1,5 @@
-﻿using Interfold.Infrastructure;
+﻿using Interfold.Api.Socket;
+using Interfold.Infrastructure;
 using Microsoft.AspNetCore.Hosting;
 using System.Runtime.CompilerServices;
 using Interfold.Contracts.Configuration;
@@ -6,6 +7,7 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Time.Testing;
 
 namespace Interfold.IntegrationTests.TestServices;
 
@@ -14,14 +16,20 @@ public class InterfoldWebApplicationFactory : WebApplicationFactory<Program>
     private readonly Dictionary<string, string?> _configurationOverrides;
     private static readonly ConditionalWeakTable<HttpClient, InterfoldWebApplicationFactory> ClientFactories = new();
 
-    public InterfoldWebApplicationFactory(string persistenceType)
+    public FakeTimeProvider TimeProvider { get; } = new();
+    public string DisplayName { get; private set; }
+
+    public InterfoldWebApplicationFactory(string persistenceType, string? displayName = null)
     {
+        DisplayName = displayName ?? persistenceType;
         _configurationOverrides = [];
         _configurationOverrides["OCTOCON_PERSISTENCE"] = persistenceType;
         _configurationOverrides["OCTOCON_AUTH_RSA_PUBLIC_KEY"] = "TEST";
         _configurationOverrides["OCTOCON_AUTH_RSA_PRIVATE_KEY"] = "TEST";
         _configurationOverrides["OCTOCON_ENCRYPTION_PEPPER"] = "TEST";
     }
+
+    public override string ToString() => DisplayName;
 
     public InterfoldWebApplicationFactory WithConfiguration(string key, string? value)
     {
@@ -79,6 +87,8 @@ public class InterfoldWebApplicationFactory : WebApplicationFactory<Program>
         {
             x.AddSingleton(this);
             x.Replace(ServiceDescriptor.Singleton<IHttpClientFactory, TestHttpClientFactory>());
+            // Replace only the rate limiter with one backed by FakeTimeProvider.
+            x.Replace(ServiceDescriptor.Singleton(new SocketJoinRateLimiter(TimeProvider)));
         });
         
         base.ConfigureWebHost(builder);

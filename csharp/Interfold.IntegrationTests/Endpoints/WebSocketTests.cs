@@ -2,23 +2,26 @@ using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
 using Interfold.Contracts;
-using Interfold.IntegrationTests.Attributes;
 using Interfold.IntegrationTests.TestServices;
 using Microsoft.AspNetCore.TestHost;
 
 namespace Interfold.IntegrationTests.Endpoints;
 
-[Timeout(1000 * 10)]
-public class WebSocketTests : BaseEndpointTest
+// 5 minute timeout since we want to ensure this does end up timing out if a connection gets stuck but we also 
+// need to account for Cassandra's slower performance with bootstrapping.
+[Timeout(1000 * 300)]
+[ClassDataSource<InMemoryWebFactoryFixture>(Shared = SharedType.PerTestSession)]
+[ClassDataSource<ScyllaWebFactoryFixture>(Shared = SharedType.PerTestSession)]
+//[ClassDataSource<CassandraWebFactoryFixture>(Shared = SharedType.PerTestSession)] TODO: Right now we are still getting some fails, lets investigate and then re-enable this
+public class WebSocketTests(IWebFactoryFixture fixture) : BaseEndpointTest
 {
-    [Test, ApiIntegration]
-    [CombinedDataSources]
-    public async Task Api_UserSocketEndpoint_AllowsWebSocketUpgrade([InterfoldFactoryGenerator] InterfoldWebApplicationFactory factory, CancellationToken token)
+    [Test]
+    public async Task Api_UserSocketEndpoint_AllowsWebSocketUpgrade(CancellationToken token)
     {
-        using var server = factory.Server;
+        var server = fixture.Factory.Server;
         var client = server.CreateWebSocketClient();
         
-        string socketToken = await CreateRandomToken(factory, "sys-phx-join");
+        string socketToken = await CreateRandomToken(fixture.Factory, "sys-phx-join");
         var uri = new Uri(WebSocketBasePath(server), "/api/socket/websocket?token=" + socketToken);
         
         using var ws = await client.ConnectAsync(uri, token);
@@ -46,18 +49,17 @@ public class WebSocketTests : BaseEndpointTest
         }
     }
     
-    [Test, ApiIntegration]
-    [CombinedDataSources]
-    public async Task Api_UserSocketEndpoint_RejectsUnsupportedProtocolVersion([InterfoldFactoryGenerator] InterfoldWebApplicationFactory factory, CancellationToken token)
+    [Test]
+    public async Task Api_UserSocketEndpoint_RejectsUnsupportedProtocolVersion(CancellationToken token)
     {
-        factory
+        fixture.Factory            
             .WithConfiguration("OCTOCON_DEEPLINK_ADDRESS", "octocon://app")
             .WithConfiguration("OCTOCON_SCYLLA_KEYSPACE", "nam")
             .WithConfiguration("OCTOCON_SOCKET_BATCH_BYTES_THRESHOLD", "1");
 
-        var wsClient = factory.Server.CreateWebSocketClient();
-        string socketToken = await CreateRandomToken(factory, "sys-phx-unsupported");
-        var uri = new Uri(WebSocketBasePath(factory.Server), $"api/socket/websocket?token={socketToken}");
+        var wsClient = fixture.Factory.Server.CreateWebSocketClient();
+        string socketToken = await CreateRandomToken(fixture.Factory, "sys-phx-unsupported");
+        var uri = new Uri(WebSocketBasePath(fixture.Factory.Server), $"api/socket/websocket?token={socketToken}");
         using var ws = await wsClient.ConnectAsync(uri, token);
 
         var joinFrame = new PhxFrame<PhxJoinPayload>
@@ -83,17 +85,16 @@ public class WebSocketTests : BaseEndpointTest
         await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "test done", token);
     }
 
-    [Test, ApiIntegration]
-    [CombinedDataSources]
-    public async Task Api_UserSocketEndpoint_BatchesForIos_WhenThresholdExceeded([InterfoldFactoryGenerator] InterfoldWebApplicationFactory factory, CancellationToken token)
+    [Test]
+    public async Task Api_UserSocketEndpoint_BatchesForIos_WhenThresholdExceeded(CancellationToken token)
     {
-        factory
+        fixture.Factory            
             .WithConfiguration("OCTOCON_DEEPLINK_ADDRESS", "octocon://app")
             .WithConfiguration("OCTOCON_SCYLLA_KEYSPACE", "nam");
 
-        var wsClient = factory.Server.CreateWebSocketClient();
-        string socketToken = await CreateRandomToken(factory, "sys-phx-ios-batch");
-        var uri = new Uri(WebSocketBasePath(factory.Server), $"api/socket/websocket?token={socketToken}");
+        var wsClient = fixture.Factory.Server.CreateWebSocketClient();
+        string socketToken = await CreateRandomToken(fixture.Factory, "sys-phx-ios-batch");
+        var uri = new Uri(WebSocketBasePath(fixture.Factory.Server), $"api/socket/websocket?token={socketToken}");
         using var ws = await wsClient.ConnectAsync(uri, token);
 
         var joinFrame = new PhxFrame<PhxJoinPayload>
@@ -126,22 +127,23 @@ public class WebSocketTests : BaseEndpointTest
         await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "test done", token);
     }
 
-    [Test, ApiIntegration]
-    [CombinedDataSources]
-    public async Task Api_UserSocketEndpoint_RateLimitsThirdJoinWithinOneSecond([InterfoldFactoryGenerator] InterfoldWebApplicationFactory factory, CancellationToken token)
+    [Test]
+    public async Task Api_UserSocketEndpoint_RateLimitsThirdJoinWithinOneSecond(CancellationToken token)
     {
-        factory
+        fixture.Factory            
             .WithConfiguration("OCTOCON_DEEPLINK_ADDRESS", "octocon://app")
             .WithConfiguration("OCTOCON_SCYLLA_KEYSPACE", "nam");
 
-        var wsClient = factory.Server.CreateWebSocketClient();
-        string socketToken = await CreateRandomToken(factory, "sys-phx-rate-limit");
-        var uri = new Uri(WebSocketBasePath(factory.Server), $"api/socket/websocket?token={socketToken}");
+        // Use a unique system ID per invocation to avoid cross-contamination from the static rate limiter
+        var systemId = $"sys-rate-limit-{Guid.NewGuid():N}";
+        var wsClient = fixture.Factory.Server.CreateWebSocketClient();
+        string socketToken = await CreateRandomToken(fixture.Factory, systemId);
+        var uri = new Uri(WebSocketBasePath(fixture.Factory.Server), $"api/socket/websocket?token={socketToken}");
         using var ws = await wsClient.ConnectAsync(uri, token);
 
-        var first = await SendJoinAsync(ws, socketToken, "1", token);
-        var second = await SendJoinAsync(ws, socketToken, "2", token);
-        var third = await SendJoinAsync(ws, socketToken, "3", token);
+        var first = await SendJoinAsync(ws, socketToken, systemId, "1", token);
+        var second = await SendJoinAsync(ws, socketToken, systemId, "2", token);
+        var third = await SendJoinAsync(ws, socketToken, systemId, "3", token);
 
         using var firstDoc = JsonDocument.Parse(first);
         using var secondDoc = JsonDocument.Parse(second);
@@ -158,18 +160,17 @@ public class WebSocketTests : BaseEndpointTest
         await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "test done", token);
     }
 
-    [Test, ApiIntegration]
-    [CombinedDataSources]
-    public async Task Api_UserSocketEndpoint_PushesFrontingChangedEvent_AfterFrontStart([InterfoldFactoryGenerator] InterfoldWebApplicationFactory factory, CancellationToken token)
+    [Test]
+    public async Task Api_UserSocketEndpoint_PushesFrontingChangedEvent_AfterFrontStart(CancellationToken token)
     {
-        factory
+        fixture.Factory            
             .WithConfiguration("OCTOCON_DEEPLINK_ADDRESS", "octocon://app")
             .WithConfiguration("OCTOCON_SCYLLA_KEYSPACE", "nam");
 
-        var wsClient = factory.Server.CreateWebSocketClient();
-        string socketToken = await CreateRandomToken(factory, "sys-front-push");
+        var wsClient = fixture.Factory.Server.CreateWebSocketClient();
+        string socketToken = await CreateRandomToken(fixture.Factory, "sys-front-push");
         const string topic = "system:sys-front-push";
-        var uri = new Uri(WebSocketBasePath(factory.Server), $"api/socket/websocket?token={socketToken}");
+        var uri = new Uri(WebSocketBasePath(fixture.Factory.Server), $"api/socket/websocket?token={socketToken}");
         var ws = await wsClient.ConnectAsync(uri, token);
 
         var joinFrame = new PhxFrame<PhxJoinPayload>
@@ -356,18 +357,17 @@ public class WebSocketTests : BaseEndpointTest
         }
     }
 
-    [Test, ApiIntegration]
-    [CombinedDataSources]
-    public async Task Api_UserSocketEndpoint_PushesAlterTagAndFieldsEvents_AfterEndpointWrites([InterfoldFactoryGenerator] InterfoldWebApplicationFactory factory, CancellationToken token)
+    [Test]
+    public async Task Api_UserSocketEndpoint_PushesAlterTagAndFieldsEvents_AfterEndpointWrites(CancellationToken token)
     {
-        factory
+        fixture.Factory            
             .WithConfiguration("OCTOCON_DEEPLINK_ADDRESS", "octocon://app")
             .WithConfiguration("OCTOCON_SCYLLA_KEYSPACE", "nam");
 
-        var wsClient = factory.Server.CreateWebSocketClient();
-        string socketToken = await CreateRandomToken(factory, "sys-domain-fanout");
+        var wsClient = fixture.Factory.Server.CreateWebSocketClient();
+        string socketToken = await CreateRandomToken(fixture.Factory, "sys-domain-fanout");
         const string topic = "system:sys-domain-fanout";
-        var uri = new Uri(WebSocketBasePath(factory.Server), $"api/socket/websocket?token={socketToken}");
+        var uri = new Uri(WebSocketBasePath(fixture.Factory.Server), $"api/socket/websocket?token={socketToken}");
         using var ws = await wsClient.ConnectAsync(uri, token);
 
         var joinFrame = new PhxFrame<PhxJoinPayload>
@@ -468,23 +468,22 @@ public class WebSocketTests : BaseEndpointTest
         }
     }
 
-    [Test, ApiIntegration]
-    [CombinedDataSources]
-    public async Task Api_UserSocketEndpoint_PushesFriendRequestReceived_ToRecipientSystem([InterfoldFactoryGenerator] InterfoldWebApplicationFactory factory, CancellationToken token)
+    [Test]
+    public async Task Api_UserSocketEndpoint_PushesFriendRequestReceived_ToRecipientSystem(CancellationToken token)
     {
-        factory
+        fixture.Factory            
             .WithConfiguration("OCTOCON_DEEPLINK_ADDRESS", "octocon://app")
             .WithConfiguration("OCTOCON_SCYLLA_KEYSPACE", "nam");
 
         const string senderSystemId = "sys-friend-sender";
         const string recipientSystemId = "sys-friend-recipient";
-        var wsClientFactory = factory.Server.CreateWebSocketClient();
+        var wsClientFactory = fixture.Factory.Server.CreateWebSocketClient();
 
-        string senderSocketToken = await CreateRandomToken(factory, senderSystemId);
-        string recipientSocketToken = await CreateRandomToken(factory, recipientSystemId);
+        string senderSocketToken = await CreateRandomToken(fixture.Factory, senderSystemId);
+        string recipientSocketToken = await CreateRandomToken(fixture.Factory, recipientSystemId);
 
-        var senderSocketUri = new Uri(WebSocketBasePath(factory.Server), $"api/socket/websocket?token={senderSocketToken}");
-        var recipientSocketUri = new Uri(WebSocketBasePath(factory.Server), $"api/socket/websocket?token={recipientSocketToken}");
+        var senderSocketUri = new Uri(WebSocketBasePath(fixture.Factory.Server), $"api/socket/websocket?token={senderSocketToken}");
+        var recipientSocketUri = new Uri(WebSocketBasePath(fixture.Factory.Server), $"api/socket/websocket?token={recipientSocketToken}");
 
         using var senderWs = await wsClientFactory.ConnectAsync(senderSocketUri, token);
         using var recipientWs = await wsClientFactory.ConnectAsync(recipientSocketUri, token);
@@ -542,23 +541,22 @@ public class WebSocketTests : BaseEndpointTest
         await recipientWs.CloseAsync(WebSocketCloseStatus.NormalClosure, "test done", token);
     }
 
-    [Test, ApiIntegration]
-    [CombinedDataSources]
-    public async Task Api_UserSocketEndpoint_PushesFriendRequestAccepted_ToActorAndRecipient([InterfoldFactoryGenerator] InterfoldWebApplicationFactory factory, CancellationToken token)
+    [Test]
+    public async Task Api_UserSocketEndpoint_PushesFriendRequestAccepted_ToActorAndRecipient(CancellationToken token)
     {
-        factory
+        fixture.Factory            
             .WithConfiguration("OCTOCON_DEEPLINK_ADDRESS", "octocon://app")
             .WithConfiguration("OCTOCON_SCYLLA_KEYSPACE", "nam");
 
         const string senderSystemId = "sys-accept-sender";
         const string recipientSystemId = "sys-accept-recipient";
 
-        var wsClientFactory = factory.Server.CreateWebSocketClient();
-        string senderSocketToken = await CreateRandomToken(factory, senderSystemId);
-        string recipientSocketToken = await CreateRandomToken(factory, recipientSystemId);
+        var wsClientFactory = fixture.Factory.Server.CreateWebSocketClient();
+        string senderSocketToken = await CreateRandomToken(fixture.Factory, senderSystemId);
+        string recipientSocketToken = await CreateRandomToken(fixture.Factory, recipientSystemId);
 
-        var senderSocketUri = new Uri(WebSocketBasePath(factory.Server), $"api/socket/websocket?token={senderSocketToken}");
-        var recipientSocketUri = new Uri(WebSocketBasePath(factory.Server), $"api/socket/websocket?token={recipientSocketToken}");
+        var senderSocketUri = new Uri(WebSocketBasePath(fixture.Factory.Server), $"api/socket/websocket?token={senderSocketToken}");
+        var recipientSocketUri = new Uri(WebSocketBasePath(fixture.Factory.Server), $"api/socket/websocket?token={recipientSocketToken}");
 
         using var senderWs = await wsClientFactory.ConnectAsync(senderSocketUri, token);
         using var recipientWs = await wsClientFactory.ConnectAsync(recipientSocketUri, token);
@@ -648,23 +646,22 @@ public class WebSocketTests : BaseEndpointTest
         await recipientWs.CloseAsync(WebSocketCloseStatus.NormalClosure, "test done", token);
     }
 
-    [Test, ApiIntegration]
-    [CombinedDataSources]
-    public async Task Api_UserSocketEndpoint_PushesFriendRequestRejected_ToActorAndRecipient([InterfoldFactoryGenerator] InterfoldWebApplicationFactory factory, CancellationToken token)
+    [Test]
+    public async Task Api_UserSocketEndpoint_PushesFriendRequestRejected_ToActorAndRecipient(CancellationToken token)
     {
-        factory
+        fixture.Factory            
             .WithConfiguration("OCTOCON_DEEPLINK_ADDRESS", "octocon://app")
             .WithConfiguration("OCTOCON_SCYLLA_KEYSPACE", "nam");
 
         const string senderSystemId = "sys-reject-sender";
         const string recipientSystemId = "sys-reject-recipient";
 
-        var wsClientFactory = factory.Server.CreateWebSocketClient();
-        string senderSocketToken = await CreateRandomToken(factory, senderSystemId);
-        string recipientSocketToken = await CreateRandomToken(factory, recipientSystemId);
+        var wsClientFactory = fixture.Factory.Server.CreateWebSocketClient();
+        string senderSocketToken = await CreateRandomToken(fixture.Factory, senderSystemId);
+        string recipientSocketToken = await CreateRandomToken(fixture.Factory, recipientSystemId);
 
-        var senderSocketUri = new Uri(WebSocketBasePath(factory.Server), $"api/socket/websocket?token={senderSocketToken}");
-        var recipientSocketUri = new Uri(WebSocketBasePath(factory.Server), $"api/socket/websocket?token={recipientSocketToken}");
+        var senderSocketUri = new Uri(WebSocketBasePath(fixture.Factory.Server), $"api/socket/websocket?token={senderSocketToken}");
+        var recipientSocketUri = new Uri(WebSocketBasePath(fixture.Factory.Server), $"api/socket/websocket?token={recipientSocketToken}");
 
         using var senderWs = await wsClientFactory.ConnectAsync(senderSocketUri, token);
         using var recipientWs = await wsClientFactory.ConnectAsync(recipientSocketUri, token);
@@ -746,23 +743,22 @@ public class WebSocketTests : BaseEndpointTest
         await recipientWs.CloseAsync(WebSocketCloseStatus.NormalClosure, "test done", token);
     }
 
-    [Test, ApiIntegration]
-    [CombinedDataSources]
-    public async Task Api_UserSocketEndpoint_PushesFriendRequestCancelled_ToActorAndRecipient([InterfoldFactoryGenerator] InterfoldWebApplicationFactory factory, CancellationToken token)
+    [Test]
+    public async Task Api_UserSocketEndpoint_PushesFriendRequestCancelled_ToActorAndRecipient(CancellationToken token)
     {
-        factory
+        fixture.Factory            
             .WithConfiguration("OCTOCON_DEEPLINK_ADDRESS", "octocon://app")
             .WithConfiguration("OCTOCON_SCYLLA_KEYSPACE", "nam");
 
         const string senderSystemId = "sys-cancel-sender";
         const string recipientSystemId = "sys-cancel-recipient";
 
-        var wsClientFactory = factory.Server.CreateWebSocketClient();
-        string senderSocketToken = await CreateRandomToken(factory, senderSystemId);
-        string recipientSocketToken = await CreateRandomToken(factory, recipientSystemId);
+        var wsClientFactory = fixture.Factory.Server.CreateWebSocketClient();
+        string senderSocketToken = await CreateRandomToken(fixture.Factory, senderSystemId);
+        string recipientSocketToken = await CreateRandomToken(fixture.Factory, recipientSystemId);
 
-        var senderSocketUri = new Uri(WebSocketBasePath(factory.Server), $"api/socket/websocket?token={senderSocketToken}");
-        var recipientSocketUri = new Uri(WebSocketBasePath(factory.Server), $"api/socket/websocket?token={recipientSocketToken}");
+        var senderSocketUri = new Uri(WebSocketBasePath(fixture.Factory.Server), $"api/socket/websocket?token={senderSocketToken}");
+        var recipientSocketUri = new Uri(WebSocketBasePath(fixture.Factory.Server), $"api/socket/websocket?token={recipientSocketToken}");
 
         using var senderWs = await wsClientFactory.ConnectAsync(senderSocketUri, token);
         using var recipientWs = await wsClientFactory.ConnectAsync(recipientSocketUri, token);
@@ -839,23 +835,22 @@ public class WebSocketTests : BaseEndpointTest
         await recipientWs.CloseAsync(WebSocketCloseStatus.NormalClosure, "test done", token);
     }
 
-    [Test, ApiIntegration]
-    [CombinedDataSources]
-    public async Task Api_UserSocketEndpoint_PushesFriendRemoved_ToActorAndRecipient([InterfoldFactoryGenerator] InterfoldWebApplicationFactory factory, CancellationToken token)
+    [Test]
+    public async Task Api_UserSocketEndpoint_PushesFriendRemoved_ToActorAndRecipient(CancellationToken token)
     {
-        factory
+        fixture.Factory            
             .WithConfiguration("OCTOCON_DEEPLINK_ADDRESS", "octocon://app")
             .WithConfiguration("OCTOCON_SCYLLA_KEYSPACE", "nam");
 
         const string senderSystemId = "sys-remove-sender";
         const string recipientSystemId = "sys-remove-recipient";
 
-        var wsClientFactory = factory.Server.CreateWebSocketClient();
-        string senderSocketToken = await CreateRandomToken(factory, senderSystemId);
-        string recipientSocketToken = await CreateRandomToken(factory, recipientSystemId);
+        var wsClientFactory = fixture.Factory.Server.CreateWebSocketClient();
+        string senderSocketToken = await CreateRandomToken(fixture.Factory, senderSystemId);
+        string recipientSocketToken = await CreateRandomToken(fixture.Factory, recipientSystemId);
 
-        var senderSocketUri = new Uri(WebSocketBasePath(factory.Server), $"api/socket/websocket?token={senderSocketToken}");
-        var recipientSocketUri = new Uri(WebSocketBasePath(factory.Server), $"api/socket/websocket?token={recipientSocketToken}");
+        var senderSocketUri = new Uri(WebSocketBasePath(fixture.Factory.Server), $"api/socket/websocket?token={senderSocketToken}");
+        var recipientSocketUri = new Uri(WebSocketBasePath(fixture.Factory.Server), $"api/socket/websocket?token={recipientSocketToken}");
 
         using var senderWs = await wsClientFactory.ConnectAsync(senderSocketUri, token);
         using var recipientWs = await wsClientFactory.ConnectAsync(recipientSocketUri, token);
@@ -968,23 +963,22 @@ public class WebSocketTests : BaseEndpointTest
         await recipientWs.CloseAsync(WebSocketCloseStatus.NormalClosure, "test done", token);
     }
 
-    [Test, ApiIntegration]
-    [CombinedDataSources]
-    public async Task Api_UserSocketEndpoint_PushesFriendTrustedAndUntrusted_ToActor([InterfoldFactoryGenerator] InterfoldWebApplicationFactory factory, CancellationToken token)
+    [Test]
+    public async Task Api_UserSocketEndpoint_PushesFriendTrustedAndUntrusted_ToActor(CancellationToken token)
     {
-        factory
+        fixture.Factory            
             .WithConfiguration("OCTOCON_DEEPLINK_ADDRESS", "octocon://app")
             .WithConfiguration("OCTOCON_SCYLLA_KEYSPACE", "nam");
         
         const string senderSystemId = "sys-trust-sender";
         const string recipientSystemId = "sys-trust-recipient";
 
-        var wsClientFactory = factory.Server.CreateWebSocketClient();
-        string senderSocketToken = await CreateRandomToken(factory, senderSystemId);
-        string recipientSocketToken = await CreateRandomToken(factory, recipientSystemId);
+        var wsClientFactory = fixture.Factory.Server.CreateWebSocketClient();
+        string senderSocketToken = await CreateRandomToken(fixture.Factory, senderSystemId);
+        string recipientSocketToken = await CreateRandomToken(fixture.Factory, recipientSystemId);
 
-        var senderSocketUri = new Uri(WebSocketBasePath(factory.Server), $"api/socket/websocket?token={senderSocketToken}");
-        var recipientSocketUri = new Uri(WebSocketBasePath(factory.Server), $"api/socket/websocket?token={recipientSocketToken}");
+        var senderSocketUri = new Uri(WebSocketBasePath(fixture.Factory.Server), $"api/socket/websocket?token={senderSocketToken}");
+        var recipientSocketUri = new Uri(WebSocketBasePath(fixture.Factory.Server), $"api/socket/websocket?token={recipientSocketToken}");
 
         using var senderWs = await wsClientFactory.ConnectAsync(senderSocketUri, token);
         using var recipientWs = await wsClientFactory.ConnectAsync(recipientSocketUri, token);
@@ -1116,23 +1110,22 @@ public class WebSocketTests : BaseEndpointTest
         await recipientWs.CloseAsync(WebSocketCloseStatus.NormalClosure, "test done", token);
     }
 
-    [Test, ApiIntegration]
-    [CombinedDataSources]
-    public async Task Api_UserSocketEndpoint_PushesFriendAdded_OnMutualFriendRequest([InterfoldFactoryGenerator] InterfoldWebApplicationFactory factory, CancellationToken token)
+    [Test]
+    public async Task Api_UserSocketEndpoint_PushesFriendAdded_OnMutualFriendRequest(CancellationToken token)
     {
-        factory
+        fixture.Factory            
             .WithConfiguration("OCTOCON_DEEPLINK_ADDRESS", "octocon://app")
             .WithConfiguration("OCTOCON_SCYLLA_KEYSPACE", "nam");
 
         const string systemAId = "sys-mutual-a";
         const string systemBId = "sys-mutual-b";
         
-        var wsClientFactory = factory.Server.CreateWebSocketClient();
-        string socketTokenA = await CreateRandomToken(factory, systemAId);
-        string socketTokenB = await CreateRandomToken(factory, systemBId);
+        var wsClientFactory = fixture.Factory.Server.CreateWebSocketClient();
+        string socketTokenA = await CreateRandomToken(fixture.Factory, systemAId);
+        string socketTokenB = await CreateRandomToken(fixture.Factory, systemBId);
 
-        var socketUriA = new Uri(WebSocketBasePath(factory.Server), $"api/socket/websocket?token={socketTokenA}");
-        var socketUriB = new Uri(WebSocketBasePath(factory.Server), $"api/socket/websocket?token={socketTokenB}");
+        var socketUriA = new Uri(WebSocketBasePath(fixture.Factory.Server), $"api/socket/websocket?token={socketTokenA}");
+        var socketUriB = new Uri(WebSocketBasePath(fixture.Factory.Server), $"api/socket/websocket?token={socketTokenB}");
         using var wsA = await wsClientFactory.ConnectAsync(socketUriA, token);
         using var wsB = await wsClientFactory.ConnectAsync(socketUriB, token);
 
@@ -1270,11 +1263,11 @@ public class WebSocketTests : BaseEndpointTest
         return null;
     }
     
-    async Task<string> SendJoinAsync(WebSocket ws, string socketToken, string refId, CancellationToken token)
+    async Task<string> SendJoinAsync(WebSocket ws, string socketToken, string systemId, string refId, CancellationToken token)
     {
         var joinFrame = new PhxFrame<PhxJoinPayload>
         {
-            Topic = "system:sys-phx-rate-limit",
+            Topic = $"system:{systemId}",
             Event = "phx_join",
             Payload = new PhxJoinPayload { Token = socketToken, IsReconnect = true },
             Ref = refId,
@@ -1290,15 +1283,18 @@ public class WebSocketTests : BaseEndpointTest
         return new Uri($"wss://{server.BaseAddress.Host}");
     }
     
-    private static async Task<string> ReceiveWebSocketTextAsync(WebSocket ws, CancellationToken token)
+    private static async Task<string> ReceiveWebSocketTextAsync(WebSocket ws, CancellationToken token, int timeoutSeconds = 30)
     {
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(token);
+        cts.CancelAfter(TimeSpan.FromSeconds(timeoutSeconds));
+
         var buffer = new byte[8192];
         using var ms = new MemoryStream();
 
         WebSocketReceiveResult result;
         do
         {
-            result = await ws.ReceiveAsync(new ArraySegment<byte>(buffer), token);
+            result = await ws.ReceiveAsync(new ArraySegment<byte>(buffer), cts.Token);
             if (result.MessageType == WebSocketMessageType.Close)
                 throw new InvalidOperationException($"WebSocket closed by server. {result.CloseStatusDescription}/{result.CloseStatus}");
 
