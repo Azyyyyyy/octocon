@@ -69,7 +69,7 @@ public sealed class InProcessEventBus : IClusterEventBus, IDisposable
         {
             SingleReader = true,
             SingleWriter = false,
-            AllowSynchronousContinuations = false
+            AllowSynchronousContinuations = true
         });
 
         var topicBag = GetOrCreateBag<TEvent>();

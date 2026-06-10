@@ -4,11 +4,14 @@ namespace Interfold.Infrastructure.InMemory.Repository;
 
 /// <summary>
 /// In-memory implementation of JWT token revocation tracking for testing and development.
-/// Stores tokens in a dictionary keyed by JTI.
+/// Stores tokens in a static dictionary keyed by JTI so that tokens remain accessible
+/// even when the DI container is rebuilt (e.g., WebApplicationFactory host recreation
+/// during parallel test execution).
 /// </summary>
 public sealed class InMemoryAuthTokenRevocationRepository : IAuthTokenRevocationRepository
 {
-    private readonly object _lock = new();
+    private static readonly Lock s_lock = new();
+    private static readonly Dictionary<string, TokenRecord> s_tokens = new();
     
     private sealed record TokenRecord(
         string Jti,
@@ -17,8 +20,6 @@ public sealed class InMemoryAuthTokenRevocationRepository : IAuthTokenRevocation
         DateTimeOffset ExpiresAt,
         DateTimeOffset? RevokedAt = null
     );
-
-    private readonly Dictionary<string, TokenRecord> _tokens = new();
 
     public Task RecordTokenAsync(
         string jti,
@@ -29,9 +30,9 @@ public sealed class InMemoryAuthTokenRevocationRepository : IAuthTokenRevocation
         ArgumentException.ThrowIfNullOrWhiteSpace(jti, nameof(jti));
         ArgumentException.ThrowIfNullOrWhiteSpace(systemId, nameof(systemId));
 
-        lock (_lock)
+        lock (s_lock)
         {
-            _tokens[jti] = new TokenRecord(
+            s_tokens[jti] = new TokenRecord(
                 Jti: jti,
                 SystemId: NormalizeSystemId(systemId),
                 IssuedAt: DateTimeOffset.UtcNow,
@@ -49,9 +50,9 @@ public sealed class InMemoryAuthTokenRevocationRepository : IAuthTokenRevocation
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(jti, nameof(jti));
 
-        lock (_lock)
+        lock (s_lock)
         {
-            if (!_tokens.TryGetValue(jti, out var record))
+            if (!s_tokens.TryGetValue(jti, out var record))
             {
                 return Task.FromResult(false);
             }
@@ -68,11 +69,11 @@ public sealed class InMemoryAuthTokenRevocationRepository : IAuthTokenRevocation
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(jti, nameof(jti));
 
-        lock (_lock)
+        lock (s_lock)
         {
-            if (_tokens.TryGetValue(jti, out var record) && record.RevokedAt is null)
+            if (s_tokens.TryGetValue(jti, out var record) && record.RevokedAt is null)
             {
-                _tokens[jti] = record with { RevokedAt = DateTimeOffset.UtcNow };
+                s_tokens[jti] = record with { RevokedAt = DateTimeOffset.UtcNow };
             }
         }
 
@@ -85,11 +86,11 @@ public sealed class InMemoryAuthTokenRevocationRepository : IAuthTokenRevocation
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(systemId, nameof(systemId));
 
-        lock (_lock)
+        lock (s_lock)
         {
             var normalizedSystemId = NormalizeSystemId(systemId);
 
-            IReadOnlyList<string> tokens = _tokens.Values
+            IReadOnlyList<string> tokens = s_tokens.Values
                 .Where(t => t.SystemId == normalizedSystemId
                     && t.RevokedAt is null
                     && t.ExpiresAt > DateTimeOffset.UtcNow)
@@ -120,9 +121,9 @@ public sealed class InMemoryAuthTokenRevocationRepository : IAuthTokenRevocation
     {
         var cleanupBefore = (olderThan ?? DateTimeOffset.UtcNow).UtcDateTime;
 
-        lock (_lock)
+        lock (s_lock)
         {
-            var keysToRemove = _tokens
+            var keysToRemove = s_tokens
                 .Where(kvp => kvp.Value.RevokedAt is not null
                     || kvp.Value.ExpiresAt.UtcDateTime < cleanupBefore)
                 .Select(kvp => kvp.Key)
@@ -131,7 +132,7 @@ public sealed class InMemoryAuthTokenRevocationRepository : IAuthTokenRevocation
 
             foreach (var key in keysToRemove)
             {
-                _tokens.Remove(key);
+                s_tokens.Remove(key);
             }
 
             return Task.FromResult(keysToRemove.Count);
