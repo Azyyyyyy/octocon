@@ -159,7 +159,13 @@ var mode = builder.Configuration["Parameters:scylla-mode"] ?? "single";
 if (mode == "cassandra")
 {
     // --- Cassandra 4.1 (low-end fallback) ---
-    var cassandra = builder.AddContainer("cassandra", "cassandra", "5")
+    // Built from db/cassandra/Dockerfile, which bakes the cassandra.yaml overrides
+    // we need (materialized_views_enabled, PasswordAuthenticator, CassandraAuthorizer)
+    // into the image at build time. That removes the need for a runtime wrapper script
+    // and avoids the bind-mount/chown pitfalls that previously broke Cassandra on GHA.
+    // Datacenter/rack are set via env vars; the official entrypoint writes them into
+    // cassandra-rackdc.properties using an in-place rewrite that does not rename.
+    var cassandra = builder.AddDockerfile("cassandra", "../../db/cassandra")
         .WithContainerNetworkAlias("cassandra")
         .WithEnvironment("CASSANDRA_CLUSTER_NAME", "OctoCluster")
         .WithEnvironment("CASSANDRA_LISTEN_ADDRESS", "cassandra")
@@ -168,14 +174,13 @@ if (mode == "cassandra")
         .WithEnvironment("CASSANDRA_RPC_ADDRESS", "0.0.0.0")
         .WithEnvironment("CASSANDRA_ENDPOINT_SNITCH", "GossipingPropertyFileSnitch")
         .WithEnvironment("CASSANDRA_NUM_TOKENS", "16")
+        .WithEnvironment("CASSANDRA_DC", "nam")
+        .WithEnvironment("CASSANDRA_RACK", "rack1")
         .WithEnvironment("MAX_HEAP_SIZE", "512M")
         .WithEnvironment("HEAP_NEWSIZE", "256M")
         .WithEnvironment("CQLSH_USER", scyllaUser)
         .WithEnvironment("CQLSH_PASSWORD", scyllaPassword)
-        .WithBindMount("../../scripts/cassandra/enable-mv.sh", "/enable-mv.sh", isReadOnly: true)
-        .WithBindMount("../../db/scylla/cassandra-rackdc.nam.properties", "/etc/cassandra/cassandra-rackdc.properties", isReadOnly: true)
         .WithEndpoint(port: scyllaPort, targetPort: 9042, name: "cql", scheme: "tcp")
-        .WithEntrypoint("/enable-mv.sh")
         .PublishAsDockerComposeService((_, service) =>
         {
             service.Networks = ["scylla"];
