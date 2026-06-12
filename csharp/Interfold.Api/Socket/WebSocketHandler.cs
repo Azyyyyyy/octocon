@@ -85,7 +85,8 @@ public static async Task HandleUserSocketAsync(HttpContext context)
         topicReplyAsArrayFrame,
         sendGate,
         pushCts.Token,
-        requestOrigin: $"{context.Request.Scheme}://{context.Request.Host}");
+        requestOrigin: $"{context.Request.Scheme}://{context.Request.Host}",
+        logger: logger);
 
     var socketPushTask = SocketEventPumpRunner.RunAllAsync(
         eventBus,
@@ -105,11 +106,13 @@ public static async Task HandleUserSocketAsync(HttpContext context)
         var incomingText = await ReceiveSocketTextAsync(socket, buffer, context.RequestAborted);
         if (incomingText is null)
         {
+            logger.LogInformation("[ws-diag] Receive returned null — socket closing. JoinedSystem={JoinedSystem}", joinedSystemId);
             break;
         }
 
         if (!TryParsePhoenixFrame(incomingText, out var eventName, out var topic, out var payload, out var reference, out var joinReference, out var replyAsArrayFrame))
         {
+            logger.LogWarning("[ws-diag] Failed to parse Phoenix frame. JoinedSystem={JoinedSystem}", joinedSystemId);
             // Unrecognised frame; close with a protocol-error code rather than
             // echoing raw JSON (which is itself not a valid Phoenix frame).
             await socket.CloseAsync(
@@ -133,6 +136,8 @@ public static async Task HandleUserSocketAsync(HttpContext context)
                 sendGate);
             continue;
         }
+
+        logger.LogInformation("[ws-diag] Received frame. Event={Event}, Topic={Topic}, JoinedSystem={JoinedSystem}", eventName, topic, joinedSystemId);
 
         if (string.Equals(eventName, "phx_join", StringComparison.OrdinalIgnoreCase))
         {
@@ -229,6 +234,8 @@ public static async Task HandleUserSocketAsync(HttpContext context)
                 topicReplyAsArrayFrame[topic] = replyAsArrayFrame;
                 topicJoinReference[topic] = joinReference;
 
+                logger.LogInformation("[ws-diag] phx_join accepted. Topic={Topic}, SystemId={SystemId}, JoinedTopicsCount={Count}", topic, joinedSystemId, joinedTopics.Count);
+
                 var initPayload = await WebSocketInitialization.BuildJoinInitPayloadAsync(context, joinedSystemId, context.RequestAborted);
                 var useBatchedInit = false;
 
@@ -306,6 +313,7 @@ public static async Task HandleUserSocketAsync(HttpContext context)
         {
             if (!joinedTopics.ContainsKey(topic))
             {
+                logger.LogWarning("[ws-diag] Endpoint frame on un-joined topic={Topic}, JoinedSystem={JoinedSystem}", topic, joinedSystemId);
                 await SendPhoenixReplyAsync(
                     socket,
                     topic,
@@ -319,7 +327,9 @@ public static async Task HandleUserSocketAsync(HttpContext context)
                 continue;
             }
 
+            logger.LogInformation("[ws-diag] Endpoint proxy starting. Topic={Topic}, JoinedSystem={JoinedSystem}", topic, joinedSystemId);
             var endpointResult = await HandleEndpointProxyAsync(context, payload, token, joinedSystemId);
+            logger.LogInformation("[ws-diag] Endpoint proxy finished. Topic={Topic}, JoinedSystem={JoinedSystem}, Status={Status}", topic, joinedSystemId, endpointResult.Status);
 
             await SendPhoenixReplyAsync(
                 socket,

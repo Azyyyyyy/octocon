@@ -3,6 +3,7 @@ using Interfold.Contracts;
 using Interfold.Contracts.Events;
 using Interfold.Contracts.Models.Read;
 using Interfold.Domain.Abstractions.Repository;
+using Microsoft.Extensions.Logging;
 
 namespace Interfold.Api.Socket.Handlers;
 
@@ -71,8 +72,15 @@ public static class FriendshipSocketEventHandlers
         IFriendshipRepository friendshipRepository,
         bool outgoing)
     {
+        context.Logger?.LogInformation(
+            "[fr-diag] SendRequestPayloadAsync entered. EventName={EventName}, TargetSystemId={Target}, OtherSystemId={Other}, Outgoing={Outgoing}, JoinedTopicsCount={Count}",
+            eventName, targetSystemId, otherSystemId, outgoing, context.JoinedTopics.Count);
+
         if (!context.TryGetSystemTopic(targetSystemId, out var topic, out var joinRef, out var asArray))
         {
+            context.Logger?.LogWarning(
+                "[fr-diag] TryGetSystemTopic FAILED for target={Target}, joinedTopics={Topics}",
+                targetSystemId, string.Join(",", context.JoinedTopics.Keys));
             return;
         }
 
@@ -83,6 +91,10 @@ public static class FriendshipSocketEventHandlers
             outgoing,
             context.CancellationToken);
 
+        context.Logger?.LogInformation(
+            "[fr-diag] GetFriendRequestWithRetry returned. EventName={EventName}, Matched={Matched}",
+            eventName, matched is null ? "null" : "match");
+
         var payload = matched is null
             ? new FriendRequestSocketPayload(
                 new FriendshipRequestModel(DateTimeOffset.UtcNow),
@@ -91,7 +103,15 @@ public static class FriendshipSocketEventHandlers
                 matched.Request,
                 matched.System with { AvatarUrl = AvatarUrlQualifier.Qualify(matched.System.AvatarUrl, context.RequestOrigin) });
 
+        context.Logger?.LogInformation(
+            "[fr-diag] Sending push. EventName={EventName}, Topic={Topic}, Target={Target}",
+            eventName, topic, targetSystemId);
+
         await context.SendAsync(topic, joinRef, asArray, eventName, payload);
+
+        context.Logger?.LogInformation(
+            "[fr-diag] Push sent. EventName={EventName}, Topic={Topic}",
+            eventName, topic);
     }
 
     private static async Task<FriendshipReadModel?> GetFriendshipWithRetryAsync(

@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Net.WebSockets;
+using Microsoft.Extensions.Logging;
 
 namespace Interfold.Api.Socket;
 
@@ -12,7 +13,8 @@ public sealed class SocketPushContext
         ConcurrentDictionary<string, bool> topicReplyAsArrayFrame,
         SemaphoreSlim sendGate,
         CancellationToken cancellationToken,
-        string? requestOrigin = null)
+        string? requestOrigin = null,
+        ILogger? logger = null)
     {
         Socket = socket;
         JoinedTopics = joinedTopics;
@@ -21,6 +23,7 @@ public sealed class SocketPushContext
         SendGate = sendGate;
         CancellationToken = cancellationToken;
         RequestOrigin = requestOrigin;
+        Logger = logger;
     }
 
     public WebSocket Socket { get; }
@@ -34,6 +37,8 @@ public sealed class SocketPushContext
     /// (e.g. <c>https://api.example.com</c>). Used to qualify relative avatar URLs.
     /// </summary>
     public string? RequestOrigin { get; }
+
+    public ILogger? Logger { get; }
 
     public bool TryGetSystemTopic(string systemId, out string topic, out string? joinRef, out bool asArray)
     {
