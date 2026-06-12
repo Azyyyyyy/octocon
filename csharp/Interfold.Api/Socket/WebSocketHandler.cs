@@ -423,6 +423,10 @@ static async Task<SocketEndpointProxyResponse> HandleEndpointProxyAsync(
                 System.Net.HttpStatusCode.Forbidden)));
     }
 
+    var proxyLogger = websocketContext.RequestServices
+        .GetRequiredService<ILoggerFactory>()
+        .CreateLogger("EndpointProxy");
+
     var targetUri = $"{websocketContext.Request.Scheme}://{websocketContext.Request.Host}{path}";
     using var request = new HttpRequestMessage(new HttpMethod(method), targetUri);
     request.Headers.TryAddWithoutValidation("Authorization", $"Bearer {socketToken}");
@@ -433,23 +437,60 @@ static async Task<SocketEndpointProxyResponse> HandleEndpointProxyAsync(
         request.Headers.TryAddWithoutValidation("X-Interfold-Principal", joinedSystemId);
     }
 
+    string? requestBodyJsonLogCopy = null;
     if (payloadObj.TryGetProperty("body", out var bodyProp)
         && bodyProp.ValueKind != JsonValueKind.Null
         && method is not "GET" and not "HEAD")
     {
         //This NEEDS to be GetString() because the raw JSON is what we want to forward, not a re-serialized version of the body element.
         var requestBodyJson = bodyProp.GetString();
+        requestBodyJsonLogCopy = requestBodyJson;
         if (requestBodyJson != null) {
             request.Content = new StringContent(requestBodyJson, Encoding.UTF8, "application/json");
         }
     }
 
+    proxyLogger.LogInformation(
+        "[proxy-diag] Sending HTTP. Method={Method}, Uri={Uri}, BodyKind={BodyKind}, BodyLen={BodyLen}, BodyPreview={Body}",
+        method, targetUri,
+        payloadObj.TryGetProperty("body", out var bodyKindProp) ? bodyKindProp.ValueKind.ToString() : "missing",
+        requestBodyJsonLogCopy?.Length ?? 0,
+        requestBodyJsonLogCopy is null ? "(null)" : (requestBodyJsonLogCopy.Length > 200 ? requestBodyJsonLogCopy[..200] + "..." : requestBodyJsonLogCopy));
+
     var httpClientFactory = websocketContext.RequestServices.GetRequiredService<IHttpClientFactory>();
     using var httpClient = httpClientFactory.CreateClient();
-    using var response = await httpClient.SendAsync(request, websocketContext.RequestAborted);
-    var responseBody = await response.Content.ReadAsStringAsync(websocketContext.RequestAborted);
 
-    return new SocketEndpointProxyResponse((int)response.StatusCode, responseBody);
+    HttpResponseMessage response;
+    try
+    {
+        response = await httpClient.SendAsync(request, websocketContext.RequestAborted);
+    }
+    catch (Exception ex)
+    {
+        proxyLogger.LogError(ex, "[proxy-diag] HTTP SendAsync threw. Uri={Uri}", targetUri);
+        throw;
+    }
+
+    string responseBody;
+    try
+    {
+        responseBody = await response.Content.ReadAsStringAsync(websocketContext.RequestAborted);
+    }
+    catch (Exception ex)
+    {
+        proxyLogger.LogError(ex, "[proxy-diag] ReadAsStringAsync threw. Uri={Uri}, Status={Status}", targetUri, (int)response.StatusCode);
+        response.Dispose();
+        throw;
+    }
+
+    proxyLogger.LogInformation(
+        "[proxy-diag] HTTP response received. Uri={Uri}, Status={Status}, ResponseLen={Len}, ResponsePreview={Body}",
+        targetUri, (int)response.StatusCode, responseBody.Length,
+        responseBody.Length > 200 ? responseBody[..200] + "..." : responseBody);
+
+    var status = (int)response.StatusCode;
+    response.Dispose();
+    return new SocketEndpointProxyResponse(status, responseBody);
 }
 
 static string ToJsonString<T>(T value)
