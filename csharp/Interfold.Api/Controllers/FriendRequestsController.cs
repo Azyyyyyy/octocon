@@ -17,19 +17,22 @@ public sealed class FriendRequestsController : InterfoldControllerBase
     private readonly AcceptFriendRequestCommandHandler _accept;
     private readonly RejectFriendRequestCommandHandler _reject;
     private readonly CancelFriendRequestCommandHandler _cancel;
+    private readonly ILogger<FriendRequestsController> _logger;
 
     public FriendRequestsController(
         IFriendshipRepository repository,
         SendFriendRequestCommandHandler send,
         AcceptFriendRequestCommandHandler accept,
         RejectFriendRequestCommandHandler reject,
-        CancelFriendRequestCommandHandler cancel)
+        CancelFriendRequestCommandHandler cancel,
+        ILogger<FriendRequestsController> logger)
     {
         _repository = repository;
         _send = send;
         _accept = accept;
         _reject = reject;
         _cancel = cancel;
+        _logger = logger;
     }
 
     [HttpGet]
@@ -62,6 +65,10 @@ public sealed class FriendRequestsController : InterfoldControllerBase
     [HttpPut("{id}")]
     public async Task<Response> Send(string id, [FromBody] BaseRequest? req, CancellationToken ct)
     {
+        _logger.LogInformation(
+            "[ctrl-diag] FriendRequestsController.Send entered. id={Id}, principal={Principal}, hasBody={HasBody}",
+            id, PrincipalId, req is not null);
+
         var principal = PrincipalId;
         if (string.Equals(principal, id, StringComparison.Ordinal))
         {
@@ -79,7 +86,15 @@ public sealed class FriendRequestsController : InterfoldControllerBase
             OccurredAt: DateTimeOffset.UtcNow,
             Payload: new SendFriendRequestCommand(id));
 
-        return CommandNoContent(await _send.HandleAsync(envelope, ct));
+        _logger.LogInformation(
+            "[ctrl-diag] Calling SendFriendRequestCommandHandler.HandleAsync. idempotencyKey={Key}",
+            envelope.IdempotencyKey);
+
+        var result = await _send.HandleAsync(envelope, ct);
+
+        _logger.LogInformation("[ctrl-diag] Handler returned. accepted={Accepted}", result.Accepted);
+
+        return CommandNoContent(result);
     }
 
     [HttpDelete("{id}")]

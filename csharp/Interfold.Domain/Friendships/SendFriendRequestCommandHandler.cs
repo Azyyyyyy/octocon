@@ -7,7 +7,6 @@ using Interfold.Contracts.Operations;
 using Interfold.Domain.Abstractions;
 using Interfold.Domain.Abstractions.Repository;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Interfold.Domain.Friendships;
 
@@ -22,12 +21,12 @@ public sealed class SendFriendRequestCommandHandler : ICommandHandler<SendFriend
         IFriendshipRepository repository,
         IIdempotencyStore idempotencyStore,
         IClusterEventBus eventBus,
-        ILogger<SendFriendRequestCommandHandler>? logger = null)
+        ILogger<SendFriendRequestCommandHandler> logger)
     {
         _repository = repository;
         _idempotencyStore = idempotencyStore;
         _eventBus = eventBus;
-        _logger = logger ?? NullLogger<SendFriendRequestCommandHandler>.Instance;
+        _logger = logger;
     }
 
     public async Task<CommandExecutionResult<FriendshipCommandResult>> HandleAsync(
