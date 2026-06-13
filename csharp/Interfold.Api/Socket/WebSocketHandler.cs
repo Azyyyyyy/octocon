@@ -78,28 +78,17 @@ public static async Task HandleUserSocketAsync(HttpContext context)
     var pollRepository = context.RequestServices.GetRequiredService<IPollRepository>();
     var journalRepository = context.RequestServices.GetRequiredService<IJournalRepository>();
     var encryptionStateRepository = context.RequestServices.GetRequiredService<IEncryptionStateRepository>();
-    var socketPushContext = new SocketPushContext(
-        socket,
-        joinedTopics,
-        topicJoinReference,
-        topicReplyAsArrayFrame,
-        sendGate,
-        pushCts.Token,
-        requestOrigin: $"{context.Request.Scheme}://{context.Request.Host}",
-        logger: logger);
+    var requestOrigin = $"{context.Request.Scheme}://{context.Request.Host}";
 
-    var socketPushTask = SocketEventPumpRunner.RunAllAsync(
-        eventBus,
-        socketPushContext,
-        frontingRepository,
-        alterRepository,
-        tagRepository,
-        settingsFieldRepository,
-        accountRepository,
-        friendshipRepository,
-        pollRepository,
-        journalRepository,
-        encryptionStateRepository);
+    // The per-socket event pump is started on the first successful phx_join (see below).
+    // Deferring registration keeps each socket invisible to the bus until it actually
+    // identifies a target system; without it, every just-accepted socket added ~38 broadcast
+    // writers to the bus and the publisher had to fan every event out to all of them.
+    Task? socketPushTask = null;
+    // 0 = pump not started, 1 = started. Mutated only via Interlocked.CompareExchange so a
+    // burst of phx_join frames that arrives back-to-back (e.g. retried by the client during
+    // a flaky connection) can never race past the guard and spin up a second pump.
+    var pumpStarted = 0;
 
     while (socket.State == WebSocketState.Open)
     {
@@ -230,6 +219,41 @@ public static async Task HandleUserSocketAsync(HttpContext context)
                 topicReplyAsArrayFrame[topic] = replyAsArrayFrame;
                 topicJoinReference[topic] = joinReference;
 
+                // Start the per-socket event pump now that we know which system this socket is bound to.
+                // The bus filter only delivers events whose TargetSystemId matches JoinedSystemId, so the
+                // pump's ~38 subscriptions only see traffic for this user.
+                //
+                // Interlocked.CompareExchange flips pumpStarted from 0 to 1 atomically and returns the
+                // previous value; only the thread that observed 0 actually constructs the push context
+                // and starts the pump. A subsequent phx_join on the same socket simply observes 1 and
+                // becomes a no-op rather than spinning a second pump / second SocketPushContext.
+                if (Interlocked.CompareExchange(ref pumpStarted, 1, 0) == 0)
+                {
+                    var socketPushContext = new SocketPushContext(
+                        socket,
+                        joinedSystemId,
+                        joinedTopics,
+                        topicJoinReference,
+                        topicReplyAsArrayFrame,
+                        sendGate,
+                        pushCts.Token,
+                        requestOrigin: requestOrigin,
+                        logger: logger);
+
+                    socketPushTask = SocketEventPumpRunner.RunAllAsync(
+                        eventBus,
+                        socketPushContext,
+                        frontingRepository,
+                        alterRepository,
+                        tagRepository,
+                        settingsFieldRepository,
+                        accountRepository,
+                        friendshipRepository,
+                        pollRepository,
+                        journalRepository,
+                        encryptionStateRepository);
+                }
+
                 var initPayload = await WebSocketInitialization.BuildJoinInitPayloadAsync(context, joinedSystemId, context.RequestAborted);
                 var useBatchedInit = false;
 
@@ -349,13 +373,16 @@ public static async Task HandleUserSocketAsync(HttpContext context)
     }
 
     await pushCts.CancelAsync();
-    try
+    if (socketPushTask is not null)
     {
-        await socketPushTask;
-    }
-    catch (OperationCanceledException)
-    {
-        // Expected on socket shutdown.
+        try
+        {
+            await socketPushTask;
+        }
+        catch (OperationCanceledException)
+        {
+            // Expected on socket shutdown.
+        }
     }
 
     if (socket.State is WebSocketState.Open or WebSocketState.CloseReceived)

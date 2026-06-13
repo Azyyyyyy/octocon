@@ -1,63 +1,63 @@
 namespace Interfold.Contracts.Events;
 
-public sealed record AlterCreatedEvent(string SystemId, int AlterId);
+public sealed record AlterCreatedEvent(string TargetSystemId, int AlterId) : ITargetedClusterEvent;
 
-public sealed record AlterUpdatedEvent(string SystemId, int AlterId);
+public sealed record AlterUpdatedEvent(string TargetSystemId, int AlterId) : ITargetedClusterEvent;
 
-public sealed record AlterDeletedEvent(string SystemId, int AlterId);
+public sealed record AlterDeletedEvent(string TargetSystemId, int AlterId) : ITargetedClusterEvent;
 
-public sealed record TagCreatedEvent(string SystemId, string TagId);
+public sealed record TagCreatedEvent(string TargetSystemId, string TagId) : ITargetedClusterEvent;
 
-public sealed record TagUpdatedEvent(string SystemId, string TagId);
+public sealed record TagUpdatedEvent(string TargetSystemId, string TagId) : ITargetedClusterEvent;
 
-public sealed record TagDeletedEvent(string SystemId, string TagId);
+public sealed record TagDeletedEvent(string TargetSystemId, string TagId) : ITargetedClusterEvent;
 
-public sealed record SettingsFieldsChangedEvent(string SystemId);
+public sealed record SettingsFieldsChangedEvent(string TargetSystemId) : ITargetedClusterEvent;
 
-public sealed record SettingsProfileUpdatedEvent(string SystemId, bool EmitUsernameUpdated);
+public sealed record SettingsProfileUpdatedEvent(string TargetSystemId, bool EmitUsernameUpdated) : ITargetedClusterEvent;
 
-public sealed record SettingsAccountDeletedSignalEvent(string SystemId);
+public sealed record SettingsAccountDeletedSignalEvent(string TargetSystemId) : ITargetedClusterEvent;
 
-public sealed record SettingsAltersWipedSignalEvent(string SystemId);
+public sealed record SettingsAltersWipedSignalEvent(string TargetSystemId) : ITargetedClusterEvent;
 
-public sealed record SettingsEncryptedDataWipedSignalEvent(string SystemId);
+public sealed record SettingsEncryptedDataWipedSignalEvent(string TargetSystemId) : ITargetedClusterEvent;
 
-public sealed record SettingsDiscordAccountUnlinkedSignalEvent(string SystemId);
+public sealed record SettingsDiscordAccountUnlinkedSignalEvent(string TargetSystemId) : ITargetedClusterEvent;
 
-public sealed record SettingsAppleAccountUnlinkedSignalEvent(string SystemId);
+public sealed record SettingsAppleAccountUnlinkedSignalEvent(string TargetSystemId) : ITargetedClusterEvent;
 
-public sealed record PollCreatedEvent(string SystemId, string PollId);
+public sealed record PollCreatedEvent(string TargetSystemId, string PollId) : ITargetedClusterEvent;
 
-public sealed record PollUpdatedEvent(string SystemId, string PollId);
+public sealed record PollUpdatedEvent(string TargetSystemId, string PollId) : ITargetedClusterEvent;
 
-public sealed record PollDeletedEvent(string SystemId, string PollId);
+public sealed record PollDeletedEvent(string TargetSystemId, string PollId) : ITargetedClusterEvent;
 
-public sealed record GlobalJournalEntryCreatedEvent(string SystemId, string EntryId);
+public sealed record GlobalJournalEntryCreatedEvent(string TargetSystemId, string EntryId) : ITargetedClusterEvent;
 
-public sealed record GlobalJournalEntryUpdatedEvent(string SystemId, string EntryId);
+public sealed record GlobalJournalEntryUpdatedEvent(string TargetSystemId, string EntryId) : ITargetedClusterEvent;
 
-public sealed record GlobalJournalEntryDeletedEvent(string SystemId, string EntryId);
+public sealed record GlobalJournalEntryDeletedEvent(string TargetSystemId, string EntryId) : ITargetedClusterEvent;
 
-public sealed record AlterJournalEntryCreatedEvent(string SystemId, string EntryId);
+public sealed record AlterJournalEntryCreatedEvent(string TargetSystemId, string EntryId) : ITargetedClusterEvent;
 
-public sealed record AlterJournalEntryUpdatedEvent(string SystemId, string EntryId);
+public sealed record AlterJournalEntryUpdatedEvent(string TargetSystemId, string EntryId) : ITargetedClusterEvent;
 
-public sealed record AlterJournalEntryDeletedEvent(string SystemId, string EntryId);
+public sealed record AlterJournalEntryDeletedEvent(string TargetSystemId, string EntryId) : ITargetedClusterEvent;
 
-public sealed record FriendshipAddedEvent(string TargetSystemId, string SystemId);
+public sealed record FriendshipAddedEvent(string TargetSystemId, string SystemId) : ITargetedClusterEvent;
 
-public sealed record FriendshipRemovedEvent(string TargetSystemId, string SystemId);
+public sealed record FriendshipRemovedEvent(string TargetSystemId, string SystemId) : ITargetedClusterEvent;
 
-public sealed record FriendshipTrustedEvent(string TargetSystemId, string SystemId);
+public sealed record FriendshipTrustedEvent(string TargetSystemId, string SystemId) : ITargetedClusterEvent;
 
-public sealed record FriendshipUntrustedEvent(string TargetSystemId, string SystemId);
+public sealed record FriendshipUntrustedEvent(string TargetSystemId, string SystemId) : ITargetedClusterEvent;
 
-public sealed record FriendRequestSentEvent(string TargetSystemId, string ToSystemId);
+public sealed record FriendRequestSentEvent(string TargetSystemId, string ToSystemId) : ITargetedClusterEvent;
 
-public sealed record FriendRequestReceivedEvent(string TargetSystemId, string FromSystemId);
+public sealed record FriendRequestReceivedEvent(string TargetSystemId, string FromSystemId) : ITargetedClusterEvent;
 
-public sealed record FriendRequestRemovedFromEvent(string TargetSystemId, string FromSystemId);
+public sealed record FriendRequestRemovedFromEvent(string TargetSystemId, string FromSystemId) : ITargetedClusterEvent;
 
-public sealed record FriendRequestRemovedToEvent(string TargetSystemId, string ToSystemId);
+public sealed record FriendRequestRemovedToEvent(string TargetSystemId, string ToSystemId) : ITargetedClusterEvent;
 
-public sealed record SettingsAccountLinkedEvent(string SystemId, string ProviderKey, string Identity);
+public sealed record SettingsAccountLinkedEvent(string TargetSystemId, string ProviderKey, string Identity) : ITargetedClusterEvent;

@@ -7,14 +7,14 @@ namespace Interfold.Api.Socket.Handlers;
 public static class JournalSocketEventHandlers
 {
     public static async Task HandleAsync(GlobalJournalEntryCreatedEvent evt, SocketPushContext context, IJournalRepository journalRepository)
-        => await HandleGlobalUpsertAsync(evt.SystemId, evt.EntryId, SocketEventNames.Journals.GlobalCreated, context, journalRepository);
+        => await HandleGlobalUpsertAsync(evt.TargetSystemId, evt.EntryId, SocketEventNames.Journals.GlobalCreated, context, journalRepository);
 
     public static async Task HandleAsync(GlobalJournalEntryUpdatedEvent evt, SocketPushContext context, IJournalRepository journalRepository)
-        => await HandleGlobalUpsertAsync(evt.SystemId, evt.EntryId, SocketEventNames.Journals.GlobalUpdated, context, journalRepository);
+        => await HandleGlobalUpsertAsync(evt.TargetSystemId, evt.EntryId, SocketEventNames.Journals.GlobalUpdated, context, journalRepository);
 
     public static async Task HandleAsync(GlobalJournalEntryDeletedEvent evt, SocketPushContext context)
     {
-        if (!context.TryGetSystemTopic(evt.SystemId, out var topic, out var joinRef, out var asArray))
+        if (!context.TryGetSystemTopic(evt.TargetSystemId, out var topic, out var joinRef, out var asArray))
         {
             return;
         }
@@ -23,14 +23,14 @@ public static class JournalSocketEventHandlers
     }
 
     public static async Task HandleAsync(AlterJournalEntryCreatedEvent evt, SocketPushContext context, IJournalRepository journalRepository)
-        => await HandleAlterUpsertAsync(evt.SystemId, evt.EntryId, SocketEventNames.Journals.AlterCreated, context, journalRepository);
+        => await HandleAlterUpsertAsync(evt.TargetSystemId, evt.EntryId, SocketEventNames.Journals.AlterCreated, context, journalRepository);
 
     public static async Task HandleAsync(AlterJournalEntryUpdatedEvent evt, SocketPushContext context, IJournalRepository journalRepository)
-        => await HandleAlterUpsertAsync(evt.SystemId, evt.EntryId, SocketEventNames.Journals.AlterUpdated, context, journalRepository);
+        => await HandleAlterUpsertAsync(evt.TargetSystemId, evt.EntryId, SocketEventNames.Journals.AlterUpdated, context, journalRepository);
 
     public static async Task HandleAsync(AlterJournalEntryDeletedEvent evt, SocketPushContext context)
     {
-        if (!context.TryGetSystemTopic(evt.SystemId, out var topic, out var joinRef, out var asArray))
+        if (!context.TryGetSystemTopic(evt.TargetSystemId, out var topic, out var joinRef, out var asArray))
         {
             return;
         }

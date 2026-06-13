@@ -7,14 +7,14 @@ namespace Interfold.Api.Socket.Handlers;
 public static class TagSocketEventHandlers
 {
     public static async Task HandleAsync(TagCreatedEvent evt, SocketPushContext context, ITagRepository tagRepository)
-        => await HandleUpsertAsync(evt.SystemId, evt.TagId, SocketEventNames.Tags.Created, context, tagRepository);
+        => await HandleUpsertAsync(evt.TargetSystemId, evt.TagId, SocketEventNames.Tags.Created, context, tagRepository);
 
     public static async Task HandleAsync(TagUpdatedEvent evt, SocketPushContext context, ITagRepository tagRepository)
-        => await HandleUpsertAsync(evt.SystemId, evt.TagId, SocketEventNames.Tags.Updated, context, tagRepository);
+        => await HandleUpsertAsync(evt.TargetSystemId, evt.TagId, SocketEventNames.Tags.Updated, context, tagRepository);
 
     public static async Task HandleAsync(TagDeletedEvent evt, SocketPushContext context)
     {
-        if (!context.TryGetSystemTopic(evt.SystemId, out var topic, out var joinRef, out var asArray))
+        if (!context.TryGetSystemTopic(evt.TargetSystemId, out var topic, out var joinRef, out var asArray))
         {
             return;
         }

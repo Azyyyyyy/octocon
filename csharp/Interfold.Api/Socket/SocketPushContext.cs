@@ -8,6 +8,7 @@ public sealed class SocketPushContext
 {
     public SocketPushContext(
         WebSocket socket,
+        string joinedSystemId,
         ConcurrentDictionary<string, byte> joinedTopics,
         ConcurrentDictionary<string, string?> topicJoinReference,
         ConcurrentDictionary<string, bool> topicReplyAsArrayFrame,
@@ -17,6 +18,7 @@ public sealed class SocketPushContext
         ILogger? logger = null)
     {
         Socket = socket;
+        JoinedSystemId = joinedSystemId;
         JoinedTopics = joinedTopics;
         TopicJoinReference = topicJoinReference;
         TopicReplyAsArrayFrame = topicReplyAsArrayFrame;
@@ -27,6 +29,13 @@ public sealed class SocketPushContext
     }
 
     public WebSocket Socket { get; }
+    /// <summary>
+    /// The system id this socket is bound to (captured from the successful <c>phx_join</c>).
+    /// Used by <c>SocketEventPumpRunner</c> as the <c>targetSystemId</c> for every bus
+    /// subscription so the pump only sees events whose
+    /// <c>ITargetedClusterEvent.TargetSystemId</c> matches this socket.
+    /// </summary>
+    public string JoinedSystemId { get; }
     public ConcurrentDictionary<string, byte> JoinedTopics { get; }
     public ConcurrentDictionary<string, string?> TopicJoinReference { get; }
     public ConcurrentDictionary<string, bool> TopicReplyAsArrayFrame { get; }

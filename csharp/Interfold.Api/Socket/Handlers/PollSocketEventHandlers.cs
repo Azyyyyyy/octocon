@@ -7,14 +7,14 @@ namespace Interfold.Api.Socket.Handlers;
 public static class PollSocketEventHandlers
 {
     public static async Task HandleAsync(PollCreatedEvent evt, SocketPushContext context, IPollRepository pollRepository)
-        => await HandleUpsertAsync(evt.SystemId, evt.PollId, SocketEventNames.Polls.Created, context, pollRepository);
+        => await HandleUpsertAsync(evt.TargetSystemId, evt.PollId, SocketEventNames.Polls.Created, context, pollRepository);
 
     public static async Task HandleAsync(PollUpdatedEvent evt, SocketPushContext context, IPollRepository pollRepository)
-        => await HandleUpsertAsync(evt.SystemId, evt.PollId, SocketEventNames.Polls.Updated, context, pollRepository);
+        => await HandleUpsertAsync(evt.TargetSystemId, evt.PollId, SocketEventNames.Polls.Updated, context, pollRepository);
 
     public static async Task HandleAsync(PollDeletedEvent evt, SocketPushContext context)
     {
-        if (!context.TryGetSystemTopic(evt.SystemId, out var topic, out var joinRef, out var asArray))
+        if (!context.TryGetSystemTopic(evt.TargetSystemId, out var topic, out var joinRef, out var asArray))
         {
             return;
         }

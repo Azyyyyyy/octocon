@@ -9,7 +9,6 @@ namespace Interfold.IntegrationTests.Endpoints;
 // 5 minute timeout since we want to ensure this does end up timing out if a connection gets stuck but we also 
 // need to account for Cassandra's slower performance with bootstrapping.
 [Timeout(1000 * 300)]
-[NotInParallel(nameof(WebSocketTests))] //TODO: Work on not needing this
 [ClassDataSource<InMemoryWebFactoryFixture>(Shared = SharedType.PerTestSession)]
 [ClassDataSource<ScyllaWebFactoryFixture>(Shared = SharedType.PerTestSession)]
 [ClassDataSource<CassandraWebFactoryFixture>(Shared = SharedType.PerTestSession)]
@@ -54,11 +53,6 @@ public class WebSocketTests(IWebFactoryFixture fixture) : BaseEndpointTest
     [Test]
     public async Task Api_UserSocketEndpoint_RejectsUnsupportedProtocolVersion(CancellationToken token)
     {
-        fixture.Factory            
-            .WithConfiguration("OCTOCON_DEEPLINK_ADDRESS", "octocon://app")
-            .WithConfiguration("OCTOCON_SCYLLA_KEYSPACE", "nam")
-            .WithConfiguration("OCTOCON_SOCKET_BATCH_BYTES_THRESHOLD", "1");
-
         var systemId = UniqueId("sys-phx-unsupported");
         var wsClient = fixture.Factory.Server.CreateWebSocketClient();
         string socketToken = await CreateRandomToken(fixture.Factory, systemId);
@@ -89,10 +83,6 @@ public class WebSocketTests(IWebFactoryFixture fixture) : BaseEndpointTest
     [Test]
     public async Task Api_UserSocketEndpoint_BatchesForIos_WhenThresholdExceeded(CancellationToken token)
     {
-        fixture.Factory            
-            .WithConfiguration("OCTOCON_DEEPLINK_ADDRESS", "octocon://app")
-            .WithConfiguration("OCTOCON_SCYLLA_KEYSPACE", "nam");
-
         var systemId = UniqueId("sys-phx-ios-batch");
         var wsClient = fixture.Factory.Server.CreateWebSocketClient();
         string socketToken = await CreateRandomToken(fixture.Factory, systemId);
@@ -126,10 +116,6 @@ public class WebSocketTests(IWebFactoryFixture fixture) : BaseEndpointTest
     [Test]
     public async Task Api_UserSocketEndpoint_RateLimitsThirdJoinWithinOneSecond(CancellationToken token)
     {
-        fixture.Factory            
-            .WithConfiguration("OCTOCON_DEEPLINK_ADDRESS", "octocon://app")
-            .WithConfiguration("OCTOCON_SCYLLA_KEYSPACE", "nam");
-
         var systemId = UniqueId("sys-rate-limit");
         var wsClient = fixture.Factory.Server.CreateWebSocketClient();
         string socketToken = await CreateRandomToken(fixture.Factory, systemId);
@@ -157,10 +143,6 @@ public class WebSocketTests(IWebFactoryFixture fixture) : BaseEndpointTest
     [Test]
     public async Task Api_UserSocketEndpoint_PushesFrontingChangedEvent_AfterFrontStart(CancellationToken token)
     {
-        fixture.Factory            
-            .WithConfiguration("OCTOCON_DEEPLINK_ADDRESS", "octocon://app")
-            .WithConfiguration("OCTOCON_SCYLLA_KEYSPACE", "nam");
-
         var systemId = UniqueId("sys-front-push");
         var wsClient = fixture.Factory.Server.CreateWebSocketClient();
         string socketToken = await CreateRandomToken(fixture.Factory, systemId);
@@ -221,10 +203,6 @@ public class WebSocketTests(IWebFactoryFixture fixture) : BaseEndpointTest
     [Test]
     public async Task Api_UserSocketEndpoint_PushesAlterTagAndFieldsEvents_AfterEndpointWrites(CancellationToken token)
     {
-        fixture.Factory            
-            .WithConfiguration("OCTOCON_DEEPLINK_ADDRESS", "octocon://app")
-            .WithConfiguration("OCTOCON_SCYLLA_KEYSPACE", "nam");
-
         var systemId = UniqueId("sys-domain-fanout");
         var wsClient = fixture.Factory.Server.CreateWebSocketClient();
         string socketToken = await CreateRandomToken(fixture.Factory, systemId);
@@ -294,10 +272,6 @@ public class WebSocketTests(IWebFactoryFixture fixture) : BaseEndpointTest
     [Test]
     public async Task Api_UserSocketEndpoint_PushesFriendRequestReceived_ToRecipientSystem(CancellationToken token)
     {
-        fixture.Factory            
-            .WithConfiguration("OCTOCON_DEEPLINK_ADDRESS", "octocon://app")
-            .WithConfiguration("OCTOCON_SCYLLA_KEYSPACE", "nam");
-
         var senderSystemId = UniqueId("sys-friend-sender");
         var recipientSystemId = UniqueId("sys-friend-recipient");
         var wsClientFactory = fixture.Factory.Server.CreateWebSocketClient();
@@ -352,10 +326,6 @@ public class WebSocketTests(IWebFactoryFixture fixture) : BaseEndpointTest
     [Test]
     public async Task Api_UserSocketEndpoint_PushesFriendRequestAccepted_ToActorAndRecipient(CancellationToken token)
     {
-        fixture.Factory            
-            .WithConfiguration("OCTOCON_DEEPLINK_ADDRESS", "octocon://app")
-            .WithConfiguration("OCTOCON_SCYLLA_KEYSPACE", "nam");
-
         var senderSystemId = UniqueId("sys-accept-sender");
         var recipientSystemId = UniqueId("sys-accept-recipient");
 
@@ -447,10 +417,6 @@ public class WebSocketTests(IWebFactoryFixture fixture) : BaseEndpointTest
     [Test]
     public async Task Api_UserSocketEndpoint_PushesFriendRequestRejected_ToActorAndRecipient(CancellationToken token)
     {
-        fixture.Factory            
-            .WithConfiguration("OCTOCON_DEEPLINK_ADDRESS", "octocon://app")
-            .WithConfiguration("OCTOCON_SCYLLA_KEYSPACE", "nam");
-
         var senderSystemId = UniqueId("sys-reject-sender");
         var recipientSystemId = UniqueId("sys-reject-recipient");
 
@@ -519,10 +485,6 @@ public class WebSocketTests(IWebFactoryFixture fixture) : BaseEndpointTest
     [Test]
     public async Task Api_UserSocketEndpoint_PushesFriendRequestCancelled_ToActorAndRecipient(CancellationToken token)
     {
-        fixture.Factory            
-            .WithConfiguration("OCTOCON_DEEPLINK_ADDRESS", "octocon://app")
-            .WithConfiguration("OCTOCON_SCYLLA_KEYSPACE", "nam");
-
         var senderSystemId = UniqueId("sys-cancel-sender");
         var recipientSystemId = UniqueId("sys-cancel-recipient");
 
@@ -594,10 +556,6 @@ public class WebSocketTests(IWebFactoryFixture fixture) : BaseEndpointTest
     [Test]
     public async Task Api_UserSocketEndpoint_PushesFriendRemoved_ToActorAndRecipient(CancellationToken token)
     {
-        fixture.Factory            
-            .WithConfiguration("OCTOCON_DEEPLINK_ADDRESS", "octocon://app")
-            .WithConfiguration("OCTOCON_SCYLLA_KEYSPACE", "nam");
-
         var senderSystemId = UniqueId("sys-remove-sender");
         var recipientSystemId = UniqueId("sys-remove-recipient");
 
@@ -705,10 +663,6 @@ public class WebSocketTests(IWebFactoryFixture fixture) : BaseEndpointTest
     [Test]
     public async Task Api_UserSocketEndpoint_PushesFriendTrustedAndUntrusted_ToActor(CancellationToken token)
     {
-        fixture.Factory            
-            .WithConfiguration("OCTOCON_DEEPLINK_ADDRESS", "octocon://app")
-            .WithConfiguration("OCTOCON_SCYLLA_KEYSPACE", "nam");
-        
         var senderSystemId = UniqueId("sys-trust-sender");
         var recipientSystemId = UniqueId("sys-trust-recipient");
 
@@ -835,10 +789,6 @@ public class WebSocketTests(IWebFactoryFixture fixture) : BaseEndpointTest
     [Test]
     public async Task Api_UserSocketEndpoint_PushesFriendAdded_OnMutualFriendRequest(CancellationToken token)
     {
-        fixture.Factory            
-            .WithConfiguration("OCTOCON_DEEPLINK_ADDRESS", "octocon://app")
-            .WithConfiguration("OCTOCON_SCYLLA_KEYSPACE", "nam");
-
         var systemAId = UniqueId("sys-mutual-a");
         var systemBId = UniqueId("sys-mutual-b");
         

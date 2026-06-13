@@ -44,7 +44,7 @@ public sealed class FrontNotifierBackgroundService(
         await foreach (var evt in eventBus.SubscribeAsync<FrontingStateChangedEvent>(ct).ConfigureAwait(false))
         {
             var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-            _pending.AddOrUpdate(evt.SystemId, now, (_, _) => now);
+            _pending.AddOrUpdate(evt.TargetSystemId, now, (_, _) => now);
         }
     }
 

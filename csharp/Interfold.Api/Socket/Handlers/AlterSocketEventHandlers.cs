@@ -8,14 +8,14 @@ namespace Interfold.Api.Socket.Handlers;
 public static class AlterSocketEventHandlers
 {
     public static async Task HandleAsync(AlterCreatedEvent evt, SocketPushContext context, IAlterRepository alterRepository)
-        => await HandleUpsertAsync(evt.SystemId, evt.AlterId, SocketEventNames.Alters.Created, context, alterRepository);
+        => await HandleUpsertAsync(evt.TargetSystemId, evt.AlterId, SocketEventNames.Alters.Created, context, alterRepository);
 
     public static async Task HandleAsync(AlterUpdatedEvent evt, SocketPushContext context, IAlterRepository alterRepository)
-        => await HandleUpsertAsync(evt.SystemId, evt.AlterId, SocketEventNames.Alters.Updated, context, alterRepository);
+        => await HandleUpsertAsync(evt.TargetSystemId, evt.AlterId, SocketEventNames.Alters.Updated, context, alterRepository);
 
     public static async Task HandleAsync(AlterDeletedEvent evt, SocketPushContext context)
     {
-        if (!context.TryGetSystemTopic(evt.SystemId, out var topic, out var joinRef, out var asArray))
+        if (!context.TryGetSystemTopic(evt.TargetSystemId, out var topic, out var joinRef, out var asArray))
         {
             return;
         }

@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Threading.Channels;
+using Interfold.Contracts.Events;
 using Interfold.Domain.Abstractions;
 
 namespace Interfold.Infrastructure.Coordination;
@@ -8,8 +9,20 @@ namespace Interfold.Infrastructure.Coordination;
 /// In-process implementation of <see cref="IClusterEventBus"/> backed by
 /// <see cref="System.Threading.Channels"/>.
 /// <para>
-/// Each event type gets its own unbounded channel.  Multiple concurrent subscribers
-/// each receive their own reader so every subscriber sees every event (fan-out).
+/// Each event type gets its own bag of subscriptions. A subscription may be scoped to a
+/// specific <c>TargetSystemId</c>; the bus filters at publish time so that only writers whose
+/// target matches (or is null, meaning broadcast) receive the event. Events whose runtime
+/// type does not implement <see cref="ITargetedClusterEvent"/> are delivered to all writers
+/// regardless of scoping value.
+/// </para>
+/// <para>
+/// Channels are configured with <c>AllowSynchronousContinuations = false</c> so a publisher
+/// never runs a subscriber's continuation inline. Combined with the targeted publish-time
+/// filter (so the bus only wakes sockets that actually care about the event), this keeps
+/// the command-handler / HTTP request thread free to return to its caller as soon as the
+/// event is enqueued — every WebSocket push handler runs on a separate threadpool turn.
+/// </para>
+/// <para>
 /// This is the single-node equivalent of <c>Phoenix.PubSub</c> from the legacy runtime.
 /// </para>
 /// </summary>
@@ -21,18 +34,23 @@ public sealed class InProcessEventBus : IClusterEventBus, IDisposable
         void CompleteAll();
     }
 
+    private sealed record Subscription<TEvent>(ChannelWriter<TEvent> Writer, string? TargetSystemId)
+        where TEvent : class;
+
     private sealed class TopicBag<TEvent> : ITopicBag where TEvent : class
     {
-        public readonly ConcurrentDictionary<ChannelWriter<TEvent>, byte> Writers = new();
+        // Keyed on the writer so the enumerator can remove its own subscription on disposal
+        // without needing a separate id.
+        public readonly ConcurrentDictionary<ChannelWriter<TEvent>, Subscription<TEvent>> Subscriptions = new();
 
         public void CompleteAll()
         {
-            foreach (var w in Writers.Keys)
+            foreach (var sub in Subscriptions.Values)
             {
-                w.TryComplete();
+                sub.Writer.TryComplete();
             }
 
-            Writers.Clear();
+            Subscriptions.Clear();
         }
     }
 
@@ -50,20 +68,43 @@ public sealed class InProcessEventBus : IClusterEventBus, IDisposable
         }
 
         var topicBag = (TopicBag<TEvent>)bag;
-        foreach (var writer in topicBag.Writers.Keys)
+        // Pull the targeted-event payload once. Non-targeted events get null and bypass filtering.
+        var targetedEvent = evt as ITargetedClusterEvent;
+
+        foreach (var subscription in topicBag.Subscriptions.Values)
         {
+            // Subscription with a non-null TargetSystemId only sees events whose target matches.
+            // Subscription with a null TargetSystemId is broadcast (legacy semantics).
+            if (subscription.TargetSystemId is not null
+                && targetedEvent is not null
+                && !string.Equals(subscription.TargetSystemId, targetedEvent.TargetSystemId, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
             try
             {
-                await writer.WriteAsync(evt, ct).ConfigureAwait(false);
+                await subscription.Writer.WriteAsync(evt, ct).ConfigureAwait(false);
             }
             catch (ChannelClosedException)
             {
-                topicBag.Writers.TryRemove(writer, out _);
+                topicBag.Subscriptions.TryRemove(subscription.Writer, out _);
             }
         }
     }
 
+    /// <summary>
+    /// Broadcast subscription convenience overload. Kept as an instance method (in addition to
+    /// the default interface implementation) so callers that hold a reference typed as
+    /// <see cref="InProcessEventBus"/> rather than <see cref="IClusterEventBus"/> (e.g. test
+    /// fixtures that <c>new</c> the bus directly) can still subscribe without explicit casting.
+    /// </summary>
+    public IAsyncEnumerable<TEvent> SubscribeAsync<TEvent>(CancellationToken ct = default)
+        where TEvent : class
+        => SubscribeAsync<TEvent>(targetSystemId: null, ct);
+
     public IAsyncEnumerable<TEvent> SubscribeAsync<TEvent>(
+        string? targetSystemId,
         CancellationToken ct = default)
         where TEvent : class
     {
@@ -71,11 +112,20 @@ public sealed class InProcessEventBus : IClusterEventBus, IDisposable
         {
             SingleReader = true,
             SingleWriter = false,
-            AllowSynchronousContinuations = true
+            // Force async dispatch: the publisher's PublishAsync only enqueues into the
+            // channel and never runs the subscriber's handler on its own thread. This keeps
+            // long-running socket push work (DB lookup + WebSocket SendAsync through the
+            // per-socket SemaphoreSlim gate) off the command-handler / HTTP request thread
+            // that originated the publish, which is critical when several sockets subscribe
+            // to the same event type under parallel test load. Allowing synchronous
+            // continuations let one slow subscriber stall the entire foreach in PublishAsync
+            // and made tail-publish latency a function of subscriber count, defeating the
+            // point of an event bus.
+            AllowSynchronousContinuations = false
         });
 
         var topicBag = GetOrCreateBag<TEvent>();
-        topicBag.Writers.TryAdd(channel.Writer, 0);
+        topicBag.Subscriptions.TryAdd(channel.Writer, new Subscription<TEvent>(channel.Writer, targetSystemId));
 
         return new ChannelAsyncEnumerable<TEvent>(channel, topicBag, ct);
     }
@@ -140,7 +190,7 @@ public sealed class InProcessEventBus : IClusterEventBus, IDisposable
             {
                 if (_disposed) return;
                 _disposed = true;
-                _topicBag.Writers.TryRemove(_writer, out _);
+                _topicBag.Subscriptions.TryRemove(_writer, out _);
                 _writer.TryComplete();
                 if (_enumerator != null)
                 {
