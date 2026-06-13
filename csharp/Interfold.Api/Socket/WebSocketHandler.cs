@@ -106,13 +106,11 @@ public static async Task HandleUserSocketAsync(HttpContext context)
         var incomingText = await ReceiveSocketTextAsync(socket, buffer, context.RequestAborted);
         if (incomingText is null)
         {
-            logger.LogInformation("[ws-diag] Receive returned null — socket closing. JoinedSystem={JoinedSystem}", joinedSystemId);
             break;
         }
 
         if (!TryParsePhoenixFrame(incomingText, out var eventName, out var topic, out var payload, out var reference, out var joinReference, out var replyAsArrayFrame))
         {
-            logger.LogWarning("[ws-diag] Failed to parse Phoenix frame. JoinedSystem={JoinedSystem}", joinedSystemId);
             // Unrecognised frame; close with a protocol-error code rather than
             // echoing raw JSON (which is itself not a valid Phoenix frame).
             await socket.CloseAsync(
@@ -136,8 +134,6 @@ public static async Task HandleUserSocketAsync(HttpContext context)
                 sendGate);
             continue;
         }
-
-        logger.LogInformation("[ws-diag] Received frame. Event={Event}, Topic={Topic}, JoinedSystem={JoinedSystem}", eventName, topic, joinedSystemId);
 
         if (string.Equals(eventName, "phx_join", StringComparison.OrdinalIgnoreCase))
         {
@@ -234,8 +230,6 @@ public static async Task HandleUserSocketAsync(HttpContext context)
                 topicReplyAsArrayFrame[topic] = replyAsArrayFrame;
                 topicJoinReference[topic] = joinReference;
 
-                logger.LogInformation("[ws-diag] phx_join accepted. Topic={Topic}, SystemId={SystemId}, JoinedTopicsCount={Count}", topic, joinedSystemId, joinedTopics.Count);
-
                 var initPayload = await WebSocketInitialization.BuildJoinInitPayloadAsync(context, joinedSystemId, context.RequestAborted);
                 var useBatchedInit = false;
 
@@ -313,7 +307,6 @@ public static async Task HandleUserSocketAsync(HttpContext context)
         {
             if (!joinedTopics.ContainsKey(topic))
             {
-                logger.LogWarning("[ws-diag] Endpoint frame on un-joined topic={Topic}, JoinedSystem={JoinedSystem}", topic, joinedSystemId);
                 await SendPhoenixReplyAsync(
                     socket,
                     topic,
@@ -327,9 +320,7 @@ public static async Task HandleUserSocketAsync(HttpContext context)
                 continue;
             }
 
-            logger.LogInformation("[ws-diag] Endpoint proxy starting. Topic={Topic}, JoinedSystem={JoinedSystem}", topic, joinedSystemId);
             var endpointResult = await HandleEndpointProxyAsync(context, payload, token, joinedSystemId);
-            logger.LogInformation("[ws-diag] Endpoint proxy finished. Topic={Topic}, JoinedSystem={JoinedSystem}, Status={Status}", topic, joinedSystemId, endpointResult.Status);
 
             await SendPhoenixReplyAsync(
                 socket,
@@ -423,10 +414,6 @@ static async Task<SocketEndpointProxyResponse> HandleEndpointProxyAsync(
                 System.Net.HttpStatusCode.Forbidden)));
     }
 
-    var proxyLogger = websocketContext.RequestServices
-        .GetRequiredService<ILoggerFactory>()
-        .CreateLogger("EndpointProxy");
-
     var targetUri = $"{websocketContext.Request.Scheme}://{websocketContext.Request.Host}{path}";
     using var request = new HttpRequestMessage(new HttpMethod(method), targetUri);
     request.Headers.TryAddWithoutValidation("Authorization", $"Bearer {socketToken}");
@@ -437,60 +424,30 @@ static async Task<SocketEndpointProxyResponse> HandleEndpointProxyAsync(
         request.Headers.TryAddWithoutValidation("X-Interfold-Principal", joinedSystemId);
     }
 
-    string? requestBodyJsonLogCopy = null;
     if (payloadObj.TryGetProperty("body", out var bodyProp)
         && bodyProp.ValueKind != JsonValueKind.Null
         && method is not "GET" and not "HEAD")
     {
         //This NEEDS to be GetString() because the raw JSON is what we want to forward, not a re-serialized version of the body element.
         var requestBodyJson = bodyProp.GetString();
-        requestBodyJsonLogCopy = requestBodyJson;
         if (requestBodyJson != null) {
             request.Content = new StringContent(requestBodyJson, Encoding.UTF8, "application/json");
         }
     }
 
-    proxyLogger.LogInformation(
-        "[proxy-diag] Sending HTTP. Method={Method}, Uri={Uri}, BodyKind={BodyKind}, BodyLen={BodyLen}, BodyPreview={Body}",
-        method, targetUri,
-        payloadObj.TryGetProperty("body", out var bodyKindProp) ? bodyKindProp.ValueKind.ToString() : "missing",
-        requestBodyJsonLogCopy?.Length ?? 0,
-        requestBodyJsonLogCopy is null ? "(null)" : (requestBodyJsonLogCopy.Length > 200 ? requestBodyJsonLogCopy[..200] + "..." : requestBodyJsonLogCopy));
-
     var httpClientFactory = websocketContext.RequestServices.GetRequiredService<IHttpClientFactory>();
     using var httpClient = httpClientFactory.CreateClient();
 
-    HttpResponseMessage response;
+    var response = await httpClient.SendAsync(request, websocketContext.RequestAborted);
     try
     {
-        response = await httpClient.SendAsync(request, websocketContext.RequestAborted);
+        var responseBody = await response.Content.ReadAsStringAsync(websocketContext.RequestAborted);
+        return new SocketEndpointProxyResponse((int)response.StatusCode, responseBody);
     }
-    catch (Exception ex)
+    finally
     {
-        proxyLogger.LogError(ex, "[proxy-diag] HTTP SendAsync threw. Uri={Uri}", targetUri);
-        throw;
-    }
-
-    string responseBody;
-    try
-    {
-        responseBody = await response.Content.ReadAsStringAsync(websocketContext.RequestAborted);
-    }
-    catch (Exception ex)
-    {
-        proxyLogger.LogError(ex, "[proxy-diag] ReadAsStringAsync threw. Uri={Uri}, Status={Status}", targetUri, (int)response.StatusCode);
         response.Dispose();
-        throw;
     }
-
-    proxyLogger.LogInformation(
-        "[proxy-diag] HTTP response received. Uri={Uri}, Status={Status}, ResponseLen={Len}, ResponsePreview={Body}",
-        targetUri, (int)response.StatusCode, responseBody.Length,
-        responseBody.Length > 200 ? responseBody[..200] + "..." : responseBody);
-
-    var status = (int)response.StatusCode;
-    response.Dispose();
-    return new SocketEndpointProxyResponse(status, responseBody);
 }
 
 static string ToJsonString<T>(T value)

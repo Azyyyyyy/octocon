@@ -1,8 +1,6 @@
 using System.Collections.Concurrent;
 using System.Threading.Channels;
 using Interfold.Domain.Abstractions;
-using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Interfold.Infrastructure.Coordination;
 
@@ -17,13 +15,6 @@ namespace Interfold.Infrastructure.Coordination;
 /// </summary>
 public sealed class InProcessEventBus : IClusterEventBus, IDisposable
 {
-    private readonly ILogger<InProcessEventBus> _logger;
-
-    public InProcessEventBus(ILogger<InProcessEventBus>? logger = null)
-    {
-        _logger = logger ?? NullLogger<InProcessEventBus>.Instance;
-    }
-
     // Non-generic interface so _topics can store typed bags without casting gymnastics.
     private interface ITopicBag
     {
@@ -55,30 +46,21 @@ public sealed class InProcessEventBus : IClusterEventBus, IDisposable
     {
         if (!_topics.TryGetValue(typeof(TEvent), out var bag))
         {
-            _logger.LogInformation("[evtbus-diag] PublishAsync<{EventType}> — no topic bag (event dropped).", typeof(TEvent).Name);
             return; // no subscribers — drop the event
         }
 
         var topicBag = (TopicBag<TEvent>)bag;
-        var writerCount = topicBag.Writers.Count;
-        _logger.LogInformation("[evtbus-diag] PublishAsync<{EventType}> — writers={Count}", typeof(TEvent).Name, writerCount);
-
-        var delivered = 0;
         foreach (var writer in topicBag.Writers.Keys)
         {
             try
             {
                 await writer.WriteAsync(evt, ct).ConfigureAwait(false);
-                delivered++;
             }
             catch (ChannelClosedException)
             {
                 topicBag.Writers.TryRemove(writer, out _);
-                _logger.LogWarning("[evtbus-diag] PublishAsync<{EventType}> — writer closed, removed.", typeof(TEvent).Name);
             }
         }
-
-        _logger.LogInformation("[evtbus-diag] PublishAsync<{EventType}> — delivered={Delivered}/{Total}", typeof(TEvent).Name, delivered, writerCount);
     }
 
     public IAsyncEnumerable<TEvent> SubscribeAsync<TEvent>(
@@ -94,8 +76,6 @@ public sealed class InProcessEventBus : IClusterEventBus, IDisposable
 
         var topicBag = GetOrCreateBag<TEvent>();
         topicBag.Writers.TryAdd(channel.Writer, 0);
-
-        _logger.LogInformation("[evtbus-diag] SubscribeAsync<{EventType}> — total writers now={Count}", typeof(TEvent).Name, topicBag.Writers.Count);
 
         return new ChannelAsyncEnumerable<TEvent>(channel, topicBag, ct);
     }

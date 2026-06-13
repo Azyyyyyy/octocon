@@ -15,7 +15,7 @@ namespace Interfold.IntegrationTests.Endpoints;
 [ClassDataSource<CassandraWebFactoryFixture>(Shared = SharedType.PerTestSession)]
 public class WebSocketTests(IWebFactoryFixture fixture) : BaseEndpointTest
 {
-    private static string UniqueId(string prefix) => $"{prefix}-{Guid.NewGuid():N}";
+    internal static string UniqueId(string prefix) => $"{prefix}-{Guid.NewGuid():N}";
 
     [Test]
     public async Task Api_UserSocketEndpoint_AllowsWebSocketUpgrade(CancellationToken token)
@@ -938,7 +938,7 @@ public class WebSocketTests(IWebFactoryFixture fixture) : BaseEndpointTest
         await wsB.CloseAsync(WebSocketCloseStatus.NormalClosure, "test done", token);
     }
     
-    static async Task JoinTopicAsync(WebSocket ws, string topic, string socketToken, CancellationToken timeoutToken)
+    internal static async Task JoinTopicAsync(WebSocket ws, string topic, string socketToken, CancellationToken timeoutToken)
     {
         var joinFrame = new PhxFrame<PhxJoinPayload>
         {
@@ -997,7 +997,7 @@ public class WebSocketTests(IWebFactoryFixture fixture) : BaseEndpointTest
         throw new InvalidOperationException($"Could not parse alter id from endpoint reply body: {reply.Response.Body}");
     }
 
-    private static Uri WebSocketBasePath(TestServer server)
+    internal static Uri WebSocketBasePath(TestServer server)
     {
         return new Uri($"wss://{server.BaseAddress.Host}");
     }

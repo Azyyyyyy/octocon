@@ -6,7 +6,6 @@ using Interfold.Contracts.Models.Read;
 using Interfold.Contracts.Operations;
 using Interfold.Domain.Abstractions;
 using Interfold.Domain.Abstractions.Repository;
-using Microsoft.Extensions.Logging;
 
 namespace Interfold.Domain.Friendships;
 
@@ -15,44 +14,29 @@ public sealed class SendFriendRequestCommandHandler : ICommandHandler<SendFriend
     private readonly IFriendshipRepository _repository;
     private readonly IIdempotencyStore _idempotencyStore;
     private readonly IClusterEventBus _eventBus;
-    private readonly ILogger<SendFriendRequestCommandHandler> _logger;
 
     public SendFriendRequestCommandHandler(
         IFriendshipRepository repository,
         IIdempotencyStore idempotencyStore,
-        IClusterEventBus eventBus,
-        ILogger<SendFriendRequestCommandHandler> logger)
+        IClusterEventBus eventBus)
     {
         _repository = repository;
         _idempotencyStore = idempotencyStore;
         _eventBus = eventBus;
-        _logger = logger;
     }
 
     public async Task<CommandExecutionResult<FriendshipCommandResult>> HandleAsync(
         CommandEnvelope<SendFriendRequestCommand> command,
         CancellationToken cancellationToken = default)
     {
-        _logger.LogInformation(
-            "[sfr-diag] Handle entered. PrincipalId={Principal}, OperationId={Op}, IdempotencyKey={Key}, Target={Target}",
-            command.PrincipalId, command.OperationId, command.IdempotencyKey, command.Payload.TargetSystemId);
-
         var payloadJson = CommandSerialization.Serialize(command.Payload);
         var payloadHash = CommandSerialization.Hash(payloadJson);
 
         var previous = await _idempotencyStore.FindAsync(
             command.PrincipalId, command.OperationId, command.IdempotencyKey, cancellationToken);
 
-        _logger.LogInformation(
-            "[sfr-diag] Idempotency lookup. PreviousFound={Found}, PayloadHash={PayloadHash}",
-            previous is not null, payloadHash);
-
         if (previous is not null)
         {
-            _logger.LogWarning(
-                "[sfr-diag] REPLAY PATH. PrevPayloadHash={Prev}, NewPayloadHash={New}, OutcomePayloadLength={Len}",
-                previous.PayloadHash, payloadHash, previous.OutcomePayload?.Length ?? 0);
-
             if (!string.Equals(previous.PayloadHash, payloadHash, StringComparison.Ordinal))
             {
                 return RejectDuplicate(command, "friend_request:send");
@@ -64,8 +48,6 @@ public sealed class SendFriendRequestCommandHandler : ICommandHandler<SendFriend
                 return CommandExecutionResult<FriendshipCommandResult>.Success(replay with { Replay = true });
             }
         }
-
-        _logger.LogInformation("[sfr-diag] Continuing to non-replay path. Will resolve target and run SendRequest.");
 
         var resolvedTargetSystemId = await _repository.ResolveUserIdAsync(
             command.Payload.TargetSystemId,
@@ -115,10 +97,6 @@ public sealed class SendFriendRequestCommandHandler : ICommandHandler<SendFriend
             resultJson,
             cancellationToken);
 
-        _logger.LogInformation(
-            "[sfr-diag] About to publish events. Outcome={Outcome}, Action={Action}",
-            outcome, action);
-
         //TODO: Check this path sends the required events
         if (outcome is SendFriendRequestOutcome.Accepted)
         {
@@ -144,8 +122,6 @@ public sealed class SendFriendRequestCommandHandler : ICommandHandler<SendFriend
                 resolvedTargetSystemId,
                 command.PrincipalId), cancellationToken);
         }
-
-        _logger.LogInformation("[sfr-diag] Events published. Returning Success.");
 
         return CommandExecutionResult<FriendshipCommandResult>.Success(result);
     }

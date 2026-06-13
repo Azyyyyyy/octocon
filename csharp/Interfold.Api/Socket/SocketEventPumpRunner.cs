@@ -2,6 +2,7 @@ using Interfold.Api.Socket.Handlers;
 using Interfold.Contracts.Events;
 using Interfold.Domain.Abstractions;
 using Interfold.Domain.Abstractions.Repository;
+using Microsoft.Extensions.Logging;
 
 namespace Interfold.Api.Socket;
 
@@ -67,9 +68,38 @@ public static class SocketEventPumpRunner
         Func<TEvent, Task> handler)
         where TEvent : class
     {
+        // Guard against a single handler exception killing the per-event subscription
+        // loop. Without this, the await foreach would unwind on the first throw from
+        // handler(evt) — e.g. a transient cancellation propagating out of a retry's
+        // Task.Delay under thread-pool contention, or a socket write failing during a
+        // teardown window — and every subsequent event of TEvent for this socket would
+        // be silently dropped because the channel reader is gone. Under sustained
+        // parallel-test load this manifested as Api_UserSocketEndpoint_PushesFriendTrust
+        // missing its friend_request_received push on Scylla/Cassandra fixtures only.
+        //
+        // Keep the loop alive across handler faults; if cancellation comes through
+        // context.CancellationToken we still exit cleanly because SubscribeAsync's
+        // enumerator observes it and MoveNextAsync simply returns false.
         await foreach (var evt in eventBus.SubscribeAsync<TEvent>(context.CancellationToken).ConfigureAwait(false))
         {
-            await handler(evt).ConfigureAwait(false);
+            try
+            {
+                await handler(evt).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (context.CancellationToken.IsCancellationRequested)
+            {
+                // Context is shutting down; let the foreach observe cancellation
+                // on its next MoveNextAsync rather than tearing down via throw.
+                return;
+            }
+            catch (Exception ex)
+            {
+                context.Logger?.LogError(
+                    ex,
+                    "Socket push handler for {EventType} threw. Topics={Topics}",
+                    typeof(TEvent).Name,
+                    string.Join(",", context.JoinedTopics.Keys));
+            }
         }
     }
 }
