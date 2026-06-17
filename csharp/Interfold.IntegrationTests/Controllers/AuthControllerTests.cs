@@ -1,8 +1,11 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using Interfold.Contracts.Configuration;
 using Interfold.IntegrationTests.TestServices;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Interfold.IntegrationTests.Controllers;
 
@@ -88,6 +91,98 @@ public sealed class AuthControllerTests(IWebFactoryFixture fixture) : BaseEndpoi
         }
     }
 
+
+    [Test]
+    public async Task Api_OAuthCallback_IssuesJwsCompactSerializationToken()
+    {
+        using var client = fixture.Factory.CreateClient(new WebApplicationFactoryClientOptions
+        {
+            AllowAutoRedirect = false
+        });
+
+        // The callback now strictly requires a client-supplied redirect_uri (stashed by the
+        // initial GET /auth/discord call into octocon_auth_redirect_uri). Since this test
+        // hits the callback directly without going through the begin step, inject the cookie
+        // by hand so the controller can construct a Location header — the JWT-shape
+        // assertions below are the actual unit under test.
+        var discordUid = $"jws-test-{Guid.NewGuid():N}";
+        var clientRedirectUri = "https://test.invalid/auth/done";
+        var callbackRequest = new HttpRequestMessage(
+            HttpMethod.Get,
+            $"/auth/discord/callback?uid={Uri.EscapeDataString(discordUid)}");
+        callbackRequest.Headers.Add("Cookie",
+            $"octocon_auth_redirect_uri={Uri.EscapeDataString(clientRedirectUri)}");
+        var response = await client.SendAsync(callbackRequest);
+        var body = await response.Content.ReadAsStringAsync();
+
+        await Assert.That(response.StatusCode)
+            .Satisfies(x => x is HttpStatusCode.Redirect or HttpStatusCode.Found
+        or HttpStatusCode.MovedPermanently or HttpStatusCode.TemporaryRedirect
+            or HttpStatusCode.PermanentRedirect)
+            .Because($"Expected OAuth callback redirect response, got {(int)response.StatusCode}. Body: {body}");
+
+        var location = response.Headers.Location
+            ?? throw new InvalidOperationException("Expected Location header in redirect response.");
+
+        var query = System.Web.HttpUtility.ParseQueryString(location.Query);
+        var token = query["token"];
+
+        await Assert.That(token).IsNotNullOrWhiteSpace();
+
+        var segments = token!.Split('.');
+        await Assert.That(segments.Length).IsEqualTo(3);
+
+        using (Assert.Multiple())
+        {
+            foreach (var (segment, index) in segments.Select((s, i) => (s, i)))
+            {
+                await Assert.That(segment).IsNotNullOrWhiteSpace();
+                await Assert.That(!segment.Contains('+') && !segment.Contains('/') && !segment.Contains('=')).IsTrue();
+            }
+        }
+
+        var headerBytes = Base64UrlDecodeBytes(segments[0]);
+        using var headerDoc = JsonDocument.Parse(headerBytes);
+        var alg = headerDoc.RootElement.GetProperty("alg").GetString();
+        var typ = headerDoc.RootElement.GetProperty("typ").GetString();
+        using (Assert.Multiple())
+        {
+            await Assert.That(alg).IsEqualTo("ES256");
+            await Assert.That(typ).IsEqualTo("JWT");
+        }
+
+        var payloadBytes = Base64UrlDecodeBytes(segments[1]);
+        using var payloadDoc = JsonDocument.Parse(payloadBytes);
+        var root = payloadDoc.RootElement;
+
+        var config = fixture.Factory.Services.GetRequiredService<IConfiguration>();
+        var authConfig = config.Get<AuthenticationConfiguration>();
+        var expectedIssuer = authConfig?.JwtAuthority;
+
+        using (Assert.Multiple())
+        {
+            await Assert.That(
+                root.TryGetProperty("iss", out var iss)
+                && !string.IsNullOrWhiteSpace(iss.GetString())
+                && (string.IsNullOrWhiteSpace(expectedIssuer)
+                    || string.Equals(iss.GetString(), expectedIssuer, StringComparison.Ordinal)))
+                .IsTrue();
+            await Assert.That(root.TryGetProperty("sub", out var sub) && !string.IsNullOrWhiteSpace(sub.GetString())).IsTrue();
+        }
+
+        long iatVal = 0;
+        long expVal = 0;
+
+        using (Assert.Multiple())
+        {
+            await Assert.That(root.TryGetProperty("iat", out var iat) && iat.TryGetInt64(out iatVal) && iatVal > 0).IsTrue();
+            await Assert.That(root.TryGetProperty("nbf", out var nbf) && nbf.TryGetInt64(out _)).IsTrue();
+            await Assert.That(root.TryGetProperty("exp", out var exp) && exp.TryGetInt64(out expVal) && expVal > iatVal).IsTrue();
+            await Assert.That(root.TryGetProperty("jti", out var jti) && !string.IsNullOrWhiteSpace(jti.GetString())).IsTrue();
+            await Assert.That(root.TryGetProperty("scope", out var scope) &&
+                   string.Equals(scope.GetString(), "octocon:deeplink", StringComparison.Ordinal)).IsTrue();
+        }
+    }
 
     [Test, Skip("To readd")]
     public async Task Api_FailsFast_WithoutJwtAuthority_WhenDevHeaderBypassOff()

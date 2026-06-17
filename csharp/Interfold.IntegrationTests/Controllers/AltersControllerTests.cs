@@ -323,9 +323,6 @@ public class AltersControllerTests(IWebFactoryFixture fixture) : BaseEndpointTes
     [Test]
     public async Task AlterCreate_IdempotentReplay_WorksAgainstLiveAdapters()
     {
-        fixture.Factory            
-            .WithConfiguration("OCTOCON_SCYLLA_KEYSPACE", "nam");
-
         using var client = fixture.Factory.CreateClient();
 
         var systemId = $"itest-{Guid.NewGuid():N}"[..14];

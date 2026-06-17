@@ -3,11 +3,11 @@ using System.Security.Cryptography;
 namespace Interfold.IntegrationTests.TestServices;
 
 /// <summary>
-/// Deterministic credentials shared by the three TUnit.Aspire fixtures
-/// (<see cref="SingleNodeScyllaFixture"/>, <see cref="MultiNodeScyllaFixture"/>,
-/// <see cref="CassandraFixture"/>). Hard-coded so the AppHost <c>Args</c>, the in-process
-/// seeder, and any assertions further downstream agree on the exact values without having
-/// to read the auto-generated parameter defaults back out of the service provider.
+/// Deterministic credentials shared by the consolidated <see cref="SharedDbFixture"/> and
+/// the multi-DC topology fixture (<see cref="MultiNodeScyllaFixture"/>). Hard-coded so the
+/// AppHost <c>Args</c>, the in-process seeder, and any assertions further downstream agree
+/// on the exact values without having to read the auto-generated parameter defaults back
+/// out of the service provider.
 /// </summary>
 /// <remarks>
 /// These match the legacy per-fixture <c>private const</c> blocks one-for-one — extracted

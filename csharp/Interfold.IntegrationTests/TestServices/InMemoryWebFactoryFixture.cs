@@ -12,8 +12,9 @@ public sealed class InMemoryWebFactoryFixture : IWebFactoryFixture, IAsyncInitia
 
     public Task InitializeAsync()
     {
-        Factory = new InterfoldWebApplicationFactory("inmemory")
-            .WithConfiguration("OCTOCON_SCYLLA_KEYSPACE", "nam");
+        // OCTOCON_SCYLLA_KEYSPACE defaults to "nam" via PersistenceConfiguration.ScyllaKeyspace,
+        // so an explicit override here is redundant. Leave the factory at production defaults.
+        Factory = new InterfoldWebApplicationFactory("inmemory");
         return Task.CompletedTask;
     }
 }

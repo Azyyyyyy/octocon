@@ -106,4 +106,132 @@ public class SettingsControllerTests(IWebFactoryFixture fixture) : BaseEndpointT
             await Assert.That(fieldId).IsNotNullOrWhiteSpace();
         }
     }
+
+    [Test]
+    public async Task Api_SettingsAvatarMultipart_PersistsAndServesAvatar()
+    {
+        var runId = Guid.NewGuid().ToString("N");
+        var storageRoot = Path.Combine(Path.GetTempPath(), "octocon-itest", "avatars", runId);
+        var publicBase = $"/avatars-itest/{runId}";
+
+        try
+        {
+            Directory.CreateDirectory(storageRoot);
+
+            // StorageConfiguration is bound via IOptionsMonitor so WithConfiguration writes
+            // propagate live to the running host - no factory rebuild needed.
+            fixture.Factory
+                .WithConfiguration("OCTOCON_AVATAR_STORAGE_ROOT", storageRoot)
+                .WithConfiguration("OCTOCON_AVATAR_PUBLIC_BASE", publicBase);
+
+            using var client = fixture.Factory.CreateClient();
+
+            var principalId = $"sys-avatar-{Guid.NewGuid():N}"[..18];
+
+            using var uploadRequest = BuildMultipartUploadRequest(client, "/api/settings/avatar", principalId, "avatar-system.png", "image/png");
+            var uploadResponse = await client.SendAsync(uploadRequest);
+            await Assert.That(uploadResponse.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
+
+            using var profileRequest = new HttpRequestMessage(HttpMethod.Get, $"/api/systems/{principalId}");
+            AttachPrincipalAuth(profileRequest, client, principalId);
+            var profileResponse = await client.SendAsync(profileRequest);
+            var profileBody = await profileResponse.Content.ReadAsStringAsync();
+
+            var avatarUrl = ReadNestedStringField(profileBody, "data", "avatar_url");
+            using (Assert.Multiple())
+            {
+                await Assert.That(profileResponse.StatusCode).IsEqualTo(HttpStatusCode.OK);
+                await Assert.That(avatarUrl).IsNotNullOrWhiteSpace();
+                await Assert.That(UrlPathStartsWith(avatarUrl, $"{publicBase}/{principalId}/self/")).IsTrue();
+            }
+        }
+        finally
+        {
+            if (Directory.Exists(storageRoot))
+                Directory.Delete(storageRoot, true);
+        }
+    }
+
+    [Test]
+    public async Task Api_AlterAvatarMultipart_PersistsAndReflectsOnPublicAlter()
+    {
+        var runId = Guid.NewGuid().ToString("N");
+        var storageRoot = Path.Combine(Path.GetTempPath(), "octocon-itest", "avatars", runId);
+        var publicBase = $"/avatars-itest/{runId}";
+
+        try
+        {
+            Directory.CreateDirectory(storageRoot);
+
+            fixture.Factory
+                .WithConfiguration("OCTOCON_AVATAR_STORAGE_ROOT", storageRoot)
+                .WithConfiguration("OCTOCON_AVATAR_PUBLIC_BASE", publicBase);
+
+            using var client = fixture.Factory.CreateClient();
+
+            var principalId = $"sys-alter-avatar-{Guid.NewGuid():N}"[..24];
+
+            using var usernameRequest = new HttpRequestMessage(HttpMethod.Post, "/api/settings/username")
+            {
+                Content = JsonContent.Create(new { username = "avatar-parity" })
+            };
+            AttachPrincipalAuth(usernameRequest, client, principalId);
+            var usernameResponse = await client.SendAsync(usernameRequest);
+            await Assert.That(usernameResponse.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
+
+            using var createRequest = new HttpRequestMessage(HttpMethod.Post, "/api/systems/me/alters")
+            {
+                Content = JsonContent.Create(new { name = "AvatarTarget" })
+            };
+            AttachPrincipalAuth(createRequest, client, principalId);
+
+            var createResponse = await client.SendAsync(createRequest);
+            await Assert.That(createResponse.StatusCode).IsEqualTo(HttpStatusCode.Created);
+
+            var alterId = ReadTrailingIntFromLocation(createResponse);
+
+            using var uploadRequest = BuildMultipartUploadRequest(client, $"/api/systems/me/alters/{alterId}/avatar", principalId, "avatar-alter.png", "image/png");
+            var uploadResponse = await client.SendAsync(uploadRequest);
+            await Assert.That(uploadResponse.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
+
+            using var publicAlterRequest = new HttpRequestMessage(HttpMethod.Get, $"/api/systems/{principalId}/alters/{alterId}");
+            AttachPrincipalAuth(publicAlterRequest, client, principalId);
+            var publicAlterResponse = await client.SendAsync(publicAlterRequest);
+            var publicAlterBody = await publicAlterResponse.Content.ReadAsStringAsync();
+
+            var expectedPrefix = $"{publicBase}/{principalId}/{alterId}/";
+            var alterAvatarUrl = ReadNestedStringField(publicAlterBody, "data", "avatar_url");
+            using (Assert.Multiple())
+            {
+                await Assert.That(publicAlterResponse.StatusCode).IsEqualTo(HttpStatusCode.OK);
+                await Assert.That(alterAvatarUrl).IsNotNullOrWhiteSpace();
+                await Assert.That(UrlPathStartsWith(alterAvatarUrl, expectedPrefix)).IsTrue();
+            }
+
+            using var deleteReq = new HttpRequestMessage(HttpMethod.Delete, $"/api/systems/me/alters/{alterId}/avatar")
+            {
+                Content = JsonContent.Create(new { })
+            };
+            AttachPrincipalAuth(deleteReq, client, principalId);
+            var deleteRes = await client.SendAsync(deleteReq);
+            await Assert.That(deleteRes.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
+
+            using var afterDeleteRequest = new HttpRequestMessage(HttpMethod.Get, $"/api/systems/{principalId}/alters/{alterId}");
+            AttachPrincipalAuth(afterDeleteRequest, client, principalId);
+            var afterDeleteResponse = await client.SendAsync(afterDeleteRequest);
+            var afterDeleteBody = await afterDeleteResponse.Content.ReadAsStringAsync();
+
+            var staleAvatarUrl = ReadNestedStringField(afterDeleteBody, "data", "avatar_url");
+            using (Assert.Multiple())
+            {
+                await Assert.That(afterDeleteResponse.StatusCode).IsEqualTo(HttpStatusCode.OK);
+                await Assert.That(staleAvatarUrl).IsNullOrWhiteSpace();
+            }
+        }
+        finally
+        {
+            if (Directory.Exists(storageRoot))
+                Directory.Delete(storageRoot, true);
+        }
+    }
 }

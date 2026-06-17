@@ -37,6 +37,11 @@ public static class InterfoldAppHost
         int Port(string name, int fallback) => int.TryParse(builder.Configuration[$"Ports:{name}"], out var p) ? p : fallback;
         var postgresPort = Port("postgres", 4200);
         var scyllaPort = Port("scylla", 9042);
+        // Cassandra has its own port slot so a single host can publish both Scylla and Cassandra
+        // when the integration test SharedDbFixture asks for both. The legacy bootstrapper path
+        // (only-cassandra-on-Ports:scylla) is preserved further down by falling back to
+        // scyllaPort when Cassandra runs alone.
+        var cassandraPort = Port("cassandra", 9043);
         var apiHttpPort = Port("api-http", 5000);
         var apiHttpsPort = Port("api-https", 5001);
         var webHttpPort = Port("web-http", 8080);
@@ -45,6 +50,27 @@ public static class InterfoldAppHost
         // --- Optional feature flags (used by integration tests to disable API/web and use ephemeral containers) ---
         var includeApi = !string.Equals(builder.Configuration["Parameters:include-api"], "false", StringComparison.OrdinalIgnoreCase);
         var persistentContainers = !string.Equals(builder.Configuration["Parameters:persistent-containers"], "false", StringComparison.OrdinalIgnoreCase);
+
+        // --- Per-resource toggles ---
+        // The integration test SharedDbFixture flips these on/off based on which fixtures the
+        // current test session actually requires (scanned via TUnit's TestSessionContext). Both
+        // can be true at once so we run Scylla and Cassandra side-by-side under one Aspire host.
+        // For back-compat, when neither toggle is set, fall back to the legacy `scylla-mode`
+        // parameter (which the bootstrapper still drives via PublishPhase). The single switch
+        // also drives Scylla's internal topology (single-node vs 7-region multi-DC).
+        var scyllaMode = builder.Configuration["Parameters:scylla-mode"] ?? "single";
+        var isMultiScylla = string.Equals(scyllaMode, "multi", StringComparison.OrdinalIgnoreCase);
+        var includeScylla = ParseToggle(
+            builder.Configuration["Parameters:include-scylla"],
+            fallback: string.Equals(scyllaMode, "single", StringComparison.OrdinalIgnoreCase) || isMultiScylla);
+        var includeCassandra = ParseToggle(
+            builder.Configuration["Parameters:include-cassandra"],
+            fallback: string.Equals(scyllaMode, "cassandra", StringComparison.OrdinalIgnoreCase));
+
+        static bool ParseToggle(string? raw, bool fallback)
+            => string.IsNullOrEmpty(raw)
+                ? fallback
+                : !string.Equals(raw, "false", StringComparison.OrdinalIgnoreCase);
 
         // --- Health checks for the Aspire dashboard (only when API is included) ---
         // In test mode (include-api=false), Aspire randomizes host ports, so TcpClient
@@ -239,63 +265,15 @@ public static class InterfoldAppHost
             msgDb.WithLifetime(ContainerLifetime.Persistent);
         }
 
-        // --- ScyllaDB / Cassandra (conditional on launch profile) ---
-        IResourceBuilder<ContainerResource>? scyllaEndpointOwner = null;
+        // --- ScyllaDB / Cassandra (independent toggles, can both be on at once) ---
+        // Resources the API container needs to wait on before starting. Populated below as each
+        // included CQL backend stands up. When both are on, the API depends on both.
+        var cqlEndpointOwners = new List<IResourceBuilder<ContainerResource>>();
 
-        var mode = builder.Configuration["Parameters:scylla-mode"] ?? "single";
-
-        if (mode == "cassandra")
+        if (includeScylla)
         {
-            // --- Cassandra 4.1 (low-end fallback) ---
-            // Built from db/cassandra/Dockerfile, which bakes the cassandra.yaml overrides
-            // we need (materialized_views_enabled, PasswordAuthenticator, CassandraAuthorizer)
-            // into the image at build time. That removes the need for a runtime wrapper script
-            // and avoids the bind-mount/chown pitfalls that previously broke Cassandra on GHA.
-            // Datacenter/rack are set via env vars; the official entrypoint writes them into
-            // cassandra-rackdc.properties using an in-place rewrite that does not rename.
-            var cassandra = builder.AddDockerfile("cassandra", "../../db/cassandra")
-                .WithContainerNetworkAlias("cassandra")
-                .WithEnvironment("CASSANDRA_CLUSTER_NAME", "OctoCluster")
-                .WithEnvironment("CASSANDRA_LISTEN_ADDRESS", "cassandra")
-                .WithEnvironment("CASSANDRA_BROADCAST_ADDRESS", "cassandra")
-                .WithEnvironment("CASSANDRA_BROADCAST_RPC_ADDRESS", "cassandra")
-                .WithEnvironment("CASSANDRA_RPC_ADDRESS", "0.0.0.0")
-                .WithEnvironment("CASSANDRA_ENDPOINT_SNITCH", "GossipingPropertyFileSnitch")
-                .WithEnvironment("CASSANDRA_NUM_TOKENS", "16")
-                .WithEnvironment("CASSANDRA_DC", "nam")
-                .WithEnvironment("CASSANDRA_RACK", "rack1")
-                .WithEnvironment("MAX_HEAP_SIZE", "512M")
-                .WithEnvironment("HEAP_NEWSIZE", "256M")
-                .WithEnvironment("CQLSH_USER", scyllaUser)
-                .WithEnvironment("CQLSH_PASSWORD", scyllaPassword)
-                .WithEndpoint(port: scyllaPort, targetPort: 9042, name: "cql", scheme: "tcp")
-                .PublishAsDockerComposeService((_, service) =>
-                {
-                    service.Networks = ["scylla"];
-                    service.Healthcheck = new Healthcheck
-                    {
-                        Test = ["CMD-SHELL", "cqlsh -u \"$$CQLSH_USER\" -p \"$$CQLSH_PASSWORD\" -e 'describe cluster' || nodetool status | grep -q '^UN'"],
-                        Interval = "15s",
-                        Timeout = "10s",
-                        Retries = 20,
-                        StartPeriod = "30s"
-                    };
-                });
-
-            if (includeApi)
-                cassandra.WithHealthCheck("scylla-health");
-            if (persistentContainers)
-            {
-                cassandra.WithVolume("cassandra_data", "/var/lib/cassandra");
-                cassandra.WithLifetime(ContainerLifetime.Persistent);
-            }
-
-            scyllaEndpointOwner = cassandra;
-        }
-        else
-        {
-            // --- ScyllaDB nodes (single or multi based on mode) ---
-            string[] regions = mode == "multi"
+            // --- ScyllaDB nodes (single or multi based on scylla-mode) ---
+            string[] regions = isMultiScylla
                 ? ["nam", "eur", "sam", "sas", "eas", "ocn", "gdpr"]
                 : ["nam"];
 
@@ -355,13 +333,76 @@ public static class InterfoldAppHost
                 {
                     node.WithEndpoint(port: scyllaPort, targetPort: 9042, name: "cql", scheme: "tcp");
                     if (includeApi) node.WithHealthCheck("scylla-health");
-                    scyllaEndpointOwner = node;
+                    cqlEndpointOwners.Add(node);
                 }
                 else
                     node.WaitFor(previousNode);
 
                 previousNode = node;
             }
+        }
+
+        if (includeCassandra)
+        {
+            // --- Cassandra 5 ---
+            // Built from db/cassandra/Dockerfile (FROM cassandra:5), which bakes the
+            // cassandra.yaml overrides we need (materialized_views_enabled,
+            // PasswordAuthenticator, CassandraAuthorizer) into the image at build time. That
+            // removes the need for a runtime wrapper script and avoids the bind-mount/chown
+            // pitfalls that previously broke Cassandra on GHA. Datacenter/rack are set via env
+            // vars; the official entrypoint writes them into cassandra-rackdc.properties using
+            // an in-place rewrite that does not rename.
+            //
+            // Endpoint port: when running alone (legacy bootstrapper "cassandra mode") the
+            // operator's compose .env writes `Ports:scylla=9042` and Cassandra binds there for
+            // back-compat. When running alongside Scylla under the integration test
+            // SharedDbFixture, both toggles are on and Cassandra uses its own `Ports:cassandra`
+            // slot (default 9043) so the two CQL listeners don't collide.
+            var cassandraEndpointPort = includeScylla ? cassandraPort : scyllaPort;
+
+            var cassandra = builder.AddDockerfile("cassandra", "../../db/cassandra")
+                .WithContainerNetworkAlias("cassandra")
+                .WithEnvironment("CASSANDRA_CLUSTER_NAME", "OctoCluster")
+                .WithEnvironment("CASSANDRA_LISTEN_ADDRESS", "cassandra")
+                .WithEnvironment("CASSANDRA_BROADCAST_ADDRESS", "cassandra")
+                .WithEnvironment("CASSANDRA_BROADCAST_RPC_ADDRESS", "cassandra")
+                .WithEnvironment("CASSANDRA_RPC_ADDRESS", "0.0.0.0")
+                .WithEnvironment("CASSANDRA_ENDPOINT_SNITCH", "GossipingPropertyFileSnitch")
+                .WithEnvironment("CASSANDRA_NUM_TOKENS", "16")
+                .WithEnvironment("CASSANDRA_DC", "nam")
+                .WithEnvironment("CASSANDRA_RACK", "rack1")
+                .WithEnvironment("MAX_HEAP_SIZE", "512M")
+                .WithEnvironment("HEAP_NEWSIZE", "256M")
+                .WithEnvironment("CQLSH_USER", scyllaUser)
+                .WithEnvironment("CQLSH_PASSWORD", scyllaPassword)
+                .WithEndpoint(port: cassandraEndpointPort, targetPort: 9042, name: "cql", scheme: "tcp")
+                .PublishAsDockerComposeService((_, service) =>
+                {
+                    service.Networks = ["scylla"];
+                    service.Healthcheck = new Healthcheck
+                    {
+                        Test = ["CMD-SHELL", "cqlsh -u \"$$CQLSH_USER\" -p \"$$CQLSH_PASSWORD\" -e 'describe cluster' || nodetool status | grep -q '^UN'"],
+                        Interval = "15s",
+                        Timeout = "10s",
+                        Retries = 20,
+                        StartPeriod = "30s"
+                    };
+                });
+
+            if (includeApi && !includeScylla)
+            {
+                // Only attach the AppHost-level "scylla-health" check when Cassandra owns the
+                // Ports:scylla endpoint. When Scylla is also included, Scylla owns it and the
+                // Cassandra container relies on its own per-service compose healthcheck.
+                cassandra.WithHealthCheck("scylla-health");
+            }
+            if (persistentContainers)
+            {
+                cassandra.WithVolume("cassandra_data", "/var/lib/cassandra");
+                cassandra.WithLifetime(ContainerLifetime.Persistent);
+            }
+
+            cqlEndpointOwners.Add(cassandra);
         }
 
         // --- Database admin bootstrap ---
@@ -385,7 +426,7 @@ public static class InterfoldAppHost
             void ConfigureApiCommon(IResourceBuilder<IResourceWithEnvironment> api)
             {
                 api.WithEnvironment("OCTOCON_PERSISTENCE", "scylla-postgres")
-                   .WithEnvironment("OCTOCON_SINGLE_SCYLLA_INSTANCE", mode == "multi" ? "false" : "true")
+                   .WithEnvironment("OCTOCON_SINGLE_SCYLLA_INSTANCE", isMultiScylla ? "false" : "true")
                    .WithEnvironment("OCTOCON_POSTGRES_CONNECTION",
                        ReferenceExpression.Create($"Host={pgEndpoint.Property(EndpointProperty.Host)};Port={pgEndpoint.Property(EndpointProperty.Port)};Database=octocon;Username={postgresUser};Password={postgresPassword}"))
                    .WithEnvironment("ENCRYPTION_PRIVATE_KEY", encryptionPrivateKey);
@@ -460,8 +501,8 @@ public static class InterfoldAppHost
                     });
                 ConfigureApiCommon(apiContainer);
                 ConfigureApiSelfHostEnv(apiContainer);
-                if (scyllaEndpointOwner is not null)
-                    apiContainer.WaitFor(scyllaEndpointOwner);
+                foreach (var owner in cqlEndpointOwners)
+                    apiContainer.WaitFor(owner);
             }
             else
             {
@@ -490,8 +531,8 @@ public static class InterfoldAppHost
                             cassandraDep.Condition = "service_healthy";
                     });
                 ConfigureApiCommon(apiProject);
-                if (scyllaEndpointOwner is not null)
-                    apiProject.WaitFor(scyllaEndpointOwner);
+                foreach (var owner in cqlEndpointOwners)
+                    apiProject.WaitFor(owner);
             }
         }
 

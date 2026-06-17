@@ -16,6 +16,39 @@ public class BaseEndpointTest
 {
     private const int SoakRepeatCount = 5;
 
+    /// <summary>
+    /// Drives <see cref="RequiredFixtures.Discover"/> from the earliest TUnit hook so the
+    /// fixture set is populated before any <see cref="SharedDbFixture"/> initialization.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// We initially used <c>[Before(HookType.TestSession)]</c>, but timestamped tracing showed
+    /// TUnit eagerly initializes <c>PerTestSession</c> <c>[ClassDataSource]</c> fixtures
+    /// (calling <c>AspireFixture.Args</c> via <c>IAsyncInitializer.InitializeAsync</c>) ~500ms
+    /// before <c>[Before(TestSession)]</c> fires. The published lifecycle table describes
+    /// per-test execution ordering; session-shared fixtures are constructed during session
+    /// bootstrapping, ahead of the hook.
+    /// </para>
+    /// <para>
+    /// <c>[Before(HookType.TestDiscovery)]</c> is the only hook that fires before that
+    /// initialization. <see cref="BeforeTestDiscoveryContext"/> doesn't expose a test class
+    /// list (discovery hasn't run yet), so the hook body delegates to an assembly walk over
+    /// the integration-test assembly. This matches the TUnit team's recommended pattern in
+    /// <see href="https://github.com/thomhurst/TUnit/discussions/1496">Discussion #1496</see>
+    /// for cross-assembly setup that needs to run before any test-graph machinery touches a
+    /// type. The scan is anchored to a single hook invocation, not lazily on every property
+    /// read.
+    /// </para>
+    /// <para>
+    /// Hosted on this base class (every integration test derives from it) so TUnit's source
+    /// generator picks up the hook — hooks on static helper classes outside the test graph are
+    /// not scanned.
+    /// </para>
+    /// </remarks>
+    [Before(HookType.TestDiscovery)]
+    public static void RegisterRequiredFixtures()
+        => RequiredFixtures.Discover();
+
     internal static bool ReadBoolField(string json, string fieldName)
     {
         using var doc = JsonDocument.Parse(json);

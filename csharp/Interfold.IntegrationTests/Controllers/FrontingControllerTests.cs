@@ -37,9 +37,6 @@ public class FrontingControllerTests(IWebFactoryFixture fixture) : BaseEndpointT
     [Test]
     public async Task Api_FrontHistoryBetween_IncludesEndedFronts()
     {
-        fixture.Factory
-            .WithConfiguration("OCTOCON_SCYLLA_KEYSPACE", "nam");
-
         using var client = fixture.Factory.CreateClient();
 
         var startAnchor = DateTimeOffset.UtcNow.AddMinutes(-1).ToUnixTimeSeconds();

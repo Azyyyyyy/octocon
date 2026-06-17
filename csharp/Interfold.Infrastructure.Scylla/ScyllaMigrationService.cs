@@ -124,6 +124,25 @@ public sealed partial class ScyllaMigrationService(
     public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
     public Task StoppedAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 
+    /// <summary>
+    /// Externally invocable entry point that applies the embedded CQL migrations using admin
+    /// credentials from <paramref name="secretsStore"/>. The integration test
+    /// <c>SharedDbFixture</c> calls this once per test session against each enabled CQL backend
+    /// (Scylla and/or Cassandra) so the per-test <c>InterfoldWebApplicationFactory</c> doesn't
+    /// need to rebuild migrations on every host. Idempotent: every CREATE statement uses
+    /// <c>IF NOT EXISTS</c> and <see cref="AlreadyExistsException"/> is caught.
+    /// </summary>
+    public static Task MigrateAsync(
+        PersistenceConfiguration options,
+        ISecretsStore secretsStore,
+        IConfiguration configuration,
+        ILogger<ScyllaMigrationService> logger,
+        CancellationToken cancellationToken)
+    {
+        var service = new ScyllaMigrationService(options, secretsStore, configuration, logger);
+        return service.StartingAsync(cancellationToken);
+    }
+
     private Cluster BuildCluster() =>
         Cluster.Builder()
             .AddContactPoints(_contactPoints!)

@@ -20,7 +20,22 @@ public sealed class PostgresMigrationService(
     // Advisory lock key used to serialize migrations across concurrent hosts sharing the same DB.
     private const long MigrationAdvisoryLockId = 8675309_2024_0001;
 
-    public async Task StartingAsync(CancellationToken cancellationToken)
+    public Task StartingAsync(CancellationToken cancellationToken) =>
+        MigrateAsync(options, secretsStore, logger, cancellationToken);
+
+    /// <summary>
+    /// Externally invocable entry point that runs the embedded SQL migrations using admin
+    /// credentials from <paramref name="secretsStore"/>. The integration test
+    /// <c>SharedDbFixture</c> calls this once per test session so the per-test
+    /// <c>InterfoldWebApplicationFactory</c> doesn't need to rebuild migrations on every host.
+    /// Idempotent: each migration is wrapped in <c>IF NOT EXISTS</c> guards / advisory locks so
+    /// running it twice is a no-op.
+    /// </summary>
+    public static async Task MigrateAsync(
+        PersistenceConfiguration options,
+        ISecretsStore secretsStore,
+        ILogger logger,
+        CancellationToken cancellationToken)
     {
         // Build admin connection from app connection + admin credentials from secrets store
         var adminUsername = await secretsStore.GetAsync("postgres:admin_username", cancellationToken);

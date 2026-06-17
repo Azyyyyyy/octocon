@@ -182,9 +182,6 @@ public class WebSocketThreadStarvationTests(IWebFactoryFixture fixture) : BaseEn
 
     private async Task RunFriendTrustUntrustFlowAsync(CancellationToken token)
     {
-        fixture.Factory
-            .WithConfiguration("OCTOCON_SCYLLA_KEYSPACE", "nam");
-
         var senderSystemId = WebSocketTests.UniqueId("sys-starve-sender");
         var recipientSystemId = WebSocketTests.UniqueId("sys-starve-recipient");
 
