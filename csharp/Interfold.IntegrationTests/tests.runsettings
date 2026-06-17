@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<RunSettings>
+  <!--
+    Aspire-driven integration tests legitimately produce more OpenTelemetry spans per test
+    session than TUnit's default "external span" cap of 100 (every container start, every
+    HTTP probe, every WebSocket frame, etc., counts). Once the cap is hit TUnit drops the
+    overflow and emits a "[TUnit] External span cap of 100 reached" warning. Bumping the cap
+    to 2000 covers a worst-case full-suite run with headroom and keeps the warning out of
+    the log noise without hiding real telemetry pressure.
+
+    Microsoft.Testing.Platform reads this <EnvironmentVariables> block when the runsettings
+    file is referenced from <RunSettingsFilePath> in the csproj, propagating each entry into
+    the test host process before any test starts.
+  -->
+  <RunConfiguration>
+    <EnvironmentVariables>
+      <TUNIT_OTEL_MAX_EXTERNAL_SPANS>2000</TUNIT_OTEL_MAX_EXTERNAL_SPANS>
+    </EnvironmentVariables>
+  </RunConfiguration>
+</RunSettings>

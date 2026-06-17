@@ -58,16 +58,27 @@ public sealed class ReplayParityTests(IWebFactoryFixture fixture) : BaseEndpoint
             AllowAutoRedirect = false
         });
 
-        // Seed all principals referenced in the trace so Scylla/Cassandra
-        // backends have the user rows before operations execute.
-        var principals = trace.Steps
+        // Build a per-fixture identity namespace so the same trace fixture can run
+        // independently across the InMemory / Scylla / Cassandra factory variants.
+        // The Scylla and Cassandra factories share a single Postgres instance for
+        // the idempotency store (PostgresIdempotencyStore is registered for every
+        // db-backed run via PostgresServiceCollectionExtensions), so without this
+        // suffix the second variant to run any given trace would replay the first
+        // variant's outcome — returning AlterId/EntryId values that the second
+        // variant's *own* CQL backend never wrote, making the controller's read-
+        // back-after-create return null and surface as `unknown_error` 500.
+        var principalSuffix = SanitizeIdentitySuffix(factory.DisplayName);
+        var principalMap = trace.Steps
             .Select(s => s.PrincipalId)
             .Where(p => !string.IsNullOrWhiteSpace(p))
             .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToList();
-        foreach (var principal in principals)
+            .ToDictionary(p => p, p => $"{p}-{principalSuffix}", StringComparer.OrdinalIgnoreCase);
+
+        // Seed all principals referenced in the trace so Scylla/Cassandra
+        // backends have the user rows before operations execute.
+        foreach (var principal in principalMap.Values)
         {
-            await EnsureUserExistsAsync(client, principal!);
+            await EnsureUserExistsAsync(client, principal);
         }
 
         // Mutable variable store for {varName} substitutions across steps.
@@ -75,35 +86,60 @@ public sealed class ReplayParityTests(IWebFactoryFixture fixture) : BaseEndpoint
 
         foreach (var step in trace.Steps)
         {
-            await ExecuteStepAsync(client, step, vars, fixtureFileName);
+            await ExecuteStepAsync(client, step, vars, principalMap, principalSuffix, fixtureFileName);
         }
+    }
+
+    /// <summary>
+    /// Lowercases the factory's DisplayName and replaces anything outside [a-z0-9-] with '-' so the
+    /// suffix stays acceptable as a username (POST /api/settings/username has its own validation
+    /// rules) and stays embeddable in URL path segments without further escaping.
+    /// </summary>
+    private static string SanitizeIdentitySuffix(string displayName)
+    {
+        var lowered = displayName.ToLowerInvariant();
+        var buffer = new StringBuilder(lowered.Length);
+        foreach (var ch in lowered)
+            buffer.Append(char.IsAsciiLetterOrDigit(ch) || ch == '-' ? ch : '-');
+        var result = buffer.ToString().Trim('-');
+        return string.IsNullOrEmpty(result) ? "fixture" : result;
     }
 
     private static async Task ExecuteStepAsync(
         HttpClient client,
         ReplayStep step,
         Dictionary<string, string> vars,
+        IReadOnlyDictionary<string, string> principalMap,
+        string principalSuffix,
         string fixtureFileName)
     {
-        var path = SubstituteVars(step.Path, vars);
+        var path = ApplyPrincipalRewrites(SubstituteVars(step.Path, vars), principalMap);
 
         using var request = new HttpRequestMessage(
             new HttpMethod(step.Method.ToUpperInvariant()), path);
 
 
         if (!string.IsNullOrWhiteSpace(step.IdempotencyKey))
-            request.Headers.Add("X-Interfold-Idempotency-Key", step.IdempotencyKey);
+        {
+            // Suffix idempotency keys with the same fixture-namespace tag the principal IDs
+            // get. The Postgres idempotency store keys on (PrincipalId, OperationId,
+            // IdempotencyKey); the principal already carries the suffix here, but keying the
+            // idempotency value too keeps logs/diagnostics aligned and protects against any
+            // future store implementation that ignores PrincipalId in its uniqueness key.
+            request.Headers.Add("X-Interfold-Idempotency-Key", $"{step.IdempotencyKey}-{principalSuffix}");
+        }
 
         if (step.Body.HasValue)
         {
-            var substitutedBody = SubstituteBodyValue(step.Body.Value, vars);
+            var substitutedBody = SubstituteBodyValue(step.Body.Value, vars, principalMap);
             var bodyJson = JsonSerializer.Serialize(substitutedBody);
             request.Content = new StringContent(bodyJson, Encoding.UTF8, "application/json");
         }
 
-        if (!string.IsNullOrWhiteSpace(step.PrincipalId))
+        if (!string.IsNullOrWhiteSpace(step.PrincipalId)
+            && principalMap.TryGetValue(step.PrincipalId, out var rewrittenPrincipal))
         {
-            AttachPrincipalAuth(request, client, step.PrincipalId);
+            AttachPrincipalAuth(request, client, rewrittenPrincipal);
         }
 
         var response = await client.SendAsync(request);
@@ -150,7 +186,29 @@ public sealed class ReplayParityTests(IWebFactoryFixture fixture) : BaseEndpoint
         return template;
     }
 
-    private static object? SubstituteBodyValue(JsonElement element, Dictionary<string, string> vars)
+    /// <summary>
+    /// Rewrites every raw principal id present in <paramref name="text"/> with its suffixed
+    /// counterpart from <paramref name="principalMap"/>. Used for path segments like
+    /// <c>/api/friend-requests/replay-sys-friend-b</c> where the path identifies a *different*
+    /// principal than the one issuing the request — that target principal's id needs the same
+    /// fixture suffix that <see cref="RunTraceAsync"/> applied to the issuing principal,
+    /// otherwise the API would resolve a non-existent user and the trace would diverge.
+    /// </summary>
+    private static string ApplyPrincipalRewrites(string text, IReadOnlyDictionary<string, string> principalMap)
+    {
+        // Rewrite longest principal ids first so that prefix-overlapping ids ("replay-sys-friend"
+        // vs "replay-sys-friend-b") never get partially rewritten. The trace fixtures don't
+        // currently rely on this, but the discipline keeps future fixtures safe.
+        foreach (var (raw, rewritten) in principalMap.OrderByDescending(p => p.Key.Length))
+            text = text.Replace(raw, rewritten, StringComparison.Ordinal);
+
+        return text;
+    }
+
+    private static object? SubstituteBodyValue(
+        JsonElement element,
+        Dictionary<string, string> vars,
+        IReadOnlyDictionary<string, string> principalMap)
     {
         switch (element.ValueKind)
         {
@@ -159,7 +217,7 @@ public sealed class ReplayParityTests(IWebFactoryFixture fixture) : BaseEndpoint
                 var dict = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
                 foreach (var property in element.EnumerateObject())
                 {
-                    dict[property.Name] = SubstituteBodyValue(property.Value, vars);
+                    dict[property.Name] = SubstituteBodyValue(property.Value, vars, principalMap);
                 }
 
                 return dict;
@@ -170,7 +228,7 @@ public sealed class ReplayParityTests(IWebFactoryFixture fixture) : BaseEndpoint
                 var list = new List<object?>();
                 foreach (var item in element.EnumerateArray())
                 {
-                    list.Add(SubstituteBodyValue(item, vars));
+                    list.Add(SubstituteBodyValue(item, vars, principalMap));
                 }
 
                 return list;
@@ -182,7 +240,7 @@ public sealed class ReplayParityTests(IWebFactoryFixture fixture) : BaseEndpoint
                 if (TryResolvePlaceholderValue(value, vars, out var resolved))
                     return resolved;
 
-                return SubstituteVars(value, vars);
+                return ApplyPrincipalRewrites(SubstituteVars(value, vars), principalMap);
             }
 
             case JsonValueKind.Number:

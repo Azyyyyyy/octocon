@@ -39,7 +39,11 @@ public sealed class MultiNodeScyllaFixture : AspireFixture<AppHost::Projects.Int
 
     protected override string[] Args =>
     [
-        "Parameters:scylla-mode=multi",
+        // Drives a 7-region multi-DC Scylla layout; Cassandra is explicitly off so the AppHost
+        // doesn't co-locate a Cassandra container alongside the multi-DC topology.
+        "Parameters:include-scylla=true",
+        "Parameters:include-cassandra=false",
+        "Parameters:scylla-topology=multi",
         "Parameters:include-api=false",
         "Parameters:include-web=false",
         "Parameters:persistent-containers=false",

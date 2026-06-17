@@ -55,17 +55,15 @@ public static class InterfoldAppHost
         // The integration test SharedDbFixture flips these on/off based on which fixtures the
         // current test session actually requires (scanned via TUnit's TestSessionContext). Both
         // can be true at once so we run Scylla and Cassandra side-by-side under one Aspire host.
-        // For back-compat, when neither toggle is set, fall back to the legacy `scylla-mode`
-        // parameter (which the bootstrapper still drives via PublishPhase). The single switch
-        // also drives Scylla's internal topology (single-node vs 7-region multi-DC).
-        var scyllaMode = builder.Configuration["Parameters:scylla-mode"] ?? "single";
-        var isMultiScylla = string.Equals(scyllaMode, "multi", StringComparison.OrdinalIgnoreCase);
-        var includeScylla = ParseToggle(
-            builder.Configuration["Parameters:include-scylla"],
-            fallback: string.Equals(scyllaMode, "single", StringComparison.OrdinalIgnoreCase) || isMultiScylla);
-        var includeCassandra = ParseToggle(
-            builder.Configuration["Parameters:include-cassandra"],
-            fallback: string.Equals(scyllaMode, "cassandra", StringComparison.OrdinalIgnoreCase));
+        // The bootstrapper's PublishPhase translates its operator-facing `databaseMode` enum
+        // (single | multi | cassandra) into this same triple, so dev `aspire run`, the
+        // bootstrapper, and the integration tests all drive the resource graph through the
+        // same parameters. `scylla-topology` is independent of `include-cassandra` and only
+        // affects the Scylla container layout when `include-scylla=true`.
+        var includeScylla = ParseToggle(builder.Configuration["Parameters:include-scylla"], fallback: true);
+        var includeCassandra = ParseToggle(builder.Configuration["Parameters:include-cassandra"], fallback: false);
+        var scyllaTopology = builder.Configuration["Parameters:scylla-topology"] ?? "single";
+        var isMultiScylla = string.Equals(scyllaTopology, "multi", StringComparison.OrdinalIgnoreCase);
 
         static bool ParseToggle(string? raw, bool fallback)
             => string.IsNullOrEmpty(raw)
@@ -272,7 +270,7 @@ public static class InterfoldAppHost
 
         if (includeScylla)
         {
-            // --- ScyllaDB nodes (single or multi based on scylla-mode) ---
+            // --- ScyllaDB nodes (single or multi based on scylla-topology) ---
             string[] regions = isMultiScylla
                 ? ["nam", "eur", "sam", "sas", "eas", "ocn", "gdpr"]
                 : ["nam"];

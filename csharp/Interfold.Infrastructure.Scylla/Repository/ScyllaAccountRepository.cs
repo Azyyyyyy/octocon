@@ -390,7 +390,11 @@ public sealed class ScyllaAccountRepository : IAccountRepository
             // Write regional user + global registry together to reduce split-write orphans.
             var createUserBatch = new BatchStatement()
                 .Add(new SimpleStatement(
-                    $"INSERT INTO {keyspace}.users (id, {columnName}, inserted_at, updated_at) VALUES (?, ?, ?, toTimestamp(now()), toTimestamp(now()))",
+                    // Four columns -> four bind targets: two prepared parameters plus two literal
+                    // toTimestamp(now()) calls. Adding a third placeholder before the literals (the
+                    // shape this method had previously) tipped the value count over the column
+                    // count and Cassandra rejected the batch with "Unmatched column names/values".
+                    $"INSERT INTO {keyspace}.users (id, {columnName}, inserted_at, updated_at) VALUES (?, ?, toTimestamp(now()), toTimestamp(now()))",
                     newUserId,
                     value
                 ))

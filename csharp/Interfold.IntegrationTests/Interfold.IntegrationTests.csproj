@@ -5,6 +5,13 @@
     <TestingPlatformDotnetTestSupport>true</TestingPlatformDotnetTestSupport>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+    <!--
+      Bumps TUnit's external-span cap (default 100) high enough to absorb the OTel volume
+      that Aspire-driven integration tests legitimately produce - see tests.runsettings for
+      the rationale. Microsoft.Testing.Platform applies the file-level EnvironmentVariables
+      block to the test host process at startup.
+    -->
+    <RunSettingsFilePath>$(MSBuildProjectDirectory)\tests.runsettings</RunSettingsFilePath>
   </PropertyGroup>
 
   <ItemGroup>

@@ -39,9 +39,16 @@ public static class ConfigurationServiceCollectionExtensions
         services.AddOptions<PersistenceConfiguration>()
             .Configure<IConfiguration>(ApplyPersistence);
 
-        // Live-reloadable: JWT signing secrets can rotate, OAuth parameters can be updated via
-        // appsettings.json without restart.  Consume via IOptionsMonitor<AuthenticationConfiguration>
-        // in singletons, or IOptionsSnapshot<AuthenticationConfiguration> in scoped services.
+        // Startup-baked: AuthenticationConfiguration is a hybrid of env-bound values (OAuth
+        // client IDs, callback base URL, JWT authority) and secret-store-bound values
+        // (RSA/ES256 signing material, deep-link secret, encryption pepper, OAuth client
+        // secrets). SecretsBootstrapService patches the secret fields directly into the
+        // IOptionsMonitor.CurrentValue snapshot at startup. Wiring an
+        // IOptionsChangeTokenSource here would cause every IConfiguration reload to
+        // re-run ApplyAuthentication and overwrite the patched secrets with the empty
+        // initial values, breaking JWT verification and the encryption pepper guard.
+        // Treat auth as startup-only until the secret bootstrap moves to
+        // IPostConfigureOptions or a dedicated reload-aware patcher.
         services.AddOptions<AuthenticationConfiguration>()
             .Configure<IConfiguration>(ApplyAuthentication);
 
@@ -51,14 +58,36 @@ public static class ConfigurationServiceCollectionExtensions
             .Configure<IConfiguration>(ApplyObservability);
 
         // Live-reloadable: avatar storage paths can be updated via appsettings.json.
-        services.AddOptions<StorageConfiguration>()
-            .Configure<IConfiguration>(ApplyStorage);
+        AddLiveReloadable<StorageConfiguration>(services, ApplyStorage);
 
         // Live-reloadable: batch tuning can be adjusted without restart.
-        services.AddOptions<SocketConfiguration>()
-            .Configure<IConfiguration>(ApplySocket);
+        AddLiveReloadable<SocketConfiguration>(services, ApplySocket);
 
         return services;
+    }
+
+    /// <summary>
+    /// Registers a live-reloadable strongly-typed options instance. Calling
+    /// <c>AddOptions&lt;T&gt;().Configure&lt;IConfiguration&gt;(...)</c> on its own only registers an
+    /// <see cref="IConfigureOptions{TOptions}"/> — that wires the apply callback into the snapshot
+    /// pipeline, but it does NOT subscribe <see cref="IOptionsMonitor{TOptions}"/> to configuration
+    /// reload events. Without an <see cref="IOptionsChangeTokenSource{TOptions}"/> the first access
+    /// to <c>CurrentValue</c> caches whatever the apply callback produced and ignores subsequent
+    /// <see cref="IConfigurationRoot.Reload"/> calls. <see cref="ConfigurationChangeTokenSource{TOptions}"/>
+    /// bridges the configuration's reload token into the options pipeline so consumers actually see
+    /// updates, which is what the integration tests' <c>WithConfiguration</c> live-reload contract
+    /// depends on.
+    /// </summary>
+    private static OptionsBuilder<TOptions> AddLiveReloadable<TOptions>(
+        IServiceCollection services,
+        Action<TOptions, IConfiguration> apply)
+        where TOptions : class
+    {
+        var builder = services.AddOptions<TOptions>().Configure<IConfiguration>(apply);
+        services.AddSingleton<IOptionsChangeTokenSource<TOptions>>(sp =>
+            new ConfigurationChangeTokenSource<TOptions>(
+                Options.DefaultName, sp.GetRequiredService<IConfiguration>()));
+        return builder;
     }
 
     // --- Bind helpers (thin wrappers used by CLI and other non-DI callers) ---

@@ -107,7 +107,15 @@ public class SettingsControllerTests(IWebFactoryFixture fixture) : BaseEndpointT
         }
     }
 
-    [Test]
+    // Both avatar multipart tests mutate OCTOCON_AVATAR_STORAGE_ROOT and
+    // OCTOCON_AVATAR_PUBLIC_BASE on the shared factory via WithConfiguration. With
+    // IOptionsMonitor live-reload now wired through, those writes flow into every
+    // in-flight LocalAvatarStorage save call across the host. Two parallel tests
+    // racing on the same keys would interleave their values: the test that called
+    // WithConfiguration most recently wins, the other test reads back a URL stamped
+    // with the wrong publicBase prefix and fails its UrlPathStartsWith assertion.
+    // Serialise the two tests with a shared NotInParallel key so they take turns.
+    [Test, NotInParallel("avatar-storage-config")]
     public async Task Api_SettingsAvatarMultipart_PersistsAndServesAvatar()
     {
         var runId = Guid.NewGuid().ToString("N");
@@ -152,7 +160,7 @@ public class SettingsControllerTests(IWebFactoryFixture fixture) : BaseEndpointT
         }
     }
 
-    [Test]
+    [Test, NotInParallel("avatar-storage-config")]
     public async Task Api_AlterAvatarMultipart_PersistsAndReflectsOnPublicAlter()
     {
         var runId = Guid.NewGuid().ToString("N");
