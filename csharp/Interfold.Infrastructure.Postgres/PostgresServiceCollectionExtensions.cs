@@ -23,12 +23,6 @@ public static class PostgresServiceCollectionExtensions
         IServiceCollection services,
         PersistenceConfiguration options)
     {
-        //Nothing to add in CompatibilityMode
-        if (options.CompatibilityMode)
-        {
-            return services;
-        }
-        
         return services
             .AddSingleton<IPostgresConnectionFactory, PostgresConnectionFactory>()
             .AddSingleton<ISecretsStore, PostgresSecretsStore>()

@@ -539,8 +539,10 @@ public class BaseEndpointTest
         var authConfig = config.Get<AuthenticationConfiguration>();
 
         Assert.NotNull(authConfig);
-        AuthHelper.EnsureEs256KeyMaterial(authConfig);
-        
+        // Mirror the fixture-side seed of the ES256 keypair so the JWT we issue here verifies
+        // against the API's SecretsBootstrapService-patched configuration on the server side.
+        authConfig.JwtEs256PrivateKeyPem = TestDbCredentials.JwtEs256PrivateKeyPem;
+
         var jti = Guid.NewGuid().ToString("N");
 
         var now = DateTimeOffset.UtcNow;

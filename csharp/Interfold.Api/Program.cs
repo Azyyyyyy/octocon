@@ -23,6 +23,7 @@ using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.JsonWebTokens;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
+using Npgsql;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Trace;
 
@@ -30,6 +31,17 @@ var builder = WebApplication.CreateBuilder(args);
 
 // --- Aspire ServiceDefaults (OTel, resilience, service discovery) ---
 builder.AddServiceDefaults();
+
+// --- Kestrel leaf PFX password (self-host only) ---
+// In the published self-host image the leaf PFX is bind-mounted at /certs/leaf.pfx and the
+// path env var (ASPNETCORE_Kestrel__Certificates__Default__Path) is set by the AppHost.
+// The matching password used to be an env var too, but it now lives exclusively in
+// internal.secrets under `certs:leaf_pfx_password`. We fetch it via a one-shot Npgsql
+// connection BEFORE the host builds — Kestrel reads the password out of IConfiguration
+// when it binds the HTTPS endpoint, and the hosted SecretsBootstrapService runs too late
+// for that. If Postgres isn't reachable here, the API fails before Kestrel binds; that's
+// the deliberate trade-off documented in docs/configuration.md.
+LoadLeafPfxPasswordFromStoreIfNeeded(builder.Configuration);
 
 //Database connections which have been implemented
 ScyllaServiceCollectionExtensions.Register();
@@ -44,14 +56,15 @@ var authConfig = builder.Configuration.BindAuthenticationConfiguration();
 var persistenceConfig = builder.Configuration.BindPersistenceConfiguration();
 builder.Services.AddInterfoldOptions();
 
-//TODO: Add Cors:AllowedOrigins?
-var configuredCorsOrigins = new[]
-{
-    builder.Configuration["OCTOCON_FRONTEND"],
-    builder.Configuration["OCTOCON_BETA_FRONTEND"]
-}
+// CORS allow-list. Operators supply a comma-separated list via OCTOCON_CORS_ALLOWED_ORIGINS
+// (e.g. "https://octocon.app,https://beta.octocon.app"). When the env var is empty or unset
+// the policy falls back to allowing any origin — appropriate for solo-API dev behind no
+// reverse proxy, but a production stack should always set the env explicitly. Trailing
+// slashes on individual entries are trimmed for parity with the ASP.NET Core CORS matcher.
+var configuredCorsOrigins = (builder.Configuration["OCTOCON_CORS_ALLOWED_ORIGINS"] ?? string.Empty)
+    .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+    .Select(static origin => origin.TrimEnd('/'))
     .Where(static origin => !string.IsNullOrWhiteSpace(origin))
-    .Select(static origin => origin!.Trim().TrimEnd('/'))
     .Distinct(StringComparer.OrdinalIgnoreCase)
     .ToArray();
 
@@ -96,14 +109,10 @@ if (persistenceConfig.Mode == "scylla-postgres")
         "scylla-ready", tags: ["ready"], timeout: TimeSpan.FromSeconds(5));
     healthChecks.AddCheck<Interfold.Infrastructure.Scylla.ScyllaHealthChecker>(
         "scylla-startup", tags: ["startup"], timeout: TimeSpan.FromSeconds(30));
-
-    if (!persistenceConfig.CompatibilityMode)
-    {
-        healthChecks.AddCheck<Interfold.Infrastructure.Postgres.PostgresHealthChecker>(
-            "postgres-ready", tags: ["ready"], timeout: TimeSpan.FromSeconds(5));
-        healthChecks.AddCheck<Interfold.Infrastructure.Postgres.PostgresHealthChecker>(
-            "postgres-startup", tags: ["startup"], timeout: TimeSpan.FromSeconds(30));
-    }
+    healthChecks.AddCheck<Interfold.Infrastructure.Postgres.PostgresHealthChecker>(
+        "postgres-ready", tags: ["ready"], timeout: TimeSpan.FromSeconds(5));
+    healthChecks.AddCheck<Interfold.Infrastructure.Postgres.PostgresHealthChecker>(
+        "postgres-startup", tags: ["startup"], timeout: TimeSpan.FromSeconds(30));
 }
 builder.Services.AddSingleton<IAvatarStorage, LocalAvatarStorage>();
 builder.Services.AddSingleton(TimeProvider.System);
@@ -263,10 +272,6 @@ var verificationKeyCount = effectiveAuthConfig.JwtEs256VerificationKeyPems?.Leng
 startupLogger.LogInformation(
     "ES256 token issuance is enabled. Verification key count: {VerificationKeyCount}.",
     verificationKeyCount);
-startupLogger.LogInformation(
-    "ES256 key file paths. PrivateKeyFile: {PrivateKeyFile}; PublicKeyFile: {PublicKeyFile}.",
-    effectiveAuthConfig.JwtEs256PrivateKeyFile ?? "(not set)",
-    effectiveAuthConfig.JwtEs256PublicKeyFile ?? "(not set)");
 
 // Ensure avatar multipart uploads are buffered before any component touches Request.Body.
 app.UseExceptionHandler("/error");
@@ -287,14 +292,6 @@ app.Use(async (context, next) =>
 
     await next();
 });
-
-var persistenceStartupLogger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("PersistenceStartup");
-persistenceStartupLogger.LogInformation(
-    "Compatibility mode is {CompatibilityMode}. {Behavior}",
-    persistenceConfig.CompatibilityMode,
-    persistenceConfig.CompatibilityMode
-        ? "Postgres idempotency and token revocation are using in-memory stores."
-        : "Postgres idempotency and token revocation are using durable Postgres stores.");
 
 // JWT token revocation check middleware.
 // This runs after authentication, checking if the authenticated token's JTI has been revoked.
@@ -449,4 +446,63 @@ static string NormalizePem(string pem)
         .Replace("\r", "\n", StringComparison.Ordinal);     // Old Mac line endings
 
     return normalized;
+}
+
+/// <summary>
+/// Fetches <c>certs:leaf_pfx_password</c> from <c>internal.secrets</c> via a transient
+/// Npgsql connection and writes it into <c>Kestrel:Certificates:Default:Password</c> so
+/// Kestrel's built-in PFX loader can unlock the leaf cert at HTTPS-endpoint bind time.
+///
+/// Self-host only: triggered solely when the AppHost has injected a Kestrel default-cert
+/// path AND a Postgres connection string. Local dev (which uses the default dotnet dev
+/// cert) sees neither and the loader becomes a no-op.
+/// </summary>
+static void LoadLeafPfxPasswordFromStoreIfNeeded(IConfigurationBuilder cfg)
+{
+    var config = (IConfigurationRoot)((IConfigurationBuilder)cfg).Build();
+    var pfxPath = config["Kestrel:Certificates:Default:Path"]
+                  ?? Environment.GetEnvironmentVariable("ASPNETCORE_Kestrel__Certificates__Default__Path");
+    if (string.IsNullOrWhiteSpace(pfxPath)) return;
+
+    // If the operator pinned a password via env (the legacy path) prefer that over the
+    // store lookup. Lets local dev or one-off recovery flows bypass the DB roundtrip.
+    var existingPassword = config["Kestrel:Certificates:Default:Password"];
+    if (!string.IsNullOrWhiteSpace(existingPassword)) return;
+
+    var pgConn = config["OCTOCON_POSTGRES_CONNECTION"];
+    if (string.IsNullOrWhiteSpace(pgConn))
+    {
+        throw new InvalidOperationException(
+            "Kestrel default-cert path is set but OCTOCON_POSTGRES_CONNECTION is missing; " +
+            "cannot fetch certs:leaf_pfx_password from internal.secrets.");
+    }
+
+    string? password;
+    try
+    {
+        using var conn = new NpgsqlConnection(pgConn);
+        conn.Open();
+        using var cmd = new NpgsqlCommand(
+            "SELECT value FROM internal.secrets WHERE key = 'certs:leaf_pfx_password' LIMIT 1",
+            conn);
+        password = cmd.ExecuteScalar() as string;
+    }
+    catch (Exception ex)
+    {
+        throw new InvalidOperationException(
+            "Failed to fetch certs:leaf_pfx_password from internal.secrets. Ensure Postgres " +
+            "is reachable at startup and that DatabaseInitPhase has seeded the row.", ex);
+    }
+
+    if (string.IsNullOrEmpty(password))
+    {
+        throw new InvalidOperationException(
+            "Row internal.secrets[certs:leaf_pfx_password] is missing or empty; " +
+            "re-run the bootstrapper so SecretsPhase + DatabaseInitPhase seed it.");
+    }
+
+    cfg.AddInMemoryCollection(new Dictionary<string, string?>
+    {
+        ["Kestrel:Certificates:Default:Password"] = password,
+    });
 }

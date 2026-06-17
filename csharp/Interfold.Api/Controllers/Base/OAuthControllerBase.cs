@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
+using Interfold.Api.Auth;
 using Interfold.Api.Services;
 using Interfold.Contracts.Configuration;
 
@@ -16,7 +17,6 @@ public abstract class OAuthControllerBase : InterfoldControllerBase
     };
 
     protected readonly IOptionsMonitor<AuthenticationConfiguration> AuthOptions;
-    protected readonly IOptionsMonitor<ApiConfiguration> ApiOptions;
     protected readonly IAuthenticationSchemeProvider SchemeProvider;
     protected readonly GoogleOAuthService GoogleOAuth;
     protected readonly DiscordOAuthService DiscordOAuth;
@@ -24,14 +24,12 @@ public abstract class OAuthControllerBase : InterfoldControllerBase
 
     protected OAuthControllerBase(
         IOptionsMonitor<AuthenticationConfiguration> authOptions,
-        IOptionsMonitor<ApiConfiguration> apiOptions,
         IAuthenticationSchemeProvider schemeProvider,
         GoogleOAuthService googleOAuth,
         DiscordOAuthService discordOAuth,
         AppleOAuthService appleOAuth)
     {
         AuthOptions = authOptions;
-        ApiOptions = apiOptions;
         SchemeProvider = schemeProvider;
         GoogleOAuth = googleOAuth;
         DiscordOAuth = discordOAuth;
@@ -132,26 +130,15 @@ public abstract class OAuthControllerBase : InterfoldControllerBase
         return null;
     }
 
-    protected string? GetChallengeScheme(string providerKey)
+    protected static string? GetChallengeScheme(string providerKey)
     {
-        var authConfig = AuthOptions.CurrentValue;
         return providerKey switch
         {
-            "discord" => authConfig.DiscordSchemeName,
-            "google" => authConfig.GoogleSchemeName,
-            "apple" => authConfig.AppleSchemeName,
+            "discord" => OAuthChallengeServiceCollectionExtensions.DiscordSchemeName,
+            "google" => OAuthChallengeServiceCollectionExtensions.GoogleSchemeName,
+            "apple" => OAuthChallengeServiceCollectionExtensions.AppleSchemeName,
             _ => null
         };
-    }
-
-    protected static string NormalizeDeepLinkBase(string? deepLinkAddress)
-    {
-        if (string.IsNullOrWhiteSpace(deepLinkAddress))
-        {
-            return "https://octocon.app/deep";
-        }
-
-        return deepLinkAddress.Trim().TrimEnd('/');
     }
 
     protected void StoreRedirectUriCookie(string cookieName)
@@ -196,10 +183,17 @@ public abstract class OAuthControllerBase : InterfoldControllerBase
         });
     }
 
+    /// <summary>
+    /// Looks up the registered challenge scheme for the supplied provider key and returns a
+    /// <see cref="ChallengeResult"/> against it, or <c>null</c> when the scheme isn't
+    /// registered (typically because the operator hasn't supplied the matching
+    /// <c>OCTOCON_*_OAUTH_CLIENT_ID</c>). The static challenge query parameters and the
+    /// authorization endpoint URL both come from <see cref="OAuthChallengeServiceCollectionExtensions"/>
+    /// — see that type for why they're baked in rather than threaded through here.
+    /// </summary>
     protected async Task<IActionResult?> IssueChallengeIfRegisteredAsync(
         string providerKey,
-        string operationId,
-        Dictionary<string, string>? additionalParameters = null)
+        string operationId)
     {
         var challengeScheme = GetChallengeScheme(providerKey);
         if (string.IsNullOrWhiteSpace(challengeScheme))
@@ -214,27 +208,7 @@ public abstract class OAuthControllerBase : InterfoldControllerBase
             RedirectUri = BuildCallbackBaseUri(providerKey)
         };
 
-        if (additionalParameters?.Count > 0)
-        {
-            foreach (var (key, value) in additionalParameters)
-            {
-                props.Items[key] = value;
-            }
-        }
-
         Response.Headers["X-Interfold-OperationId"] = operationId;
         return Challenge(props, challengeScheme);
-    }
-
-    protected Dictionary<string, string>? GetChallengeParameters(string providerKey)
-    {
-        var authConfig = AuthOptions.CurrentValue;
-        return providerKey switch
-        {
-            "discord" => authConfig.DiscordParameters,
-            "google" => authConfig.GoogleParameters,
-            "apple" => authConfig.AppleParameters,
-            _ => null
-        };
     }
 }

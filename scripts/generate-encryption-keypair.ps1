@@ -1,3 +1,10 @@
+# DEPRECATED: Self-hosted Interfold deployments should use the Interfold.Bootstrapper binary
+# (csharp/Interfold.Bootstrapper) instead. The bootstrapper's SecretsPhase ports this script's
+# logic to pure C# (System.Security.Cryptography). This script is retained for one release for
+# compatibility with existing developer automation; it will be removed.
+#
+# Migration: run `dotnet run --project csharp/Interfold.Bootstrapper -- bootstrap` from a Linux host.
+
 param(
     [string]$OutputDir = (Join-Path $PSScriptRoot "keys"),
     [int]$KeySize = 2048,

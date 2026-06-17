@@ -82,9 +82,13 @@ public sealed class ConfigBehaviorTests(IWebFactoryFixture fixture) : BaseEndpoi
     [Test]
     public async Task Api_AuthRequest_IssuesChallengeRedirect_WhenChallengeEnabledAndSchemeConfigured()
     {
+        // The Google challenge scheme + endpoint are baked into the API as constants — see
+        // OAuthChallengeServiceCollectionExtensions. The scheme is only registered when
+        // OCTOCON_GOOGLE_OAUTH_CLIENT_ID is set (that's the operator's "I want to use
+        // Google" signal); the test pins it here so the scheme registers and the controller
+        // issues a real challenge.
         fixture.Factory
-            .WithConfiguration("OCTOCON_AUTH_CHALLENGE_GOOGLE_SCHEME", "oauth-google")
-            .WithConfiguration("OCTOCON_AUTH_CHALLENGE_GOOGLE_ENDPOINT", "https://accounts.example.test/oauth/authorize");
+            .WithConfiguration("OCTOCON_GOOGLE_OAUTH_CLIENT_ID", "test-client-id");
 
         using var client = fixture.Factory.CreateClient(new WebApplicationFactoryClientOptions
         {
@@ -99,7 +103,7 @@ public sealed class ConfigBehaviorTests(IWebFactoryFixture fixture) : BaseEndpoi
         {
             await Assert.That(response.StatusCode is HttpStatusCode.Redirect or HttpStatusCode.Found).IsTrue();
             await Assert.That(locationHeader).IsNotNull();
-            await Assert.That(location.StartsWith("https://accounts.example.test/oauth/authorize", StringComparison.Ordinal)).IsTrue();
+            await Assert.That(location.StartsWith("https://accounts.google.com/o/oauth2/v2/auth", StringComparison.Ordinal)).IsTrue();
             await Assert.That(location.Contains("%2Fauth%2Fgoogle%2Fcallback", StringComparison.Ordinal)).IsTrue();
         }
     }
@@ -108,7 +112,6 @@ public sealed class ConfigBehaviorTests(IWebFactoryFixture fixture) : BaseEndpoi
     public async Task Api_OAuthCallback_IssuesJwsCompactSerializationToken()
     {
         fixture.Factory
-            .WithConfiguration("OCTOCON_DEEPLINK_ADDRESS", "octocon://app")
             .WithConfiguration("OCTOCON_SCYLLA_KEYSPACE", "nam");
 
         using var client = fixture.Factory.CreateClient(new WebApplicationFactoryClientOptions
@@ -116,8 +119,19 @@ public sealed class ConfigBehaviorTests(IWebFactoryFixture fixture) : BaseEndpoi
             AllowAutoRedirect = false
         });
 
+        // The callback now strictly requires a client-supplied redirect_uri (stashed by the
+        // initial GET /auth/discord call into octocon_auth_redirect_uri). Since this test
+        // hits the callback directly without going through the begin step, inject the cookie
+        // by hand so the controller can construct a Location header — the JWT-shape
+        // assertions below are the actual unit under test.
         var discordUid = $"jws-test-{Guid.NewGuid():N}";
-        var response = await client.GetAsync($"/auth/discord/callback?uid={Uri.EscapeDataString(discordUid)}");
+        var clientRedirectUri = "https://test.invalid/auth/done";
+        var callbackRequest = new HttpRequestMessage(
+            HttpMethod.Get,
+            $"/auth/discord/callback?uid={Uri.EscapeDataString(discordUid)}");
+        callbackRequest.Headers.Add("Cookie",
+            $"octocon_auth_redirect_uri={Uri.EscapeDataString(clientRedirectUri)}");
+        var response = await client.SendAsync(callbackRequest);
         var body = await response.Content.ReadAsStringAsync();
 
         await Assert.That(response.StatusCode)

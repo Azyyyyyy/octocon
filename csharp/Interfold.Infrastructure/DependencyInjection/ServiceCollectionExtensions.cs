@@ -35,7 +35,6 @@ public static partial class ServiceCollectionExtensions
     ) => AddInterfoldPersistence(services, mode, cfg =>
     {
         cfg.ScyllaKeyspace            = configuration.ScyllaKeyspace;
-        cfg.CompatibilityMode        = configuration.CompatibilityMode;
         cfg.PostgresConnectionString = configuration.PostgresConnectionString;
         cfg.IsSingleScyllaInstance     = configuration.IsSingleScyllaInstance;
         cfg.DbRetryAttempts          = configuration.DbRetryAttempts;

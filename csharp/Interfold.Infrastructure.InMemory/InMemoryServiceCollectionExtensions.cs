@@ -24,7 +24,7 @@ public static class InMemoryServiceCollectionExtensions
         IServiceCollection services,
         PersistenceConfiguration options)
     {
-            var pipeline = services
+        return services
             .AddSingleton<IRegionContext>(_ => new InMemoryRegionContext(options.ScyllaKeyspace))
             .AddSingleton<ISecretsStore, InMemorySecretsStore>()
             .AddSingleton<INotificationTokenRepository, InMemoryNotificationTokenRepository>()
@@ -37,15 +37,6 @@ public static class InMemoryServiceCollectionExtensions
             .AddSingleton<IFriendshipRepository, InMemoryFriendshipRepository>()
             .AddSingleton<ITagRepository, InMemoryTagRepository>()
             .AddSingleton<IJournalRepository, InMemoryJournalRepository>()
-            .AddSingleton<IIdempotencyStore, InMemoryIdempotencyStore>()
-            .AddSingleton<IAuthTokenRevocationRepository, InMemoryAuthTokenRevocationRepository>();
-        
-        if (!options.CompatibilityMode)
-        {
-            return pipeline;
-        }
-
-        return pipeline
             .AddSingleton<IIdempotencyStore, InMemoryIdempotencyStore>()
             .AddSingleton<IAuthTokenRevocationRepository, InMemoryAuthTokenRevocationRepository>();
     }

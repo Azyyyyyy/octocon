@@ -1,7 +1,9 @@
 ﻿using Interfold.Api.Socket;
+using Interfold.Contracts.Secrets;
 using Interfold.Domain.Abstractions;
 using Interfold.Infrastructure;
 using Interfold.Infrastructure.Coordination;
+using Interfold.Infrastructure.InMemory;
 using Microsoft.AspNetCore.Hosting;
 using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
@@ -37,15 +39,19 @@ public class InterfoldWebApplicationFactory : WebApplicationFactory<Program>
 
     public FakeTimeProvider TimeProvider { get; } = new();
     public string DisplayName { get; private set; }
+    private readonly string _persistenceType;
 
     public InterfoldWebApplicationFactory(string persistenceType, string? displayName = null)
     {
+        _persistenceType = persistenceType;
         DisplayName = displayName ?? persistenceType;
         _configurationOverrides = new ConcurrentDictionary<string, string?>(StringComparer.Ordinal);
         _configurationOverrides["OCTOCON_PERSISTENCE"] = persistenceType;
-        _configurationOverrides["OCTOCON_AUTH_RSA_PUBLIC_KEY"] = "TEST";
-        _configurationOverrides["OCTOCON_AUTH_RSA_PRIVATE_KEY"] = "TEST";
-        _configurationOverrides["OCTOCON_ENCRYPTION_PEPPER"] = "TEST";
+        // JWT key material and the encryption pepper are not env-bound; SecretsBootstrapService
+        // patches them from internal.secrets at startup. Each test fixture seeds the same
+        // PEMs + pepper into the store (see TestDbCredentials + BuildSeededInMemorySecretsStore
+        // below for the in-memory variant) so signing in CreateToken below matches
+        // verification, and SecretsBootstrapService's pepper-required check doesn't trip.
     }
 
     public override string ToString() => DisplayName;
@@ -79,11 +85,13 @@ public class InterfoldWebApplicationFactory : WebApplicationFactory<Program>
     internal string CreateToken(string systemId)
     {
         var config = Services.GetRequiredService<IConfiguration>();
-        var authConfig = config.Get<AuthenticationConfiguration>();
+        var authConfig = config.Get<AuthenticationConfiguration>()
+            ?? throw new InvalidOperationException("Authentication configuration was not available for token creation.");
 
-        if (authConfig is null)
-            throw new InvalidOperationException("Authentication configuration was not available for token creation.");
-        AuthHelper.EnsureEs256KeyMaterial(authConfig);
+        // ApplyAuthentication leaves the signing material null on purpose (the API consumes
+        // it via SecretsBootstrapService at runtime). For the client-side token mint, plug
+        // in the same PEM that the fixtures seeded into internal.secrets.
+        authConfig.JwtEs256PrivateKeyPem = TestDbCredentials.JwtEs256PrivateKeyPem;
 
         if (string.IsNullOrWhiteSpace(authConfig.JwtAuthority))
             authConfig.JwtAuthority = "test-authority";
@@ -117,9 +125,28 @@ public class InterfoldWebApplicationFactory : WebApplicationFactory<Program>
             // factory may construct hands back the SAME instance.
             x.Replace(ServiceDescriptor.Singleton<IClusterEventBus>(EventBus));
             x.Replace(ServiceDescriptor.Singleton(EventBus));
+
+            // In-memory persistence has no real Postgres-backed secrets store to read from,
+            // so SecretsBootstrapService would patch nothing and JWT verification would fail.
+            // Replace the default InMemorySecretsStore with a pre-seeded one carrying the same
+            // PEMs the CreateToken helpers use to sign.
+            if (string.Equals(_persistenceType, "inmemory", StringComparison.OrdinalIgnoreCase))
+            {
+                x.Replace(ServiceDescriptor.Singleton<ISecretsStore>(_ => BuildSeededInMemorySecretsStore()));
+            }
         });
         
         base.ConfigureWebHost(builder);
+    }
+
+    private static InMemorySecretsStore BuildSeededInMemorySecretsStore()
+    {
+        var store = new InMemorySecretsStore();
+        store.Seed("auth:jwt_rsa256_private_pem", TestDbCredentials.JwtRsa256PrivateKeyPem);
+        store.Seed("auth:jwt_es256_private_pem", TestDbCredentials.JwtEs256PrivateKeyPem);
+        store.Seed("auth:deep_link_secret", TestDbCredentials.DeepLinkSecret);
+        store.Seed("encryption:pepper", "TEST");
+        return store;
     }
 
     private HttpClient TrackClient(HttpClient client)

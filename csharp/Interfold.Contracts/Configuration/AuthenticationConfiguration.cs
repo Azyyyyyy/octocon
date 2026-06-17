@@ -15,8 +15,9 @@ public sealed class AuthenticationConfiguration
     public string? CallbackBaseUrl { get; set; }
 
     /// <summary>
-    /// Deep link JWT signing secret (phase F token exchange).
-    /// Env: OCTOCON_AUTH_DEEP_LINK_SECRET
+    /// HMAC signing secret for the phase-F deep-link token exchange.
+    /// Sourced from <c>internal.secrets</c> via <c>auth:deep_link_secret</c> — patched on
+    /// startup by <c>SecretsBootstrapService</c>. Never read from env.
     /// </summary>
     public string? DeepLinkSecret { get; set; }
 
@@ -33,59 +34,38 @@ public sealed class AuthenticationConfiguration
     public string JwtAudience { get; set; } = "octocon";
 
     /// <summary>
-    /// ES256 private key (PEM) used for token issuance.
-    /// Env: OCTOCON_AUTH_EC_PRIVATE_KEY_PEM
+    /// ES256 private key (PEM, SEC1) used for token issuance.
+    /// Sourced from <c>internal.secrets</c> via <c>auth:jwt_es256_private_pem</c> —
+    /// patched on startup by <c>SecretsBootstrapService</c>. Never read from env.
     /// </summary>
     public string? JwtEs256PrivateKeyPem { get; set; }
 
     /// <summary>
-    /// ES256 private key file path (PEM).
-    /// If ES256 is enabled and this file does not exist, it can be created automatically.
-    /// Env: OCTOCON_AUTH_EC_PRIVATE_KEY_FILE
-    /// </summary>
-    public string? JwtEs256PrivateKeyFile { get; set; }
-
-    /// <summary>
-    /// ES256 public key file path (PEM).
-    /// If ES256 is enabled and this file does not exist, it can be created automatically.
-    /// Env: OCTOCON_AUTH_EC_PUBLIC_KEY_FILE
-    /// </summary>
-    public string? JwtEs256PublicKeyFile { get; set; }
-    /// <summary>
-    /// ES256 public/private verification keys (PEM) used for token validation.
-    /// Env: OCTOCON_AUTH_EC_PUBLIC_KEY_PEM, OCTOCON_AUTH_EC_PUBLIC_KEYS
+    /// ES256 verification keys (PEM) used for token signature validation. Populated by
+    /// <c>SecretsBootstrapService</c> from the same private PEM as <see cref="JwtEs256PrivateKeyPem"/>
+    /// — <c>ECDsa.ImportFromPem</c> reads the public half out of the private key.
     /// </summary>
     public string[]? JwtEs256VerificationKeyPems { get; set; }
 
     /// <summary>
-    /// Encryption pepper for key derivation.
-    /// Env: OCTOCON_ENCRYPTION_PEPPER
+    /// Static server-side pepper used by E2E key derivation. Sourced exclusively from
+    /// <c>internal.secrets</c> via <c>encryption:pepper</c> — patched on startup by
+    /// <c>SecretsBootstrapService</c>, which refuses to start the API if the row is
+    /// missing. Never read from env.
     /// </summary>
     public string EncryptionPepper { get; set; } = null!;
 
     /// <summary>
-    /// RSA256 public key file path.
-    /// If this file does not exist and no public is provided, an exception was thrown.
-    /// Env: OCTOCON_AUTH_RSA_PUBLIC_KEY_FILE
-    /// </summary>
-    public string? Rsa256PublicKeyFile { get; set; }
-
-    /// <summary>
-    /// RSA256 public key.
-    /// Env: OCTOCON_AUTH_RSA_PUBLIC_KEY
+    /// RSA-2048 JWT public key (PEM, SPKI). Derived in <c>SecretsBootstrapService</c> from
+    /// <see cref="Rsa256PrivateKey"/> after the private PEM is patched from the store.
+    /// Exposed via the API's JWKS endpoint.
     /// </summary>
     public string Rsa256PublicKey { get; set; } = null!;
 
     /// <summary>
-    /// RSA256 private key file path.
-    /// If this file does not exist and no private is provided, an exception was thrown.
-    /// Env: OCTOCON_AUTH_RSA_PRIVATE_KEY_FILE
-    /// </summary>
-    public string? Rsa256PrivateKeyFile { get; set; }
-
-    /// <summary>
-    /// RSA256 private key.
-    /// Env: OCTOCON_AUTH_RSA_PRIVATE_KEY
+    /// RSA-2048 JWT private key (PEM, PKCS#8). Sourced from <c>internal.secrets</c> via
+    /// <c>auth:jwt_rsa256_private_pem</c> — patched on startup by
+    /// <c>SecretsBootstrapService</c>. Never read from env.
     /// </summary>
     public string Rsa256PrivateKey { get; set; } = null!;
 
@@ -125,63 +105,11 @@ public sealed class AuthenticationConfiguration
     /// </summary>
     public string? DiscordOAuthClientSecret { get; set; }
 
-    // --- Discord OAuth Challenge ----
-
-    /// <summary>
-    /// Discord OAuth challenge scheme name.
-    /// Env: OCTOCON_AUTH_CHALLENGE_DISCORD_SCHEME
-    /// Default: 'oauth-discord'
-    /// </summary>
-    public string DiscordSchemeName { get; set; } = "oauth-discord";
-
-    /// <summary>
-    /// Discord OAuth provider authorization endpoint.
-    /// Env: OCTOCON_AUTH_CHALLENGE_DISCORD_ENDPOINT
-    /// </summary>
-    public string? DiscordEndpoint { get; set; }
-
-    /// <summary>
-    /// Discord OAuth additional parameters (parsed from OCTOCON_AUTH_CHALLENGE_DISCORD_PARAMS).
-    /// </summary>
-    public Dictionary<string, string>? DiscordParameters { get; set; }
-
-    // --- Google OAuth Challenge ----
-
-    /// <summary>
-    /// Google OAuth challenge scheme name.
-    /// Env: OCTOCON_AUTH_CHALLENGE_GOOGLE_SCHEME
-    /// Default: 'oauth-google'
-    /// </summary>
-    public string GoogleSchemeName { get; set; } = "oauth-google";
-
-    /// <summary>
-    /// Google OAuth provider authorization endpoint.
-    /// Env: OCTOCON_AUTH_CHALLENGE_GOOGLE_ENDPOINT
-    /// </summary>
-    public string? GoogleEndpoint { get; set; }
-
-    /// <summary>
-    /// Google OAuth additional parameters (parsed from OCTOCON_AUTH_CHALLENGE_GOOGLE_PARAMS).
-    /// </summary>
-    public Dictionary<string, string>? GoogleParameters { get; set; }
-
-    // --- Apple OAuth Challenge ----
-
-    /// <summary>
-    /// Apple OAuth challenge scheme name.
-    /// Env: OCTOCON_AUTH_CHALLENGE_APPLE_SCHEME
-    /// Default: 'oauth-apple'
-    /// </summary>
-    public string AppleSchemeName { get; set; } = "oauth-apple";
-
-    /// <summary>
-    /// Apple OAuth provider authorization endpoint.
-    /// Env: OCTOCON_AUTH_CHALLENGE_APPLE_ENDPOINT
-    /// </summary>
-    public string? AppleEndpoint { get; set; }
-
-    /// <summary>
-    /// Apple OAuth additional parameters (parsed from OCTOCON_AUTH_CHALLENGE_APPLE_PARAMS).
-    /// </summary>
-    public Dictionary<string, string>? AppleParameters { get; set; }
+    // Scheme names, provider authorization endpoints, and the static OAuth challenge
+    // parameters (scopes / response_type / response_mode) are all baked into
+    // OAuthChallengeServiceCollectionExtensions as constants — every provider serves a
+    // single global URL and the scopes are tied to the data the callback handlers read,
+    // so changing either requires a code change anyway. The only per-deployment value
+    // the redirect URL still carries is client_id, which is injected from the
+    // *OAuthClientId properties above at scheme-registration time.
 }

@@ -35,7 +35,6 @@ InMemoryServiceCollectionExtensions.Register();
 services.AddInterfoldPersistence(Interfold.Contracts.PersistenceMode.InMemory, cfg =>
 {
 	cfg.ScyllaKeyspace = "nam";
-	cfg.CompatibilityMode = true; // safer defaults for a utility
 });
 
 // Domain handlers (some repositories expect handlers registered)

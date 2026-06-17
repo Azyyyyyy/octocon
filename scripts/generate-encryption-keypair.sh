@@ -1,4 +1,13 @@
 #!/usr/bin/env bash
+#
+# DEPRECATED: Self-hosted Interfold deployments should use the Interfold.Bootstrapper binary
+# (csharp/Interfold.Bootstrapper) instead. The bootstrapper's SecretsPhase generates the RSA-2048
+# keypair in pure C# via System.Security.Cryptography and persists it in deploy/secrets/secrets.json
+# with mode 0600 alongside the other generated credentials. This script is retained for one release
+# for compatibility with existing developer automation; it will be removed.
+#
+# Migration: `sudo ./interfold-bootstrap bootstrap --config interfold.bootstrap.json`
+#
 set -euo pipefail
 
 OUTPUT_DIR="${1:-"$(dirname "$0")/keys"}"

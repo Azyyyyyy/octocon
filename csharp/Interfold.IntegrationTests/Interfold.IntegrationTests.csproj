@@ -12,6 +12,15 @@
     <PackageReference Include="TUnit.Aspire" Version="1.50.0" />
     <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" Version="10.0.0-preview.*" />
     <PackageReference Include="Microsoft.Extensions.TimeProvider.Testing" Version="9.5.0" />
+    <!--
+      DbInitHelper drives Postgres + Scylla initialisation in-process (replacing the removed
+      pg-bootstrap-auth / scylla-bootstrap-auth init containers). Both drivers are already
+      pulled in transitively through Interfold.Infrastructure, but we pin them explicitly here
+      so the dependency stays visible at the test-project level. Keep these in lockstep with
+      the versions in csharp/Interfold.Infrastructure/Interfold.Infrastructure.csproj.
+    -->
+    <PackageReference Include="Npgsql" Version="8.0.4" />
+    <PackageReference Include="CassandraCSharpDriver" Version="3.21.0" />
   </ItemGroup>
 
   <ItemGroup>
@@ -20,6 +29,12 @@
     <ProjectReference Include="..\Interfold.AppHost\Interfold.AppHost.csproj">
       <Aliases>AppHost</Aliases>
     </ProjectReference>
+    <!--
+      Shared seed orchestration (same project the bootstrapper depends on). The Npgsql /
+      DataStax driver adapters in TestServices/ implement IPostgresExecutor + IScyllaExecutor
+      and hand them to PostgresSeeder.BootstrapAsync / ScyllaSeeder.BootstrapAsync.
+    -->
+    <ProjectReference Include="..\Interfold.DatabaseBootstrap\Interfold.DatabaseBootstrap.csproj" />
   </ItemGroup>
 
   <ItemGroup>

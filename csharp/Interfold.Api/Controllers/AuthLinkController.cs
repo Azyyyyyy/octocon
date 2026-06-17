@@ -26,13 +26,12 @@ public sealed class AuthLinkController : OAuthControllerBase
     public AuthLinkController(
         IAccountRepository accounts,
         IOptionsMonitor<AuthenticationConfiguration> authOptions,
-        IOptionsMonitor<ApiConfiguration> apiOptions,
         IAuthenticationSchemeProvider schemeProvider,
         GoogleOAuthService googleOAuth,
         DiscordOAuthService discordOAuth,
         AppleOAuthService appleOAuth,
         IClusterEventBus eventBus)
-        : base(authOptions, apiOptions, schemeProvider, googleOAuth, discordOAuth, appleOAuth)
+        : base(authOptions, schemeProvider, googleOAuth, discordOAuth, appleOAuth)
     {
         _accounts = accounts;
         _eventBus = eventBus;
@@ -142,17 +141,20 @@ public sealed class AuthLinkController : OAuthControllerBase
             new SettingsAccountLinkedEvent(systemId, providerKey, identity),
             HttpContext.RequestAborted);
 
-        if (!string.IsNullOrWhiteSpace(redirectUri))
+        // The client is responsible for supplying its own redirect_uri on the initial
+        // GET /auth/link/{provider}?redirect_uri=... call; the cookie threads it through
+        // to here. Absence means the client never set it — surface that loudly rather
+        // than papering over with a server-configured fallback.
+        if (string.IsNullOrWhiteSpace(redirectUri))
         {
-            return Redirect(redirectUri);
+            return BadRequest(new
+            {
+                error = "Missing client-supplied redirect_uri.",
+                code = "missing_redirect_uri",
+                detail = "Pass redirect_uri on GET /auth/link/{provider} so the link callback knows where to send the result."
+            });
         }
 
-        var apiConfig = ApiOptions.CurrentValue;
-        var deepLinkBase = NormalizeDeepLinkBase(apiConfig.DeepLinkAddress);
-        var redirectBase = deepLinkBase.EndsWith("/deep", StringComparison.OrdinalIgnoreCase)
-            ? deepLinkBase
-            : $"{deepLinkBase}/deep";
-
-        return Redirect($"{redirectBase}/link_success/{providerKey}");
+        return Redirect(redirectUri);
     }
 }

@@ -1,3 +1,11 @@
+# DEPRECATED: Self-hosted Interfold deployments should use the Interfold.Bootstrapper binary
+# (csharp/Interfold.Bootstrapper) instead. The bootstrapper's CertificatePhase ports this script's
+# logic to pure C# (System.Security.Cryptography). This script is retained for one release for
+# compatibility with existing developer automation; it will be removed.
+#
+# Migration: run `dotnet run --project csharp/Interfold.Bootstrapper -- bootstrap --config interfold.bootstrap.json`
+# from a Linux host.
+
 param(
     [string]$RootName = 'Interfold SS Root CA',
     [string]$Domains = 'api.octocon.dev,api.octocon.app',

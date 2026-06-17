@@ -36,7 +36,7 @@ public sealed class ScyllaSessionProvider : IScyllaSessionProvider
             var datacenter = await ScyllaConfigResolver.GetDatacenterAsync(_secretsStore);
             var username = await ScyllaConfigResolver.GetUsernameAsync(_secretsStore);
             var password = await ScyllaConfigResolver.GetPasswordAsync(_secretsStore);
-            var keyspace = await ScyllaConfigResolver.GetKeyspaceAsync(_configuration, _secretsStore);
+            var keyspace = await ScyllaConfigResolver.GetKeyspaceAsync(_configuration);
             var port = await ScyllaConfigResolver.GetPortAsync(_configuration, _secretsStore);
 
             var builder = Cluster.Builder()

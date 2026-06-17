@@ -50,15 +50,6 @@ public sealed class PersistenceConfiguration
     public bool IsSingleScyllaInstance { get; set; } = false;
 
     /// <summary>
-    /// Compatibility mode for Scylla-only operation in 'scylla-postgres' mode.
-    /// When true, idempotency and auth token revocation use in-memory stores and
-    /// Postgres bootstrap checks are skipped.
-    /// Default: false
-    /// Env: OCTOCON_COMPATIBILITY_MODE
-    /// </summary>
-    public bool CompatibilityMode { get; set; } = false;
-
-    /// <summary>
     /// Maximum number of retry attempts for transient database failures.
     /// Default: 3
     /// Env: OCTOCON_DB_RETRY_ATTEMPTS

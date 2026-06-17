@@ -43,57 +43,7 @@ public class AuthHelper
         var token = $"{signingInput}.{encodedSignature}";
         return token;
     }
-    
-    public static void EnsureEs256KeyMaterial(AuthenticationConfiguration opts)
-    {
-        if (!string.IsNullOrWhiteSpace(opts.JwtEs256PrivateKeyPem))
-        {
-            return;
-        }
 
-        var privateKeyPath = opts.JwtEs256PrivateKeyFile;
-        if (string.IsNullOrWhiteSpace(privateKeyPath))
-        {
-            privateKeyPath = Path.Combine(AppContext.BaseDirectory, "keys", "octocon-es256-private.pem");
-            opts.JwtEs256PrivateKeyFile = privateKeyPath;
-        }
-
-        var publicKeyPath = opts.JwtEs256PublicKeyFile;
-        if (string.IsNullOrWhiteSpace(publicKeyPath))
-        {
-            var keyDir = Path.GetDirectoryName(privateKeyPath) ?? AppContext.BaseDirectory;
-            publicKeyPath = Path.Combine(keyDir, "octocon-es256-public.pem");
-            opts.JwtEs256PublicKeyFile = publicKeyPath;
-        }
-
-        if (File.Exists(privateKeyPath))
-        {
-            opts.JwtEs256PrivateKeyPem = File.ReadAllText(privateKeyPath);
-            return;
-        }
-
-        var privateKeyDirectory = Path.GetDirectoryName(privateKeyPath);
-        if (!string.IsNullOrWhiteSpace(privateKeyDirectory))
-        {
-            Directory.CreateDirectory(privateKeyDirectory);
-        }
-
-        var publicKeyDirectory = Path.GetDirectoryName(publicKeyPath);
-        if (!string.IsNullOrWhiteSpace(publicKeyDirectory))
-        {
-            Directory.CreateDirectory(publicKeyDirectory);
-        }
-
-        using var ecdsa = ECDsa.Create(ECCurve.NamedCurves.nistP256);
-        var privatePem = ecdsa.ExportECPrivateKeyPem();
-        var publicPem = ecdsa.ExportSubjectPublicKeyInfoPem();
-
-        File.WriteAllText(privateKeyPath, privatePem);
-        File.WriteAllText(publicKeyPath, publicPem);
-
-        opts.JwtEs256PrivateKeyPem = privatePem;
-    }
-    
     private static string Base64UrlEncode(byte[] data)
     {
         return Convert.ToBase64String(data)

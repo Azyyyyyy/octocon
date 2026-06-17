@@ -15,7 +15,6 @@ namespace Interfold.Api.Controllers;
 [Route("auth")]
 public sealed class AuthController : OAuthControllerBase
 {
-    private const string MetadataCookieName = "octocon_auth_metadata";
     private const string RedirectUriCookieName = "octocon_auth_redirect_uri";
 
     private readonly IAccountRepository _accounts;
@@ -25,14 +24,13 @@ public sealed class AuthController : OAuthControllerBase
     public AuthController(
         IAccountRepository accounts,
         IOptionsMonitor<AuthenticationConfiguration> authOptions,
-        IOptionsMonitor<ApiConfiguration> apiOptions,
         IAuthenticationSchemeProvider schemeProvider,
         GoogleOAuthService googleOAuth,
         DiscordOAuthService discordOAuth,
         AppleOAuthService appleOAuth,
         IAuthTokenRevocationRepository tokenRevocation,
         IEncryptionStateRepository encryptionRepository)
-        : base(authOptions, apiOptions, schemeProvider, googleOAuth, discordOAuth, appleOAuth)
+        : base(authOptions, schemeProvider, googleOAuth, discordOAuth, appleOAuth)
     {
         _accounts = accounts;
         _tokenRevocation = tokenRevocation;
@@ -48,21 +46,11 @@ public sealed class AuthController : OAuthControllerBase
         if (!IsSupportedProvider(provider))
             return UnsupportedProviderResponse(provider);
 
-        var metadata = BuildMetadataJson();
-        Response.Cookies.Append(MetadataCookieName, metadata, new CookieOptions
-        {
-            HttpOnly = true,
-            IsEssential = true,
-            Secure = Request.IsHttps,
-            SameSite = SameSiteMode.Lax,
-            MaxAge = TimeSpan.FromMinutes(10)
-        });
-
         StoreRedirectUriCookie(RedirectUriCookieName);
 
         var providerKey = provider.ToLowerInvariant();
         var challenge = await IssueChallengeIfRegisteredAsync(
-            providerKey, OperationIds.QueryAuthOAuthRequest, GetChallengeParameters(providerKey));
+            providerKey, OperationIds.QueryAuthOAuthRequest);
 
         if (challenge is not null)
             return challenge;
@@ -147,106 +135,28 @@ public sealed class AuthController : OAuthControllerBase
         var clientRedirectUri = Request.Cookies[RedirectUriCookieName];
         Response.Cookies.Delete(RedirectUriCookieName);
 
-        string redirectUrl;
-        if (!string.IsNullOrWhiteSpace(clientRedirectUri))
+        // The client (web/desktop/mobile) is responsible for supplying its own redirect_uri
+        // on the initial GET /auth/{provider}?redirect_uri=... call; we store that in the
+        // octocon_auth_redirect_uri cookie there and read it back here after the provider
+        // round-trip. A missing cookie means the client either never set it or the cookie
+        // was dropped — that's a client bug, surface it loudly rather than papering over it
+        // with a server-configured fallback.
+        if (string.IsNullOrWhiteSpace(clientRedirectUri))
         {
-            var separator = clientRedirectUri.Contains('?') ? '&' : '?';
-            redirectUrl = $"{clientRedirectUri}{separator}token={Uri.EscapeDataString(token)}&id={Uri.EscapeDataString(systemId)}";
-        }
-        else
-        {
-            var redirectBase = ResolveRedirectBase();
-            redirectUrl = $"{redirectBase}?token={Uri.EscapeDataString(token)}&id={Uri.EscapeDataString(systemId)}";
-        }
-
-        Response.Headers["X-Interfold-OperationId"] = OperationIds.AuthOAuthCallback;
-        return Redirect(redirectUrl);
-    }
-
-    private string ResolveRedirectBase()
-    {
-        string? metadataJson = Request.Cookies[MetadataCookieName];
-        if (Request.Query.TryGetValue("platform", out var platformOverride))
-        {
-            metadataJson = System.Text.Json.JsonSerializer.Serialize(new Dictionary<string, string>
+            Response.Headers["X-Interfold-OperationId"] = OperationIds.AuthOAuthCallback;
+            return BadRequest(new
             {
-                ["platform"] = platformOverride.ToString(),
-                ["is_beta"] = Request.Query["is_beta"].ToString()
+                error = "Missing client-supplied redirect_uri.",
+                code = "missing_redirect_uri",
+                detail = "Pass redirect_uri on GET /auth/{provider} so the callback knows where to send the token."
             });
         }
 
-        var platform = "unknown";
-        var isBeta = "false";
+        var separator = clientRedirectUri.Contains('?') ? '&' : '?';
+        var redirectUrl = $"{clientRedirectUri}{separator}token={Uri.EscapeDataString(token)}&id={Uri.EscapeDataString(systemId)}";
 
-        if (!string.IsNullOrWhiteSpace(metadataJson))
-        {
-            try
-            {
-                using var doc = System.Text.Json.JsonDocument.Parse(metadataJson);
-                if (doc.RootElement.TryGetProperty("platform", out var p))
-                    platform = p.GetString() ?? platform;
-                if (doc.RootElement.TryGetProperty("is_beta", out var b))
-                    isBeta = b.GetString() ?? isBeta;
-            }
-            catch (System.Text.Json.JsonException)
-            {
-                // Keep safe defaults if metadata cannot be parsed.
-            }
-        }
-
-        var apiConfig = ApiOptions.CurrentValue;
-
-        if (platform.Equals("wasm", StringComparison.OrdinalIgnoreCase))
-        {
-            if (isBeta.Equals("true", StringComparison.OrdinalIgnoreCase))
-            {
-                return apiConfig.BetaFrontendAddress ?? throw new InvalidOperationException("Beta frontend address is not configured.");
-            }
-    
-            return apiConfig.FrontendAddress ?? throw new InvalidOperationException("Frontend address is not configured.");
-        }
-        
-        if (platform.Equals("desktop", StringComparison.OrdinalIgnoreCase))
-        {
-            return "octocon://deep/auth/token";
-        }
-
-        return BuildDeepAuthRedirectBase(apiConfig.DeepLinkAddress);
-    }
-
-    /// <summary>
-    /// Builds a deep-link auth callback URL base with legacy compatibility.
-    /// Legacy behavior expects https://octocon.app/deep/auth/token.
-    /// </summary>
-    private static string BuildDeepAuthRedirectBase(string? deepLinkAddress)
-    {
-        var normalizedBase = NormalizeDeepLinkBase(deepLinkAddress);
-
-        if (normalizedBase.EndsWith("/auth/token", StringComparison.OrdinalIgnoreCase))
-        {
-            return normalizedBase;
-        }
-
-        if (normalizedBase.EndsWith("/deep", StringComparison.OrdinalIgnoreCase))
-        {
-            return $"{normalizedBase}/auth/token";
-        }
-
-        return $"{normalizedBase}/deep/auth/token";
-    }
-
-    private string BuildMetadataJson()
-    {
-        var platform = Request.Query["platform"].ToString();
-        var versionCode = Request.Query["version_code"].ToString();
-        var isBeta = Request.Query["is_beta"].ToString();
-
-        return System.Text.Json.JsonSerializer.Serialize(new Dictionary<string, string>
-        {
-            ["platform"] = string.IsNullOrWhiteSpace(platform) ? "unknown" : platform,
-            ["version_code"] = string.IsNullOrWhiteSpace(versionCode) ? "unknown" : versionCode,
-            ["is_beta"] = string.IsNullOrWhiteSpace(isBeta) ? "false" : isBeta
-        });
+        Response.Headers["X-Interfold-OperationId"] = OperationIds.AuthOAuthCallback;
+        return Redirect(redirectUrl);
     }
 
     private async Task<string> IssueDeepLinkTokenAsync(string systemId)

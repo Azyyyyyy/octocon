@@ -1,0 +1,21 @@
+<Solution>
+  <Configurations>
+    <Platform Name="Any CPU" />
+    <Platform Name="x64" />
+    <Platform Name="x86" />
+  </Configurations>
+  <Folder Name="/csharp/">
+    <Project Path="csharp/Interfold.Api/Interfold.Api.csproj" />
+    <Project Path="csharp/Interfold.AppHost/Interfold.AppHost.csproj" />
+    <Project Path="csharp/Interfold.Contracts/Interfold.Contracts.csproj" />
+    <Project Path="csharp/Interfold.DatabaseBootstrap/Interfold.DatabaseBootstrap.csproj" />
+    <Project Path="csharp/Interfold.Domain/Interfold.Domain.csproj" />
+    <Project Path="csharp/Interfold.Infrastructure.InMemory/Interfold.Infrastructure.InMemory.csproj" />
+    <Project Path="csharp/Interfold.Infrastructure.Postgres/Interfold.Infrastructure.Postgres.csproj" />
+    <Project Path="csharp/Interfold.Infrastructure.Scylla/Interfold.Infrastructure.Scylla.csproj" />
+    <Project Path="csharp/Interfold.Infrastructure/Interfold.Infrastructure.csproj" />
+    <Project Path="csharp/Interfold.IntegrationTests/Interfold.IntegrationTests.csproj" />
+    <Project Path="csharp/Interfold.ServiceDefaults/Interfold.ServiceDefaults.csproj" />
+    <Project Path="csharp/Interfold.SPDump/Interfold.SPDump.csproj" />
+  </Folder>
+</Solution>

@@ -50,8 +50,8 @@ public sealed partial class ScyllaMigrationService(
         _appUsername = await ScyllaConfigResolver.GetUsernameAsync(secretsStore, cancellationToken);
         _port = await ScyllaConfigResolver.GetPortAsync(configuration, secretsStore, cancellationToken);
 
-        // Keyspace: env var override (for multi-instance) > secrets store > default "nam"
-        _keyspace = await ScyllaConfigResolver.GetKeyspaceAsync(configuration, secretsStore, cancellationToken);
+        // Keyspace is the per-node region identity — env-only, never store-shared.
+        _keyspace = await ScyllaConfigResolver.GetKeyspaceAsync(configuration, cancellationToken);
 
         logger.LogInformation("[scylla-migrate] Applying ScyllaDB schema migrations...");
 
@@ -133,6 +133,12 @@ public sealed partial class ScyllaMigrationService(
             .WithQueryTimeout(30000)
             .WithSocketOptions(new SocketOptions()
                 .SetConnectTimeoutMillis(15000)
+                // Default SocketOptions.ReadTimeoutMillis is 12s, which is too short for the
+                // migration path where Scylla can spend a few seconds per CREATE TABLE on a
+                // contended host (e.g. self-hosted DinD on slow disks). Bumping to 60s matches
+                // the per-host budget of a single migration statement; the per-query budget is
+                // still bounded by WithQueryTimeout above.
+                .SetReadTimeoutMillis(60000)
                 .SetKeepAlive(true))
             .Build();
 

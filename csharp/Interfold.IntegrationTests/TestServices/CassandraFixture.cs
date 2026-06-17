@@ -3,6 +3,7 @@ extern alias AppHost;
 using Aspire.Hosting;
 using Aspire.Hosting.ApplicationModel;
 using Aspire.Hosting.Testing;
+using Interfold.DatabaseBootstrap;
 using Microsoft.Extensions.DependencyInjection;
 using Npgsql;
 using TUnit.Aspire;
@@ -13,6 +14,15 @@ namespace Interfold.IntegrationTests.TestServices;
 /// TUnit.Aspire fixture that manages a Cassandra 5 + Postgres cluster via the AppHost.
 /// Used as a dependency by <see cref="CassandraWebFactoryFixture"/> in a fixture chain.
 /// </summary>
+/// <remarks>
+/// The AppHost no longer ships the <c>pg-bootstrap-auth</c> / <c>scylla-bootstrap-auth</c>
+/// init containers — that work moved into
+/// <see cref="Interfold.Bootstrapper.Phases.DatabaseInitPhase"/>. This fixture drives the
+/// same shared <see cref="PostgresSeeder"/> / <see cref="ScyllaSeeder"/> via the in-process
+/// driver adapters in <see cref="DbInitHelper"/>. The seed targets the <c>cassandra</c>
+/// container alias; Cassandra's default <c>system_auth</c> keyspace replicates at RF=1 by
+/// default, so role creation against a single node is sufficient.
+/// </remarks>
 public sealed class CassandraFixture : AspireFixture<AppHost::Projects.Interfold_AppHost>
 {
     /// <summary>Postgres connection string resolved after startup.</summary>
@@ -29,15 +39,12 @@ public sealed class CassandraFixture : AspireFixture<AppHost::Projects.Interfold
         "Parameters:persistent-containers=false",
         "Ports:postgres=24200",
         "Ports:scylla=29042",
-        "Parameters:postgres-user=test_pg_user",
-        "Parameters:postgres-password=test_pg_pw_789!Secure",
-        "Parameters:scylla-user=test_app_user",
-        "Parameters:scylla-password=test_secure_pw_123!Safe",
-        "Parameters:scylla-admin-password=test_admin_pw_456!Strong",
-        "Parameters:encryption-private-key=TEST",
-        "Parameters:google-oauth-client-secret=TEST",
-        "Parameters:discord-oauth-client-secret=TEST",
-        "Parameters:encryption-pepper=TEST"
+        $"Parameters:postgres-user={TestDbCredentials.PostgresAppUser}",
+        $"Parameters:postgres-password={TestDbCredentials.PostgresAppPassword}",
+        $"Parameters:postgres-init-password={TestDbCredentials.PostgresInitPassword}",
+        $"Parameters:scylla-user={TestDbCredentials.ScyllaAppUser}",
+        $"Parameters:scylla-password={TestDbCredentials.ScyllaAppPassword}",
+        "Parameters:encryption-private-key=TEST"
     ];
 
     protected override TimeSpan ResourceTimeout => TimeSpan.FromMinutes(5);
@@ -50,21 +57,67 @@ public sealed class CassandraFixture : AspireFixture<AppHost::Projects.Interfold
         await notifications.WaitForResourceAsync("msg-db", KnownResourceStates.Running, cancellationToken);
         await notifications.WaitForResourceAsync("cassandra", KnownResourceStates.Running, cancellationToken);
 
-        // Bootstrap containers run a script and exit. Wait for any terminal state.
-        string[] terminalStates = [KnownResourceStates.Finished, KnownResourceStates.Exited];
-        await notifications.WaitForResourceAsync("pg-bootstrap-auth", terminalStates, cancellationToken);
-        await notifications.WaitForResourceAsync("scylla-bootstrap-auth", terminalStates, cancellationToken);
+        var pgEndpoint = App.GetEndpoint("msg-db", "postgres");
+        var scEndpoint = App.GetEndpoint("cassandra", "cql");
+
+        // In-process Postgres bootstrap (replaces the removed pg-bootstrap-auth container).
+        var baseConn =
+            $"Host={pgEndpoint.Host};Port={pgEndpoint.Port};" +
+            $"Username={DbInitHelper.PostgresInitUser};Password={TestDbCredentials.PostgresInitPassword};" +
+            "Database=postgres;SSL Mode=Disable";
+        await DbInitHelper.WaitForPostgresAsync(baseConn, cancellationToken);
+        await DbInitHelper.SeedPostgresAsync(baseConn, BuildPostgresSeedOptions(scEndpoint), cancellationToken);
+
+        // In-process Cassandra bootstrap (replaces the removed scylla-bootstrap-auth container).
+        await DbInitHelper.WaitForScyllaAsync(scEndpoint.Host, scEndpoint.Port, cancellationToken);
+        await DbInitHelper.SeedScyllaAsync(scEndpoint.Host, scEndpoint.Port, BuildScyllaSeedOptions(), cancellationToken);
 
         // msg-db is a generic container (AddContainer), not AddPostgres, so it
         // doesn't expose a connection string. Build it from the endpoint instead.
-        var pgEndpoint = App.GetEndpoint("msg-db", "postgres");
-        PostgresConnectionString = $"Host={pgEndpoint.Host};Port={pgEndpoint.Port};Username=test_pg_user;Password=test_pg_pw_789!Secure;Database=octocon;SSL Mode=Disable;Maximum Pool Size=5";
-        CassandraPort = App.GetEndpoint("cassandra", "cql").Port;
+        PostgresConnectionString =
+            $"Host={pgEndpoint.Host};Port={pgEndpoint.Port};" +
+            $"Username={TestDbCredentials.PostgresAppUser};Password={TestDbCredentials.PostgresAppPassword};" +
+            "Database=octocon;SSL Mode=Disable;Maximum Pool Size=5";
+        CassandraPort = scEndpoint.Port;
 
         // Verify Postgres is actually reachable from the host before handing off.
         // Docker Desktop on Windows can delay host port forwarding after container reports healthy.
         await WaitForPostgresConnectivityAsync(PostgresConnectionString, cancellationToken);
     }
+
+    private static PostgresSeedOptions BuildPostgresSeedOptions(Uri scEndpoint)
+        => new(
+            InitUser: DbInitHelper.PostgresInitUser,
+            InitPassword: TestDbCredentials.PostgresInitPassword,
+            AppUser: TestDbCredentials.PostgresAppUser,
+            AppPassword: TestDbCredentials.PostgresAppPassword,
+            AdminUser: TestDbCredentials.PostgresAdminUser,
+            AdminPassword: TestDbCredentials.PostgresAdminPassword,
+            DefaultDatabase: DbInitHelper.DefaultPostgresDb,
+            GoogleOAuthClientSecret: "TEST",
+            DiscordOAuthClientSecret: "TEST",
+            AppleOAuthClientSecret: "TEST",
+            EncryptionPepper: "TEST",
+            ScyllaContactPoints: scEndpoint.Host,
+            ScyllaLocalDatacenter: "nam",
+            ScyllaAppUser: TestDbCredentials.ScyllaAppUser,
+            ScyllaAppPassword: TestDbCredentials.ScyllaAppPassword,
+            ScyllaPort: scEndpoint.Port,
+            ScyllaAdminUser: TestDbCredentials.ScyllaAdminUser,
+            ScyllaAdminPassword: TestDbCredentials.ScyllaAdminPassword,
+            JwtRsa256PrivateKeyPem: TestDbCredentials.JwtRsa256PrivateKeyPem,
+            JwtEs256PrivateKeyPem: TestDbCredentials.JwtEs256PrivateKeyPem,
+            DeepLinkSecret: TestDbCredentials.DeepLinkSecret,
+            LeafPfxPassword: TestDbCredentials.LeafPfxPassword,
+            ScrambleInitUserPassword: false);
+
+    private static ScyllaSeedOptions BuildScyllaSeedOptions()
+        => new(
+            AppUser: TestDbCredentials.ScyllaAppUser,
+            AppPassword: TestDbCredentials.ScyllaAppPassword,
+            AdminUser: TestDbCredentials.ScyllaAdminUser,
+            AdminPassword: TestDbCredentials.ScyllaAdminPassword,
+            LockDefaultCassandra: true);
 
     private static async Task WaitForPostgresConnectivityAsync(string connectionString, CancellationToken ct)
     {

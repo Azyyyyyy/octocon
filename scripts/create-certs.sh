@@ -1,4 +1,13 @@
 #!/usr/bin/env bash
+#
+# DEPRECATED: Self-hosted Interfold deployments should use the Interfold.Bootstrapper binary
+# (csharp/Interfold.Bootstrapper) instead. The bootstrapper's CertificatePhase generates the
+# root CA and leaf cert in pure C# via System.Security.Cryptography and installs them into the
+# system trust store. This script is retained for one release for compatibility with existing
+# automation; it will be removed.
+#
+# Migration: `sudo ./interfold-bootstrap bootstrap --config interfold.bootstrap.json`
+#
 set -e
 
 # Example usage

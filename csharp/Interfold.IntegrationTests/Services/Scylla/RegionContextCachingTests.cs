@@ -1,6 +1,5 @@
 ﻿using Cassandra;
 using Interfold.Contracts.Configuration;
-using Interfold.Contracts.Secrets;
 using Interfold.Infrastructure.Scylla;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -16,20 +15,13 @@ public sealed class RegionContextCachingTests : BaseEndpointTest
             throw new InvalidOperationException("DB must not be reached when cache is warm.");
     }
 
-    private sealed class EmptySecretsStore : ISecretsStore
-    {
-        public Task<string?> GetAsync(string key, CancellationToken cancellationToken = default) => Task.FromResult<string?>(null);
-        public Task<string> GetRequiredAsync(string key, CancellationToken cancellationToken = default) => throw new KeyNotFoundException(key);
-        public Task<IReadOnlyList<SecretEntry>> ListAsync(CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<SecretEntry>>([]);
-    }
-
     private static ScyllaUserRegistryRegionContext BuildContext(string defaultRegion = "nam")
     {
         var config = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?> { ["OCTOCON_SCYLLA_KEYSPACE"] = defaultRegion })
             .Build();
         return new(new ThrowingSessionProvider(), new PersistenceConfiguration { ScyllaKeyspace = defaultRegion },
-            new EmptySecretsStore(), config,
+            config,
             NullLogger<ScyllaUserRegistryRegionContext>.Instance);
     }
 

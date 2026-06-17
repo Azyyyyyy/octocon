@@ -45,10 +45,6 @@ public static class ConfigurationServiceCollectionExtensions
         services.AddOptions<AuthenticationConfiguration>()
             .Configure<IConfiguration>(ApplyAuthentication);
 
-        // Live-reloadable: frontend URLs and deep-link scheme.
-        services.AddOptions<ApiConfiguration>()
-            .Configure<IConfiguration>(ApplyApi);
-
         // Registered for completeness; OTLP exporters are wired at startup so runtime changes
         // to OtlpEndpoint only take effect after a restart.
         services.AddOptions<ObservabilityConfiguration>()
@@ -132,11 +128,8 @@ public static class ConfigurationServiceCollectionExtensions
     internal static void ApplyPersistence(PersistenceConfiguration opts, IConfiguration config)
     {
         var keyspace = config["OCTOCON_SCYLLA_KEYSPACE"] ?? "nam";
-        var compatibilityMode = bool.TryParse(config["OCTOCON_COMPATIBILITY_MODE"], out var parsedCompatibilityMode)
-            && parsedCompatibilityMode;
         opts.Mode = config["OCTOCON_PERSISTENCE"] ?? "scylla-postgres";
         opts.ScyllaKeyspace = keyspace;
-        opts.CompatibilityMode = compatibilityMode;
         opts.PostgresConnectionString = config["OCTOCON_POSTGRES_CONNECTION"]
             ?? "Host=localhost;Port=5432;Database=octocon;Username=octocon;Password=octocon";
         opts.IsSingleScyllaInstance = bool.TryParse(config["OCTOCON_SINGLE_SCYLLA_INSTANCE"], out var singleKs) && singleKs;
@@ -146,18 +139,22 @@ public static class ConfigurationServiceCollectionExtensions
         opts.HydrationMaxConcurrency = TryParseInt(config["OCTOCON_HYDRATION_MAX_CONCURRENCY"]) ?? 8;
     }
 
+    /// <summary>
+    /// Initial bind of <see cref="AuthenticationConfiguration"/> from env. JWT signing keys
+    /// (RSA + ES256), the deep-link HMAC secret, and the encryption pepper override get
+    /// patched in over the top by <c>SecretsBootstrapService</c> on startup from
+    /// <c>internal.secrets</c>; the rest of the fields stay env-bound. OAuth client IDs are
+    /// public values and remain env-only; the matching client secrets live in the store and
+    /// are also overridden by <c>SecretsBootstrapService</c>.
+    /// </summary>
     private static void ApplyAuthentication(AuthenticationConfiguration opts, IConfiguration config)
     {
         opts.CallbackBaseUrl = config["OCTOCON_AUTH_CALLBACK_BASE_URL"];
-        opts.DeepLinkSecret = config["OCTOCON_AUTH_DEEP_LINK_SECRET"];
         opts.JwtAuthority = config["OCTOCON_JWT_AUTHORITY"] ?? "octocon-local";
-        opts.JwtEs256PrivateKeyPem = config["OCTOCON_AUTH_EC_PRIVATE_KEY_PEM"];
-        opts.JwtEs256PrivateKeyFile = config["OCTOCON_AUTH_EC_PRIVATE_KEY_FILE"];
-        opts.JwtEs256PublicKeyFile = config["OCTOCON_AUTH_EC_PUBLIC_KEY_FILE"];
-        opts.Rsa256PublicKeyFile = config["OCTOCON_AUTH_RSA_PUBLIC_KEY_FILE"];
-        opts.Rsa256PublicKey = config["OCTOCON_AUTH_RSA_PUBLIC_KEY"]!;
-        opts.Rsa256PrivateKeyFile = config["OCTOCON_AUTH_RSA_PRIVATE_KEY_FILE"];
-        opts.Rsa256PrivateKey = config["OCTOCON_AUTH_RSA_PRIVATE_KEY"]!;
+
+        // OAuth client IDs are public values (they appear in OAuth redirect URLs); keep them
+        // env-bound. The matching secrets are placeholders here and get overwritten by
+        // SecretsBootstrapService from the store before they're consumed.
         opts.DiscordOAuthClientId = config["OCTOCON_DISCORD_OAUTH_CLIENT_ID"];
         opts.DiscordOAuthClientSecret = config["OCTOCON_DISCORD_OAUTH_CLIENT_SECRET"];
         opts.GoogleOAuthClientId = config["OCTOCON_GOOGLE_OAUTH_CLIENT_ID"];
@@ -165,104 +162,28 @@ public static class ConfigurationServiceCollectionExtensions
         opts.AppleOAuthClientId = config["OCTOCON_APPLE_OAUTH_CLIENT_ID"];
         opts.AppleOAuthClientSecret = config["OCTOCON_APPLE_OAUTH_CLIENT_SECRET"];
 
-        //TODO: Check if it's Base64, undo if that's the case
-        if (string.IsNullOrWhiteSpace(opts.Rsa256PublicKey))
-        {
-            if (string.IsNullOrWhiteSpace(opts.Rsa256PublicKeyFile))
-            {
-                opts.Rsa256PublicKeyFile = Path.Combine(AppContext.BaseDirectory, "keys", "octocon-rsa256-public.pem");
-                var publicKeyDirectory = Path.GetDirectoryName(opts.Rsa256PublicKeyFile);
-                if (!string.IsNullOrWhiteSpace(publicKeyDirectory))
-                {
-                    Directory.CreateDirectory(publicKeyDirectory);
-                }
-            }
+        // JWT signing material, deep-link secret, and the encryption pepper are intentionally
+        // left null/empty here. SecretsBootstrapService.StartingAsync runs before any consumer
+        // touches these fields (its registration order in Program.cs sits ahead of every
+        // migration service and request-time handler) and fills them from
+        // `auth:jwt_rsa256_private_pem`, `auth:jwt_es256_private_pem`, `auth:deep_link_secret`,
+        // and `encryption:pepper` respectively. The pepper row is enforced as required
+        // inside SecretsBootstrapService — if it's missing the API refuses to boot. The
+        // JWT and deep-link rows fail at first signing/verification (visible in startup
+        // logs) rather than at boot, matching the pattern established for those fields.
+        opts.Rsa256PublicKey = string.Empty;
+        opts.Rsa256PrivateKey = string.Empty;
+        opts.JwtEs256PrivateKeyPem = null;
+        opts.JwtEs256VerificationKeyPems = null;
+        opts.DeepLinkSecret = null;
+        opts.EncryptionPepper = null!;
 
-            if (!File.Exists(opts.Rsa256PublicKeyFile))
-            {
-                throw new ArgumentException("No RSA public PEM or file was provided");
-            }
-
-            var pem = File.ReadAllText(opts.Rsa256PublicKeyFile);
-            opts.Rsa256PublicKey = pem;
-        }
-
-        //TODO: Check if it's Base64, undo if that's the case
-        if (string.IsNullOrWhiteSpace(opts.Rsa256PrivateKey))
-        {
-            if (string.IsNullOrWhiteSpace(opts.Rsa256PrivateKeyFile))
-            {
-                opts.Rsa256PrivateKeyFile = Path.Combine(AppContext.BaseDirectory, "keys", "octocon-rsa256-private.pem");
-                var privateKeyDirectory = Path.GetDirectoryName(opts.Rsa256PrivateKeyFile);
-                if (!string.IsNullOrWhiteSpace(privateKeyDirectory))
-                {
-                    Directory.CreateDirectory(privateKeyDirectory);
-                }
-            }
-
-            if (!File.Exists(opts.Rsa256PrivateKeyFile))
-            {
-                throw new ArgumentException("No RSA private PEM or file was provided");
-            }
-
-            var pem = File.ReadAllText(opts.Rsa256PrivateKeyFile);
-            opts.Rsa256PrivateKey = pem;
-        }
-        
-        var es256VerificationKeys = new List<string>();
-
-        AuthHelper.EnsureEs256KeyMaterial(opts);
-        AddIfPresent(config["OCTOCON_AUTH_EC_PUBLIC_KEY_PEM"], es256VerificationKeys);
-        AddIfPresent(config["OCTOCON_AUTH_EC_PRIVATE_KEY_PEM"], es256VerificationKeys);
-        AddIfPresent(opts.JwtEs256PrivateKeyPem, es256VerificationKeys);
-
-        if (!string.IsNullOrWhiteSpace(opts.JwtEs256PublicKeyFile) && File.Exists(opts.JwtEs256PublicKeyFile))
-        {
-            AddIfPresent(File.ReadAllText(opts.JwtEs256PublicKeyFile), es256VerificationKeys);
-        }
-
-        var publicKeysCsv = config["OCTOCON_AUTH_EC_PUBLIC_KEYS"];
-        if (!string.IsNullOrWhiteSpace(publicKeysCsv))
-        {
-            foreach (var key in publicKeysCsv.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-            {
-                AddIfPresent(key, es256VerificationKeys);
-            }
-        }
-
-        opts.JwtEs256VerificationKeyPems = es256VerificationKeys
-            .Distinct(StringComparer.Ordinal)
-            .ToArray();
-
-        opts.DiscordSchemeName = config["OCTOCON_AUTH_CHALLENGE_DISCORD_SCHEME"] ?? "oauth-discord";
-        opts.DiscordEndpoint = config["OCTOCON_AUTH_CHALLENGE_DISCORD_ENDPOINT"];
-        opts.DiscordParameters = ParseAuthParameters(config["OCTOCON_AUTH_CHALLENGE_DISCORD_PARAMS"]);
-        opts.GoogleSchemeName = config["OCTOCON_AUTH_CHALLENGE_GOOGLE_SCHEME"] ?? "oauth-google";
-        opts.GoogleEndpoint = config["OCTOCON_AUTH_CHALLENGE_GOOGLE_ENDPOINT"];
-        opts.GoogleParameters = ParseAuthParameters(config["OCTOCON_AUTH_CHALLENGE_GOOGLE_PARAMS"]);
-        opts.AppleSchemeName = config["OCTOCON_AUTH_CHALLENGE_APPLE_SCHEME"] ?? "oauth-apple";
-        opts.AppleEndpoint = config["OCTOCON_AUTH_CHALLENGE_APPLE_ENDPOINT"];
-        opts.AppleParameters = ParseAuthParameters(config["OCTOCON_AUTH_CHALLENGE_APPLE_PARAMS"]);
-
-        if (!string.IsNullOrWhiteSpace(opts.DiscordOAuthClientId) && opts.DiscordParameters != null)
-        {
-            opts.DiscordParameters.Add("client_id", opts.DiscordOAuthClientId);
-        }
-
-        if (!string.IsNullOrWhiteSpace(opts.AppleOAuthClientId) && opts.AppleParameters != null)
-        {
-            opts.AppleParameters["client_id"] = opts.AppleOAuthClientId;
-        }
-
-        opts.EncryptionPepper = config["OCTOCON_ENCRYPTION_PEPPER"]
-            ?? throw new ArgumentException("OCTOCON_ENCRYPTION_PEPPER is required");
-    }
-
-    private static void ApplyApi(ApiConfiguration opts, IConfiguration config)
-    {
-        opts.FrontendAddress = config["OCTOCON_FRONTEND"];
-        opts.BetaFrontendAddress = config["OCTOCON_BETA_FRONTEND"];
-        opts.DeepLinkAddress = config["OCTOCON_DEEPLINK_ADDRESS"];
+        // The OAuth challenge query parameters (scopes / response_type / response_mode) plus
+        // each provider's scheme name + authorization endpoint are constants in
+        // OAuthChallengeServiceCollectionExtensions — the scopes are functionally tied to
+        // the data the callback handlers read, so changing them requires a code change. The
+        // only per-deployment value (client_id) is injected directly during scheme
+        // registration from the OAuthClientId fields above.
     }
 
     private static void ApplyObservability(ObservabilityConfiguration opts, IConfiguration config)
@@ -289,31 +210,5 @@ public static class ConfigurationServiceCollectionExtensions
             return null;
 
         return int.TryParse(value, out var result) ? result : null;
-    }
-
-    private static void AddIfPresent(string? value, ICollection<string> target)
-    {
-        if (!string.IsNullOrWhiteSpace(value))
-        {
-            target.Add(value);
-        }
-    }
-
-    internal static Dictionary<string, string>? ParseAuthParameters(string? paramsString)
-    {
-        if (string.IsNullOrWhiteSpace(paramsString))
-            return null;
-
-        var parameters = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        var pairs = paramsString.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-
-        foreach (var pair in pairs)
-        {
-            var keyValue = pair.Split('=', 2, StringSplitOptions.TrimEntries);
-            if (keyValue.Length == 2)
-                parameters[keyValue[0]] = keyValue[1];
-        }
-
-        return parameters.Count > 0 ? parameters : null;
     }
 }

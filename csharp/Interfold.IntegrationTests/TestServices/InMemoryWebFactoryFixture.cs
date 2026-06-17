@@ -13,7 +13,6 @@ public sealed class InMemoryWebFactoryFixture : IWebFactoryFixture, IAsyncInitia
     public Task InitializeAsync()
     {
         Factory = new InterfoldWebApplicationFactory("inmemory")
-            .WithConfiguration("OCTOCON_DEEPLINK_ADDRESS", "octocon://app")
             .WithConfiguration("OCTOCON_SCYLLA_KEYSPACE", "nam");
         return Task.CompletedTask;
     }

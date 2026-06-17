@@ -1,7 +1,6 @@
 using System.Collections.Concurrent;
 using Cassandra;
 using Interfold.Contracts.Configuration;
-using Interfold.Contracts.Secrets;
 using Interfold.Domain.Abstractions;
 using Interfold.Infrastructure.Persistence;
 using Microsoft.Extensions.Configuration;
@@ -31,7 +30,6 @@ public sealed class ScyllaUserRegistryRegionContext : IRegionContext
     public ScyllaUserRegistryRegionContext(
         IScyllaSessionProvider sessionProvider,
         PersistenceConfiguration options,
-        ISecretsStore secretsStore,
         IConfiguration configuration,
         ILogger<ScyllaUserRegistryRegionContext> logger)
     {
@@ -39,7 +37,7 @@ public sealed class ScyllaUserRegistryRegionContext : IRegionContext
         _options = options;
         _logger = logger;
         _currentRegion = new Lazy<string>(() =>
-            ScyllaConfigResolver.GetKeyspaceAsync(configuration, secretsStore).GetAwaiter().GetResult());
+            ScyllaConfigResolver.GetKeyspaceAsync(configuration).GetAwaiter().GetResult());
     }
 
     public string ResolveUserRegion(string systemId)
