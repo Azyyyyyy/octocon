@@ -70,7 +70,7 @@ public abstract class DinDFixtureBase : IAsyncInitializer, IAsyncDisposable
     /// <summary>If false, the fixture skips the API image pre-load / external image pre-pull (used by the Alpine negative-path).</summary>
     protected virtual bool PreloadImages => true;
 
-    public async Task InitializeAsync()
+    public virtual async Task InitializeAsync()
     {
         _publishedBootstrapperDir = await BootstrapperBuild.PublishedDirectory.Value.ConfigureAwait(false);
         var apiImageTarPath = PreloadImages

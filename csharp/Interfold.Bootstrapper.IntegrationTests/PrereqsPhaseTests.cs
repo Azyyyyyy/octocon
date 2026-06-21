@@ -41,12 +41,13 @@ public class UbuntuPrereqsPhaseTests(UbuntuBarePrereqsDinDFixture dinD)
     [NotInParallel("ubuntu-bare-prereqs")]
     public async Task InstallsDockerOnDebianWhenAbsent()
     {
-        // Pre-condition guard - if the Dockerfile starts shipping docker we want to see this
-        // fail loudly so we know the test stopped exercising the apt install path.
-        var prePath = await dinD.ExecAsync(["sh", "-c", "command -v docker || true"]);
-        await Assert.That(prePath.Stdout.Trim()).IsEmpty()
-            .Because("the bare fixture must NOT have docker installed at fixture build time");
-
+        // The "docker isn't pre-installed" pre-condition has been lifted to
+        // UbuntuBarePrereqsDinDFixture.InitializeAsync where it runs exactly once at fixture
+        // build time. Inside the shared session-scoped fixture the apt install is idempotent —
+        // re-running the bootstrap path on an already-bootstrapped container should still leave
+        // docker on PATH, which is what this test verifies. The post-condition below therefore
+        // holds regardless of whether this test runs first or after a sibling test in the same
+        // [NotInParallel("ubuntu-bare-prereqs")] group has already triggered the install.
         var result = await dinD.RunBootstrapperAsync(nameof(InstallsDockerOnDebianWhenAbsent),
             ["bootstrap", "--non-interactive", "--fault-inject=after-prereqs"]);
         await Assert.That(result.ExitCode).IsEqualTo(0L)
@@ -134,10 +135,10 @@ public class FedoraPrereqsPhaseTests(FedoraBarePrereqsDinDFixture dinD)
     [NotInParallel("fedora-bare-prereqs")]
     public async Task InstallsDockerOnFedoraWhenAbsent()
     {
-        var prePath = await dinD.ExecAsync(["sh", "-c", "command -v docker || true"]);
-        await Assert.That(prePath.Stdout.Trim()).IsEmpty()
-            .Because("the bare fedora fixture must NOT have docker installed at fixture build time");
-
+        // Mirrors InstallsDockerOnDebianWhenAbsent: the "bare fixture has no docker" guard
+        // now lives in FedoraBarePrereqsDinDFixture.InitializeAsync and runs once at fixture
+        // build time. dnf install is idempotent so the post-condition holds regardless of
+        // sibling-test ordering inside the [NotInParallel("fedora-bare-prereqs")] group.
         var result = await dinD.RunBootstrapperAsync(nameof(InstallsDockerOnFedoraWhenAbsent),
             ["bootstrap", "--non-interactive", "--fault-inject=after-prereqs"]);
         await Assert.That(result.ExitCode).IsEqualTo(0L).Because(result.Stderr);
