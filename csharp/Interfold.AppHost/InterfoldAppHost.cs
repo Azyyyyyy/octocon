@@ -104,6 +104,12 @@ public static class InterfoldAppHost
                     }
                     catch { return HealthCheckResult.Unhealthy(); }
                 })
+                // `scylla-health` is the host-port TCP probe used by the Cassandra-only path
+                // (Cassandra owns Ports:scylla when include-scylla=false). Scylla nodes get
+                // their own per-node {name}-cql checks below — those are more accurate
+                // (they probe inside the container, so they work for non-first multi-DC
+                // nodes that don't have host ports) and supersede this one for the Scylla
+                // path. We keep this registration for the Cassandra-only path only.
                 .AddCheck("scylla-health", () =>
                 {
                     try
@@ -114,6 +120,43 @@ public static class InterfoldAppHost
                     }
                     catch { return HealthCheckResult.Unhealthy(); }
                 });
+        }
+
+        // --- Per-node Scylla CQL readiness gate (always-on, regardless of include-api) ---
+        // Each Scylla container gets a {name}-cql IHealthCheck that shells `docker ps` to
+        // resolve the runtime container name, then `docker exec <name> sh -c
+        // "<cqlsh-or-nodetool>"` inside the container. Because every node carries a
+        // HealthCheckAnnotation, the WaitFor(previousNode) chain in the Scylla loop below
+        // automatically upgrades from "wait for Running" to "wait for Healthy", which
+        // serialises the cluster join sequence — without this, all 7 multi-DC nodes hit the
+        // Raft topology coordinator simultaneously and the loser gets banned (Scylla 2026.1
+        // only admits one joiner at a time).
+        //
+        // We resolve the container name on every probe by `docker ps`-filter rather than via a
+        // BackgroundService watching ResourceNotificationService — empirically, custom
+        // hosted services don't fire reliably under Aspire.Hosting.Testing's in-process host
+        // when multiple AspireFixtures coexist in one test session (only the first fixture's
+        // BackgroundService actually ran in artifacts/multinode-stagger-debug.log). Polling
+        // docker for the runtime name keeps the check stateless and works identically for
+        // `aspire run` and the testing host.
+        if (includeScylla)
+        {
+            // We mirror the region-list resolution done deeper in the AppHost (search for
+            // `isMultiScylla`) so the health-check names line up exactly with the resource
+            // names added later. Keeping the resolution inline here (instead of hoisting it
+            // out of the Scylla block) localises the change and avoids accidentally moving
+            // unrelated logic.
+            string[] regionsForChecks = isMultiScylla
+                ? ["nam", "eur", "sam", "sas", "eas", "ocn", "gdpr"]
+                : ["nam"];
+
+            var hcBuilder = builder.Services.AddHealthChecks();
+            foreach (var region in regionsForChecks)
+            {
+                var resourceName = regionsForChecks.Length > 1 ? $"scylla-{region}" : "scylla";
+                hcBuilder.AddAsyncCheck($"{resourceName}-cql", async ct =>
+                    await DockerExecCqlProbe.RunAsync(resourceName, ct).ConfigureAwait(false));
+            }
         }
 
         // --- Docker Compose publish target with network isolation ---
@@ -310,13 +353,29 @@ public static class InterfoldAppHost
                 var name = regions.Length > 1 ? $"scylla-{region}" : "scylla";
                 var seeds = previousNode is null ? $"--seeds={name}" : $"--seeds=scylla-{regions[0]},scylla-{regions[1]}";
 
+                // Belt-and-braces for the multi-DC topology: even with the per-node CQL
+                // health-check chain serialising joins below, Scylla 2026.1's Raft topology
+                // coordinator benefits from extra settle time between joiners. Default
+                // ring-delay-ms is 30 s; bumping to 60 s for multi-DC widens the window
+                // before a joining node concludes ring metadata is settled. Cheap insurance,
+                // no measurable effect on single-node.
+                var nodeArgs = new List<string>
+                {
+                    seeds, "--smp", "1", "--memory", "750M", "--overprovisioned", "1",
+                    "--developer-mode", "1", "--authenticator", "PasswordAuthenticator",
+                    "--authorizer", "CassandraAuthorizer",
+                    "--endpoint-snitch", "GossipingPropertyFileSnitch",
+                    "--api-address", "0.0.0.0", "--broadcast-address", name,
+                };
+                if (isMultiScylla)
+                {
+                    nodeArgs.Add("--ring-delay-ms");
+                    nodeArgs.Add("60000");
+                }
+
                 var node = builder.AddContainer(name, "scylladb/scylla", "2026.1")
                     .WithContainerNetworkAlias(name)
-                    .WithArgs(seeds, "--smp", "1", "--memory", "750M", "--overprovisioned", "1",
-                        "--developer-mode", "1", "--authenticator", "PasswordAuthenticator",
-                        "--authorizer", "CassandraAuthorizer",
-                        "--endpoint-snitch", "GossipingPropertyFileSnitch",
-                        "--api-address", "0.0.0.0", "--broadcast-address", name)
+                    .WithArgs([.. nodeArgs])
                     .WithBindMount($"../../db/scylla/cassandra-rackdc.{region}.properties", "/etc/scylla/cassandra-rackdc.properties", isReadOnly: true)
                     .WithEnvironment("CQLSH_USER", scyllaUser)
                     .WithEnvironment("CQLSH_PASSWORD", scyllaPassword)
@@ -355,14 +414,22 @@ public static class InterfoldAppHost
                     node.WithLifetime(ContainerLifetime.Persistent);
                 }
 
+                // Attach the per-node CQL readiness gate registered earlier. Carrying a
+                // HealthCheckAnnotation flips the semantics of WaitFor(previousNode) below
+                // from "wait for Running" (~container started) to "wait for Healthy" (CQL
+                // accepting traffic), which serialises the multi-DC join sequence and avoids
+                // the Raft topology coordinator banning concurrent joiners.
+                node.WithHealthCheck($"{name}-cql");
+
                 if (previousNode is null)
                 {
                     node.WithEndpoint(port: scyllaPort, targetPort: 9042, name: "cql", scheme: "tcp");
-                    if (includeApi) node.WithHealthCheck("scylla-health");
                     cqlEndpointOwners.Add(node);
                 }
                 else
+                {
                     node.WaitFor(previousNode);
+                }
 
                 previousNode = node;
             }

@@ -85,9 +85,12 @@ public sealed class MultiNodeScyllaFixture : AspireFixture<AppHost::Projects.Int
     // migrations, and the gossip-readiness wait stack on top. The wrapper enforces this
     // timeout against the entire WaitForResourcesAsync override (not just the base
     // ResourceNotificationService wait), so we need enough budget for the slowest legitimate
-    // path. 10 minutes leaves comfortable headroom for the ~5 minutes the steady-state run
-    // takes on a Docker Desktop host.
-    protected override TimeSpan ResourceTimeout => TimeSpan.FromMinutes(10);
+    // path. With the per-node CQL health-check chain in the AppHost serialising joins (see
+    // ScyllaContainerNameWatcher / DockerExecCqlProbe), each non-seed node only starts after
+    // the previous node's CQL listener accepts — that adds ~30-60 s per non-seed node × 6
+    // non-seed nodes ≈ +5 min on top of the previous ~5-minute steady state. 15 minutes
+    // leaves headroom for the slowest legitimate sequential bring-up plus migration time.
+    protected override TimeSpan ResourceTimeout => TimeSpan.FromMinutes(15);
     protected override bool EnableTelemetryCollection => false;
 
     // SharedDbFixture (and the AppHost's behaviour when include-api=false) provide no Aspire-

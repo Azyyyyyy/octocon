@@ -78,17 +78,17 @@ public sealed class MultiNodeScyllaTests(MultiNodeScyllaFixture fixture)
             var testId = $"test-{Guid.NewGuid():N}"[..20];
 
             await namSession.ExecuteAsync(new SimpleStatement(
-                "INSERT INTO global.user_registry (id, region) VALUES (?, ?)", testId, "nam"));
+                "INSERT INTO global.user_registry (user_id, region) VALUES (?, ?)", testId, "nam"));
 
             var result = await namSession.ExecuteAsync(new SimpleStatement(
-                "SELECT region FROM global.user_registry WHERE id = ?", testId));
+                "SELECT region FROM global.user_registry WHERE user_id = ?", testId));
 
             var row = result.FirstOrDefault();
             await Assert.That(row).IsNotNull();
             await Assert.That(row!.GetValue<string>("region")).IsEqualTo("nam");
 
             await namSession.ExecuteAsync(new SimpleStatement(
-                "DELETE FROM global.user_registry WHERE id = ?", testId));
+                "DELETE FROM global.user_registry WHERE user_id = ?", testId));
         }
         finally
         {
