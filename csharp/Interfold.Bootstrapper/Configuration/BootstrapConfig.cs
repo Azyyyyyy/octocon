@@ -33,6 +33,32 @@ public sealed class BootstrapConfig
     [JsonPropertyName("apiImage")]
     public string ApiImage { get; set; } = "ghcr.io/interfold/api:latest";
 
+    /// <summary>
+    /// Name of the Postgres application database that <see cref="Phases.DatabaseInitPhase"/> creates
+    /// and the API connects to. Defaults to <c>interfold</c>. Operators on a shared cluster (or who
+    /// want a brand-specific name) can set this to any safe Postgres identifier; the value is
+    /// validated by <see cref="Phases.ConfigPhase.Validate"/>. The seeder injects it into
+    /// <c>CREATE DATABASE "{value}"</c> via <see cref="DatabaseBootstrap.PostgresSqlTemplates"/>, so
+    /// it must satisfy Postgres' 63-byte NAMEDATALEN budget and contain only
+    /// <c>[A-Za-z_][A-Za-z0-9_]*</c>.
+    /// </summary>
+    [JsonPropertyName("postgresDatabase")]
+    public string PostgresDatabase { get; set; } = "interfold";
+
+    /// <summary>
+    /// Cluster identity advertised by both the ScyllaDB and Cassandra backends. Defaults to
+    /// <c>InterfoldCluster</c>. The value lands on Cassandra's <c>CASSANDRA_CLUSTER_NAME</c> env
+    /// var (read by the entrypoint into <c>cassandra.yaml</c>) and on Scylla's
+    /// <c>--cluster-name</c> CLI flag, and is what <c>SELECT cluster_name FROM system.local</c>
+    /// returns. Pure metadata: it does not appear in any CQL the API issues, and there is no
+    /// keyspace or table naming contract attached to it. Validated by
+    /// <see cref="Phases.ConfigPhase.Validate"/> to reject empty values and characters that
+    /// would break either Scylla's CLI argument parsing or Cassandra's
+    /// <c>cassandra.yaml</c> rewrite (single quotes, newlines, control chars).
+    /// </summary>
+    [JsonPropertyName("clusterName")]
+    public string ClusterName { get; set; } = "InterfoldCluster";
+
     [JsonPropertyName("oauth")]
     public OAuthSection OAuth { get; set; } = new();
 }
@@ -53,6 +79,25 @@ public sealed class DeploymentSection
 
     [JsonPropertyName("trustStoreInstall")]
     public bool TrustStoreInstall { get; set; } = true;
+
+    /// <summary>
+    /// Opt-in HTTPS termination for the <c>octocon-web</c> container. When <c>true</c>, the
+    /// generated compose:
+    /// <list type="bullet">
+    ///   <item>Includes the <c>octocon-web</c> service unconditionally (overrides the default-off
+    ///         <c>Parameters:include-web</c>).</item>
+    ///   <item>Bind-mounts the bootstrapper-issued <c>certs/</c> directory into the container at
+    ///         <c>/certs</c> (read-only) so nginx can read <c>leaf.crt</c> and <c>leaf.key</c>.</item>
+    ///   <item>Bind-mounts a generated nginx template into
+    ///         <c>/etc/nginx/templates/default.conf.template</c> so the official
+    ///         <c>nginx</c> image's envsubst step renders the TLS server block at startup.</item>
+    /// </list>
+    /// Defaults to <c>false</c> to preserve the existing HTTP-only behaviour for operators
+    /// that don't want TLS terminated at the web tier (e.g. those fronting compose with an
+    /// external load balancer that handles TLS).
+    /// </summary>
+    [JsonPropertyName("webHttps")]
+    public bool WebHttps { get; set; } = false;
 }
 
 public sealed class PortsSection

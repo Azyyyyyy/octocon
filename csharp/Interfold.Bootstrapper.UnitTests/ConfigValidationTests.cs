@@ -127,6 +127,144 @@ public sealed class ConfigValidationTests
     }
 
     [Test]
+    public async Task DefaultPostgresDatabasePasses()
+    {
+        // The shipping default value must always pass validation - any drift here would brick
+        // every operator who relies on the out-of-the-box configuration.
+        var cfg = MakeValid();
+        cfg.PostgresDatabase = "interfold";
+
+        ConfigPhase.Validate(cfg);
+        await Task.CompletedTask;
+    }
+
+    [Test]
+    public async Task CustomSafePostgresDatabasePasses()
+    {
+        // Any identifier matching ^[A-Za-z_][A-Za-z0-9_]{0,62}$ must round-trip cleanly. We
+        // pick a value that exercises underscores + digits because operators on shared clusters
+        // commonly suffix the database name with an env tag (e.g. acme_prod).
+        var cfg = MakeValid();
+        cfg.PostgresDatabase = "acme_prod_42";
+
+        ConfigPhase.Validate(cfg);
+        await Task.CompletedTask;
+    }
+
+    [Test]
+    public async Task EmptyPostgresDatabaseFailsValidation()
+    {
+        var cfg = MakeValid();
+        cfg.PostgresDatabase = string.Empty;
+
+        var ex = Assert.Throws<InvalidOperationException>(() => ConfigPhase.Validate(cfg));
+        await Assert.That(ex.Message).Contains("postgresDatabase");
+    }
+
+    [Test]
+    public async Task WhitespacePostgresDatabaseFailsValidation()
+    {
+        var cfg = MakeValid();
+        cfg.PostgresDatabase = "   ";
+
+        var ex = Assert.Throws<InvalidOperationException>(() => ConfigPhase.Validate(cfg));
+        await Assert.That(ex.Message).Contains("postgresDatabase");
+    }
+
+    [Test]
+    public async Task PostgresDatabaseStartingWithDigitFailsValidation()
+    {
+        // Postgres tolerates a leading digit only inside double quotes; rejecting it up front
+        // keeps the seeder's CREATE DATABASE "<name>" emission unsurprising and avoids
+        // identifier-handling drift between quoted and unquoted call sites.
+        var cfg = MakeValid();
+        cfg.PostgresDatabase = "1interfold";
+
+        var ex = Assert.Throws<InvalidOperationException>(() => ConfigPhase.Validate(cfg));
+        await Assert.That(ex.Message).Contains("postgresDatabase");
+    }
+
+    [Test]
+    public async Task PostgresDatabaseWithDashFailsValidation()
+    {
+        // A dash is a valid character inside double-quoted Postgres identifiers but is forbidden
+        // by our pattern so the value also works as a default role / schema prefix downstream
+        // without further quoting gymnastics.
+        var cfg = MakeValid();
+        cfg.PostgresDatabase = "inter-fold";
+
+        var ex = Assert.Throws<InvalidOperationException>(() => ConfigPhase.Validate(cfg));
+        await Assert.That(ex.Message).Contains("postgresDatabase");
+    }
+
+    [Test]
+    public async Task DefaultClusterNamePasses()
+    {
+        // The shipping default must always pass validation, exactly like postgresDatabase.
+        var cfg = MakeValid();
+        cfg.ClusterName = "InterfoldCluster";
+
+        ConfigPhase.Validate(cfg);
+        await Task.CompletedTask;
+    }
+
+    [Test]
+    public async Task CustomClusterNameWithSpacesPasses()
+    {
+        // Cluster names are advertised in gossip metadata and shown in DESCRIBE CLUSTER output;
+        // operators routinely put a human-readable name with spaces here (e.g. "Acme Prod"),
+        // so we must accept spaces (unlike postgresDatabase).
+        var cfg = MakeValid();
+        cfg.ClusterName = "Acme Prod 1.0";
+
+        ConfigPhase.Validate(cfg);
+        await Task.CompletedTask;
+    }
+
+    [Test]
+    public async Task EmptyClusterNameFailsValidation()
+    {
+        var cfg = MakeValid();
+        cfg.ClusterName = string.Empty;
+
+        var ex = Assert.Throws<InvalidOperationException>(() => ConfigPhase.Validate(cfg));
+        await Assert.That(ex.Message).Contains("clusterName");
+    }
+
+    [Test]
+    public async Task ClusterNameWithSingleQuoteFailsValidation()
+    {
+        // Single quotes are the highest-risk character because Cassandra's entrypoint rewrites
+        // cassandra.yaml with the value pasted in; an unescaped quote would corrupt the YAML.
+        var cfg = MakeValid();
+        cfg.ClusterName = "Acme'Prod";
+
+        var ex = Assert.Throws<InvalidOperationException>(() => ConfigPhase.Validate(cfg));
+        await Assert.That(ex.Message).Contains("clusterName");
+    }
+
+    [Test]
+    public async Task ClusterNameWithNewlineFailsValidation()
+    {
+        var cfg = MakeValid();
+        cfg.ClusterName = "Acme\nProd";
+
+        var ex = Assert.Throws<InvalidOperationException>(() => ConfigPhase.Validate(cfg));
+        await Assert.That(ex.Message).Contains("clusterName");
+    }
+
+    [Test]
+    public async Task OverlyLongClusterNameFailsValidation()
+    {
+        // 64 chars is the published Cassandra limit; anything past it must fail.
+        var cfg = MakeValid();
+        cfg.ClusterName = new string('A', 65);
+
+        var ex = Assert.Throws<InvalidOperationException>(() => ConfigPhase.Validate(cfg));
+        await Assert.That(ex.Message).Contains("clusterName");
+    }
+
+    [Test]
     public async Task MalformedJsonReturnsClearError()
     {
         // ConfigPhase.RunAsync uses JsonSerializer.Deserialize, which surfaces a JsonException

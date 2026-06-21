@@ -134,11 +134,11 @@ public sealed class MigrationLedgerTests(ScyllaWebFactoryFixture fixture) : Base
 
         // SharedDbFixture provisions the single-node Scylla with IsSingleScyllaInstance=true,
         // so the templated migrations are applied to exactly one regional keyspace ("nam").
-        await Assert.That(byVersion.TryGetValue("001_create_octocon_keyspaces.cql", out var keyspaceScopes)).IsTrue()
+        await Assert.That(byVersion.TryGetValue("001_create_interfold_keyspaces.cql", out var keyspaceScopes)).IsTrue()
             .Because("Expected ledger to record the regional keyspace migration.");
         await Assert.That(keyspaceScopes!).Contains("nam");
 
-        await Assert.That(byVersion.TryGetValue("002_create_octocon_schema.templated.cql", out var schemaScopes)).IsTrue()
+        await Assert.That(byVersion.TryGetValue("002_create_interfold_schema.templated.cql", out var schemaScopes)).IsTrue()
             .Because("Expected ledger to record the templated schema migration.");
         await Assert.That(schemaScopes!).Contains("nam");
     }
@@ -179,7 +179,7 @@ public sealed class MigrationLedgerTests(ScyllaWebFactoryFixture fixture) : Base
         await Assert.That(SharedDb.ScyllaPort).IsNotNull();
 
         const string targetScope = "nam";
-        const string targetVersion = "002_create_octocon_schema.templated.cql";
+        const string targetVersion = "002_create_interfold_schema.templated.cql";
 
         using var session = await OpenScyllaSessionAsync();
 

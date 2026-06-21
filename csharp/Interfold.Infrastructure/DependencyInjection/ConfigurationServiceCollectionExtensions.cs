@@ -160,7 +160,7 @@ public static class ConfigurationServiceCollectionExtensions
         opts.Mode = config["OCTOCON_PERSISTENCE"] ?? "scylla-postgres";
         opts.ScyllaKeyspace = keyspace;
         opts.PostgresConnectionString = config["OCTOCON_POSTGRES_CONNECTION"]
-            ?? "Host=localhost;Port=5432;Database=octocon;Username=octocon;Password=octocon";
+            ?? "Host=localhost;Port=5432;Database=interfold;Username=interfold;Password=interfold";
         opts.IsSingleScyllaInstance = bool.TryParse(config["OCTOCON_SINGLE_SCYLLA_INSTANCE"], out var singleKs) && singleKs;
         opts.DbRetryAttempts = TryParseInt(config["OCTOCON_DB_RETRY_ATTEMPTS"]) ?? 3;
         opts.DbRetryInitialDelayMs = TryParseInt(config["OCTOCON_DB_RETRY_INITIAL_DELAY_MS"]) ?? 100;

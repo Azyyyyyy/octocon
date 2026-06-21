@@ -29,6 +29,17 @@ public class DbInitSecurityInvariantsTests(UbuntuDinDFixture dinD)
 {
     private static string TestConfigJsonPath => Path.Combine(AppContext.BaseDirectory, "fixtures", "interfold.bootstrap.test.json");
 
+    /// <summary>
+    /// Application database name the test bootstrap config asks the seeder to create. MUST stay
+    /// in lockstep with the <c>postgresDatabase</c> field of <c>interfold.bootstrap.test.json</c>.
+    /// Deliberately distinct from both the legacy <c>octocon</c> name and the production default
+    /// <c>interfold</c> — every probe below selects against this name, so a regression that
+    /// reintroduces a hardcoded literal anywhere in <c>DatabaseInitPhase</c> /
+    /// <c>PostgresSeedOptions</c> / <c>PostgresSqlTemplates</c> would surface as a
+    /// connect-or-permission-denied error here.
+    /// </summary>
+    private const string TestPostgresDb = "test_pg_db";
+
     [After(Test)]
     public async Task DumpOnFailure(TestContext ctx)
     {
@@ -119,7 +130,7 @@ public class DbInitSecurityInvariantsTests(UbuntuDinDFixture dinD)
         var ddl = await dinD.ExecAsync(
             ["sh", "-c",
              $"docker compose -f {composeFile} exec -T -e PGPASSWORD={appPass} msg-db " +
-             "psql -U interfold -d octocon -h 127.0.0.1 -tAc \"CREATE ROLE escalation_attempt\" 2>&1 || true"]);
+             $"psql -U interfold -d {TestPostgresDb} -h 127.0.0.1 -tAc \"CREATE ROLE escalation_attempt\" 2>&1 || true"]);
         await Assert.That(ddl.Stdout + ddl.Stderr).Contains("permission denied")
             .Or.Contains("must be superuser")
             .Because($"app user must not be allowed to CREATE ROLE: {ddl.Stdout} / {ddl.Stderr}");
@@ -193,7 +204,7 @@ public class DbInitSecurityInvariantsTests(UbuntuDinDFixture dinD)
         var probe = await dinD.ExecAsync(
             ["sh", "-c",
              $"docker compose -f {composeFile} exec -T -e PGPASSWORD={adminPass} msg-db " +
-             "psql -U interfold_admin -d octocon -h 127.0.0.1 -tAc " +
+             $"psql -U interfold_admin -d {TestPostgresDb} -h 127.0.0.1 -tAc " +
              "\"SELECT rolsuper FROM pg_roles WHERE rolname='interfold_admin'\""]);
         await Assert.That(probe.ExitCode).IsEqualTo(0L).Because(probe.Stderr);
         await Assert.That(probe.Stdout.Trim()).IsEqualTo("t")
@@ -216,7 +227,7 @@ public class DbInitSecurityInvariantsTests(UbuntuDinDFixture dinD)
         var count = await dinD.ExecAsync(
             ["sh", "-c",
              $"docker compose -f {composeFile} exec -T -e PGPASSWORD={appPass} msg-db " +
-             "psql -U interfold -d octocon -h 127.0.0.1 -tAc 'SELECT COUNT(*) FROM internal.secrets'"]);
+             $"psql -U interfold -d {TestPostgresDb} -h 127.0.0.1 -tAc 'SELECT COUNT(*) FROM internal.secrets'"]);
         await Assert.That(count.ExitCode).IsEqualTo(0L).Because(count.Stderr);
         // The seed list in BootstrapPostgresAsync inserts ~12 keys (only OAuth secrets that
         // are blank are skipped). Anything > 0 confirms seeding ran end-to-end; we use a soft

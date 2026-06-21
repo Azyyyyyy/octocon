@@ -31,8 +31,20 @@ internal static class DbInitHelper
     /// <summary>Hard-coded by msg-db's <c>POSTGRES_USER</c> in the AppHost.</summary>
     public const string PostgresInitUser = "db_init";
 
-    /// <summary>Application database name. Mirrors <c>DatabaseInitPhase.DefaultPostgresDb</c>.</summary>
-    public const string DefaultPostgresDb = "octocon";
+    /// <summary>Application database name used across the in-process integration test suite.
+    /// <para>
+    /// Deliberately set to a value that does NOT match the production default
+    /// (<c>interfold</c>) — the test fixture pushes this through
+    /// <c>Parameters:postgres-db</c> on the AppHost and uses it in both the seeder's
+    /// <c>CREATE DATABASE</c> call and the host-side app connection string. If any layer in
+    /// that chain (AppHost connection string, <see cref="PostgresSeedOptions.DefaultDatabase"/>,
+    /// the API's <c>OCTOCON_POSTGRES_CONNECTION</c> binding) accidentally regresses to a
+    /// hardcoded literal, the test that opens a connection on this name will fail —
+    /// proving the configurability wiring is load-bearing rather than vacuously satisfied
+    /// by everyone agreeing on "interfold".
+    /// </para>
+    /// </summary>
+    public const string DefaultPostgresDb = "test_pg_db";
 
     /// <summary>Scylla / Cassandra built-in superuser before lockdown.</summary>
     public const string ScyllaDefaultUser = "cassandra";

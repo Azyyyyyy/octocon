@@ -25,7 +25,7 @@ namespace Interfold.Infrastructure.Scylla;
 /// (<c>global</c>, <c>nam_nt</c>, <c>dummy</c>) are bootstrapped from
 /// <c>000_create_singleton_keyspaces.cql</c> unconditionally — they're a precondition for
 /// the ledger itself and every statement is idempotent. Templated per-region files
-/// (<c>001_create_octocon_keyspaces.cql</c>, <c>002_create_octocon_schema.templated.cql</c>)
+/// (<c>001_create_interfold_keyspaces.cql</c>, <c>002_create_interfold_schema.templated.cql</c>)
 /// are tracked once per regional keyspace, so adding a new region later only re-applies the
 /// rendered template to the new keyspace.
 /// </remarks>
@@ -45,8 +45,8 @@ public sealed partial class ScyllaMigrationService(
     private const string LedgerTable = "schema_migrations";
     private const string LedgerTableFqn = $"{LedgerKeyspace}.{LedgerTable}";
     private const string SingletonsMigration = "000_create_singleton_keyspaces.cql";
-    private const string KeyspacesMigration = "001_create_octocon_keyspaces.cql";
-    private const string SchemaMigration = "002_create_octocon_schema.templated.cql";
+    private const string KeyspacesMigration = "001_create_interfold_keyspaces.cql";
+    private const string SchemaMigration = "002_create_interfold_schema.templated.cql";
     private const string GrantsVersion = "grants_v1";
 
     // Stable template hashed for grant tracking. Bump GrantsVersion whenever this string

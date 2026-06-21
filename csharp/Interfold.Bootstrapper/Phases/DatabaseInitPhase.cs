@@ -32,7 +32,6 @@ internal static class DatabaseInitPhase
 {
     private const string Phase = "db-init";
     private const string PostgresService = "msg-db";
-    private const string DefaultPostgresDb = "octocon";
     private const string PostgresInitUser = "db_init";
 
     public static async Task RunAsync(
@@ -99,7 +98,7 @@ internal static class DatabaseInitPhase
             AppPassword: secrets.PostgresPassword,
             AdminUser: $"{secrets.PostgresUser}_admin",
             AdminPassword: secrets.PostgresAdminPassword,
-            DefaultDatabase: DefaultPostgresDb,
+            DefaultDatabase: config.PostgresDatabase,
             GoogleOAuthClientSecret: config.OAuth.GoogleClientSecret ?? string.Empty,
             DiscordOAuthClientSecret: config.OAuth.DiscordClientSecret ?? string.Empty,
             AppleOAuthClientSecret: config.OAuth.AppleClientSecret ?? string.Empty,

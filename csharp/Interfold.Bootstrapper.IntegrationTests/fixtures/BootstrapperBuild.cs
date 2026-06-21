@@ -123,6 +123,16 @@ internal static class BootstrapperBuild
                 Copy(src, dest);
             }
         }
+
+        // Web TLS termination template. The bootstrapper bind-mounts this into octocon-web
+        // when deployment.webHttps=true, so it must live next to the published binary even on
+        // hosts where the operator doesn't use the web tier (publish itself is the same code path
+        // either way — it's only the bind-mount entry in the .env that gets populated).
+        var nginxTemplate = RepoRoot.Combine("web", "nginx", "default.conf.template");
+        if (File.Exists(nginxTemplate))
+        {
+            Copy(nginxTemplate, Path.Combine(outDir, "web", "nginx", "default.conf.template"));
+        }
     }
 
     private static void Copy(string src, string dest)

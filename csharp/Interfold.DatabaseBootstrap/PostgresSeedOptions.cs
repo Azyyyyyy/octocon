@@ -15,10 +15,13 @@ namespace Interfold.DatabaseBootstrap;
 /// Only role that appears in the compose connection string.</param>
 /// <param name="AppPassword">Password for <see cref="AppUser"/>.</param>
 /// <param name="AdminUser">Admin role created here as <c>SUPERUSER</c>. By convention
-/// <c>&lt;app&gt;_admin</c>. Owns the <c>octocon</c> database and <c>internal</c> schema.</param>
+/// <c>&lt;app&gt;_admin</c>. Owns the application database (see <see cref="DefaultDatabase"/>) and
+/// the <c>internal</c> schema.</param>
 /// <param name="AdminPassword">Password for <see cref="AdminUser"/>.</param>
-/// <param name="DefaultDatabase">Application database created/owned by the admin role. Always
-/// <c>octocon</c> in the current AppHost; parameterised so a future tenant could repurpose.</param>
+/// <param name="DefaultDatabase">Application database created/owned by the admin role. Defaults
+/// to <c>interfold</c> (sourced from <c>BootstrapConfig.PostgresDatabase</c> in the bootstrapper
+/// flow, and the AppHost <c>Parameters:postgres-db</c> parameter in dev / test). Operators on a
+/// shared cluster can override it to any safe Postgres identifier.</param>
 /// <param name="GoogleOAuthClientSecret">Seeded into <c>internal.secrets</c> as
 /// <c>oauth:google:client_secret</c>. Empty values are skipped (matches
 /// <c>DatabaseInitPhase</c>'s <c>string.IsNullOrEmpty</c> filter).</param>

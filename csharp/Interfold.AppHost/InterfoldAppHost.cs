@@ -44,6 +44,14 @@ public static class InterfoldAppHost
         var cassandraPort = Port("cassandra", 9043);
         var apiHttpPort = Port("api-http", 5000);
         var apiHttpsPort = Port("api-https", 5001);
+        // Inside-the-container Kestrel ports for the API. These must match the EXPOSE/ARG
+        // values baked into the published API image (see /Dockerfile, which defaults them to
+        // 5100/5101 and accepts HTTP_PORT / HTTPS_PORT --build-arg overrides). When operators
+        // rebuild the image with different ports, set Ports:api-container-http and
+        // Ports:api-container-https to match - the targetPort, ASPNETCORE_*_PORTS env vars,
+        // and the compose healthcheck URL all derive from these.
+        var apiContainerHttpPort = Port("api-container-http", 5100);
+        var apiContainerHttpsPort = Port("api-container-https", 5101);
         var webHttpPort = Port("web-http", 8080);
         var webHttpsPort = Port("web-https", 8081);
 
@@ -64,6 +72,18 @@ public static class InterfoldAppHost
         var includeCassandra = ParseToggle(builder.Configuration["Parameters:include-cassandra"], fallback: false);
         var scyllaTopology = builder.Configuration["Parameters:scylla-topology"] ?? "single";
         var isMultiScylla = string.Equals(scyllaTopology, "multi", StringComparison.OrdinalIgnoreCase);
+
+        // CQL cluster identity baked into both backends. Cassandra picks it up via
+        // CASSANDRA_CLUSTER_NAME (read by the official entrypoint and written into
+        // cassandra.yaml); Scylla picks it up via the `--cluster-name` command-line flag
+        // (alternative to the in-yaml setting and immune to image bake-time changes). Pure
+        // metadata — surfaces in `SELECT cluster_name FROM system.local` and gossip, doesn't
+        // appear in any query. Read here as a string (not an Aspire ParameterResource) so the
+        // value flows into Scylla's WithArgs list without needing a callback shim, matching
+        // the existing `includeScylla` / `scyllaTopology` config-read pattern. Defaults to
+        // "InterfoldCluster" so dev `aspire run` works without operator config; the bootstrapper
+        // overrides via `BootstrapConfig.ClusterName`.
+        var clusterName = builder.Configuration["Parameters:cluster-name"] ?? "InterfoldCluster";
 
         // Postgres is unconditional in the dev `aspire run` workflow and the bootstrapper's
         // publish flow (the API depends on it), but the integration test
@@ -183,6 +203,13 @@ public static class InterfoldAppHost
         // --- Parameters (set via user-secrets or environment variables) ---
         var postgresUser = builder.AddParameter("postgres-user");
         var postgresPassword = builder.AddParameter("postgres-password", secret: true);
+        // Postgres application database name. Defaults to `interfold` so dev `aspire run`
+        // works without any extra config; the bootstrapper overrides this from
+        // `BootstrapConfig.PostgresDatabase` in publish mode (via `Parameters:postgres-db`),
+        // and the resulting value flows into both the API's connection string below and
+        // DatabaseInitPhase's CREATE DATABASE call via the matching seed option. Not a
+        // secret — it ends up in compose YAML / .env as plain text.
+        var postgresDb = builder.AddParameter("postgres-db", "interfold", publishValueAsDefault: true);
         // Transient init credential. POSTGRES_USER on the msg-db service is hard-coded to
         // "db_init" - a disposable cluster-owner that the bootstrapper's DatabaseInitPhase uses
         // exactly once to create the real app + admin roles, then ALTERs to a fresh random
@@ -283,8 +310,9 @@ public static class InterfoldAppHost
         //     DatabaseInitPhase consumes it once to mint the real app + admin roles, then
         //     scrambles db_init's password to a fresh random value the bootstrapper does not
         //     persist. The compose .env value is therefore stale by the time the API starts.
-        //   - No `POSTGRES_DB`: DatabaseInitPhase creates the `octocon` database owned by the
-        //     admin role, not by db_init - keeps DDL gating consistent.
+        //   - No `POSTGRES_DB`: DatabaseInitPhase creates the application database (named via
+        //     `Parameters:postgres-db`, default `interfold`) owned by the admin role, not by
+        //     db_init - keeps DDL gating consistent.
         //
         // The interfold-api connection string below references `${POSTGRES_USER}` /
         // `${POSTGRES_PASSWORD}` which resolve to the *app* user (interfold), not db_init. So the
@@ -378,6 +406,10 @@ public static class InterfoldAppHost
                     "--authorizer", "CassandraAuthorizer",
                     "--endpoint-snitch", "GossipingPropertyFileSnitch",
                     "--api-address", "0.0.0.0", "--broadcast-address", name,
+                    // Operator-tunable cluster identity (default "InterfoldCluster"); without
+                    // this Scylla falls back to its built-in "Test Cluster" name, which is
+                    // both unbranded and easily confused with a real Scylla test image.
+                    "--cluster-name", clusterName,
                 };
                 if (isMultiScylla)
                 {
@@ -467,7 +499,7 @@ public static class InterfoldAppHost
 
             var cassandra = builder.AddDockerfile("cassandra", "../../db/cassandra")
                 .WithContainerNetworkAlias("cassandra")
-                .WithEnvironment("CASSANDRA_CLUSTER_NAME", "OctoCluster")
+                .WithEnvironment("CASSANDRA_CLUSTER_NAME", clusterName)
                 .WithEnvironment("CASSANDRA_LISTEN_ADDRESS", "cassandra")
                 .WithEnvironment("CASSANDRA_BROADCAST_ADDRESS", "cassandra")
                 .WithEnvironment("CASSANDRA_BROADCAST_RPC_ADDRESS", "cassandra")
@@ -535,7 +567,7 @@ public static class InterfoldAppHost
                 api.WithEnvironment("OCTOCON_PERSISTENCE", "scylla-postgres")
                    .WithEnvironment("OCTOCON_SINGLE_SCYLLA_INSTANCE", isMultiScylla ? "false" : "true")
                    .WithEnvironment("OCTOCON_POSTGRES_CONNECTION",
-                       ReferenceExpression.Create($"Host={pgEndpoint.Property(EndpointProperty.Host)};Port={pgEndpoint.Property(EndpointProperty.Port)};Database=octocon;Username={postgresUser};Password={postgresPassword}"))
+                       ReferenceExpression.Create($"Host={pgEndpoint.Property(EndpointProperty.Host)};Port={pgEndpoint.Property(EndpointProperty.Port)};Database={postgresDb};Username={postgresUser};Password={postgresPassword}"))
                    .WithEnvironment("ENCRYPTION_PRIVATE_KEY", encryptionPrivateKey);
             }
 
@@ -547,17 +579,20 @@ public static class InterfoldAppHost
             // SecretsBootstrapService patches the auth material (and refuses to start the API
             // if the pepper row is missing) and Program.cs runs a one-shot Npgsql query for
             // the leaf PFX password before Kestrel binds.
-            static void ConfigureApiSelfHostEnv(IResourceBuilder<ContainerResource> api)
+            //
+            // Note: this captures `apiContainerHttpPort`/`apiContainerHttpsPort` from the
+            // enclosing scope so it cannot be `static`.
+            void ConfigureApiSelfHostEnv(IResourceBuilder<ContainerResource> api)
             {
                 api.WithBindMount("../../certs", "/certs", isReadOnly: true)
                    // The published API container (built with `dotnet publish /t:PublishContainer`)
                    // defaults to listening on HTTP 8080. The Aspire compose graph below declares
-                   // targetPort=5100/5101, so we override the SDK defaults to keep the two in
-                   // sync. HTTPS terminates inside the container using the leaf PFX written by
-                   // CertificatePhase - operators can still front this with a reverse proxy but
-                   // direct HTTPS access works out of the box.
-                   .WithEnvironment("ASPNETCORE_HTTP_PORTS", "5100")
-                   .WithEnvironment("ASPNETCORE_HTTPS_PORTS", "5101")
+                   // targetPort=apiContainerHttpPort/apiContainerHttpsPort, so we override the SDK
+                   // defaults to keep the two in sync. HTTPS terminates inside the container using
+                   // the leaf PFX written by CertificatePhase - operators can still front this with
+                   // a reverse proxy but direct HTTPS access works out of the box.
+                   .WithEnvironment("ASPNETCORE_HTTP_PORTS", apiContainerHttpPort.ToString())
+                   .WithEnvironment("ASPNETCORE_HTTPS_PORTS", apiContainerHttpsPort.ToString())
                    // Kestrel default-endpoint cert path. Kestrel reads this from configuration
                    // (see https://learn.microsoft.com/aspnet/core/fundamentals/servers/kestrel/endpoints#configure-https).
                    // The matching Password used to live in this env block too; it has moved to
@@ -572,8 +607,8 @@ public static class InterfoldAppHost
                 // Self-hosting path: pre-built image reference, no csproj needed.
                 var (imageName, imageTag) = SplitImageRef(apiImageRef);
                 var apiContainer = builder.AddContainer("interfold-api", imageName, imageTag)
-                    .WithHttpEndpoint(port: apiHttpPort, targetPort: 5100, name: "http")
-                    .WithHttpsEndpoint(port: apiHttpsPort, targetPort: 5101, name: "https")
+                    .WithHttpEndpoint(port: apiHttpPort, targetPort: apiContainerHttpPort, name: "http")
+                    .WithHttpsEndpoint(port: apiHttpsPort, targetPort: apiContainerHttpsPort, name: "https")
                     .WithHttpHealthCheck("/health/ready", endpointName: "http")
                     .WithExternalHttpEndpoints()
                     .WaitFor(msgDbResource)
@@ -582,7 +617,7 @@ public static class InterfoldAppHost
                         service.Networks = ["scylla", "postgres", "api"];
                         service.Healthcheck = new Healthcheck
                         {
-                            Test = ["CMD", "curl", "-f", "http://localhost:5100/health/ready"],
+                            Test = ["CMD", "curl", "-f", $"http://localhost:{apiContainerHttpPort}/health/ready"],
                             Interval = "15s",
                             Timeout = "5s",
                             Retries = 10,
@@ -614,8 +649,8 @@ public static class InterfoldAppHost
             else
             {
                 var apiProject = builder.AddProject<Projects.Interfold_Api>("interfold-api")
-                    .WithHttpEndpoint(port: apiHttpPort, targetPort: 5100, name: "http")
-                    .WithHttpsEndpoint(port: apiHttpsPort, targetPort: 5101, name: "https")
+                    .WithHttpEndpoint(port: apiHttpPort, targetPort: apiContainerHttpPort, name: "http")
+                    .WithHttpsEndpoint(port: apiHttpsPort, targetPort: apiContainerHttpsPort, name: "https")
                     .WithHttpHealthCheck("/health/ready", endpointName: "http")
                     .WithExternalHttpEndpoints()
                     .WaitFor(msgDbResource)
@@ -624,7 +659,7 @@ public static class InterfoldAppHost
                         service.Networks = ["scylla", "postgres", "api"];
                         service.Healthcheck = new Healthcheck
                         {
-                            Test = ["CMD", "curl", "-f", "http://localhost:5100/health/ready"],
+                            Test = ["CMD", "curl", "-f", $"http://localhost:{apiContainerHttpPort}/health/ready"],
                             Interval = "15s",
                             Timeout = "5s",
                             Retries = 10,
@@ -645,26 +680,86 @@ public static class InterfoldAppHost
 
         // --- Octocon Web (pre-built container, optional) ---
         var includeWeb = !string.Equals(builder.Configuration["Parameters:include-web"], "false", StringComparison.OrdinalIgnoreCase);
+        // Opt-in HTTPS termination via the official nginx image's envsubst-on-templates
+        // entrypoint. When on, the bootstrapper bind-mounts the issued leaf cert/key and a
+        // generated nginx template into the container so port 443 terminates TLS without
+        // requiring a custom image build. The dev `aspire run` flow leaves this off and
+        // ships the upstream image unmodified.
+        var webTls = ParseToggle(builder.Configuration["Parameters:web-tls"], fallback: false);
         if (includeWeb)
         {
-            builder.AddContainer("octocon-web", "ghcr.io/azyyyyyy/octocon-wasm", "latest")
-                .WithContainerNetworkAlias("octocon-web")
-                .WithHttpEndpoint(port: webHttpPort, targetPort: 80, name: "http")
-                .WithHttpEndpoint(port: webHttpsPort, targetPort: 8080, name: "https")
-                .WithHttpHealthCheck("/", endpointName: "http")
-                .WithExternalHttpEndpoints()
-                .PublishAsDockerComposeService((_, service) =>
-                {
-                    service.Networks = ["api"];
-                    service.                    Healthcheck = new Healthcheck
+            var web = builder.AddContainer("octocon-web", "ghcr.io/azyyyyyy/octocon-wasm", "latest")
+                .WithContainerNetworkAlias("octocon-web");
+
+            if (webTls)
+            {
+                // Server name has to be passed through configuration because Configure() doesn't
+                // see the operator's BootstrapConfig directly. PublishPhase injects it from
+                // BootstrapConfig.Deployment.Domains[0]; fall back to a wildcard so dev callers
+                // that flip the toggle on without populating the parameter still get a working
+                // server block (nginx accepts `_` as a catch-all).
+                var serverName = builder.Configuration["Parameters:web-server-name"];
+                if (string.IsNullOrWhiteSpace(serverName)) serverName = "_";
+
+                web = web
+                    .WithHttpEndpoint(port: webHttpPort, targetPort: 80, name: "http")
+                    .WithHttpsEndpoint(port: webHttpsPort, targetPort: 443, name: "https")
+                    .WithBindMount("../../certs", "/certs", isReadOnly: true)
+                    .WithBindMount(
+                        "../../web/nginx/default.conf.template",
+                        "/etc/nginx/templates/default.conf.template",
+                        isReadOnly: true)
+                    .WithEnvironment("NGINX_SERVER_NAME", serverName)
+                    .WithEnvironment("NGINX_SSL_CERT_FILE", "/certs/leaf.crt")
+                    .WithEnvironment("NGINX_SSL_KEY_FILE", "/certs/leaf.key")
+                    // The default envsubst step in the upstream nginx image substitutes every
+                    // env var it can resolve, which would clobber nginx's own runtime
+                    // variables (`$host`, `$uri`, ...). Restrict it to the NGINX_* names we
+                    // actually want substituted.
+                    .WithEnvironment("NGINX_ENVSUBST_FILTER", "^NGINX_")
+                    .WithHttpHealthCheck("/", endpointName: "http")
+                    // Must come AFTER the endpoint registrations - Aspire's external-endpoint
+                    // pass walks the resource's current endpoint set, so calling this before
+                    // WithHttpEndpoint / WithHttpsEndpoint produces a service with only
+                    // `expose:` and no `ports:` in the emitted compose.
+                    .WithExternalHttpEndpoints()
+                    .PublishAsDockerComposeService((_, service) =>
                     {
-                        Test = ["CMD", "curl", "-f", "http://localhost:80/"],
-                        Interval = "15s",
-                        Timeout = "5s",
-                        Retries = 5,
-                        StartPeriod = "10s"
-                    };
-                });
+                        service.Networks = ["api"];
+                        service.                    Healthcheck = new Healthcheck
+                        {
+                            // `-k` because the leaf is signed by the bootstrapper's private root
+                            // CA which the container doesn't trust by default; the probe just
+                            // verifies nginx is serving over TLS.
+                            Test = ["CMD", "curl", "-kf", "https://localhost:443/"],
+                            Interval = "15s",
+                            Timeout = "5s",
+                            Retries = 5,
+                            StartPeriod = "10s"
+                        };
+                    });
+            }
+            else
+            {
+                web = web
+                    .WithHttpEndpoint(port: webHttpPort, targetPort: 80, name: "http")
+                    .WithHttpEndpoint(port: webHttpsPort, targetPort: 8080, name: "https")
+                    .WithHttpHealthCheck("/", endpointName: "http")
+                    .WithExternalHttpEndpoints()
+                    .PublishAsDockerComposeService((_, service) =>
+                    {
+                        service.Networks = ["api"];
+                        service.                    Healthcheck = new Healthcheck
+                        {
+                            Test = ["CMD", "curl", "-f", "http://localhost:80/"],
+                            Interval = "15s",
+                            Timeout = "5s",
+                            Retries = 5,
+                            StartPeriod = "10s"
+                        };
+                    });
+            }
+            _ = web;
         }
     }
 

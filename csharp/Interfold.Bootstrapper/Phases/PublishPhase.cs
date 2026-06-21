@@ -36,7 +36,7 @@ internal static class PublishPhase
 
         Directory.CreateDirectory(options.OutputDir);
 
-        var anchor = SetupAnchor(logger);
+        var anchor = SetupAnchor(logger, webTls: config.Deployment.WebHttps);
         var previousCwd = Directory.GetCurrentDirectory();
 
         try
@@ -124,6 +124,11 @@ internal static class PublishPhase
             // InterfoldAppHost.Configure() (Aspire upper-snake-cases the parameter name).
             ["POSTGRES_USER"] = secrets.PostgresUser,
             ["POSTGRES_PASSWORD"] = secrets.PostgresPassword,
+            // Plain-text application database name (not a secret). Sourced from
+            // BootstrapConfig.PostgresDatabase; defaults to `interfold`. Lands in the API's
+            // OCTOCON_POSTGRES_CONNECTION Database= field via the AppHost graph and in
+            // DatabaseInitPhase's CREATE DATABASE call via PostgresSeedOptions.DefaultDatabase.
+            ["POSTGRES_DB"] = config.PostgresDatabase,
             // Init credential consumed exactly once by DatabaseInitPhase. We deliberately ship
             // the *initial* value here (not the scrambled post-init value) so that operators who
             // nuke their pgdata volume and rerun the bootstrap have a working bootstrap path:
@@ -157,6 +162,18 @@ internal static class PublishPhase
             // internal.secrets (see SeedKeys.cs) — no bind mount needed.
             ["interfold-api:/certs"] = Path.Combine(outputDir, "certs"),
         };
+
+        // When the operator opts in to web TLS, InterfoldAppHost.Configure adds two extra
+        // bind mounts on the octocon-web service: the cert directory (re-using the API's
+        // {outputDir}/certs/) and an envsubst template that the official nginx image renders
+        // into /etc/nginx/conf.d/ at startup. The template ships alongside the bootstrapper
+        // binary under {baseDir}/web/nginx/ (see SetupAnchor and BootstrapperBuild).
+        if (config.Deployment.WebHttps)
+        {
+            bindMountLookup["octocon-web:/certs"] = Path.Combine(outputDir, "certs");
+            bindMountLookup["octocon-web:/etc/nginx/templates/default.conf.template"] =
+                Path.Combine(baseDir, "web", "nginx", "default.conf.template");
+        }
 
         // Scylla rackdc.properties bind mount is region-keyed. Single mode uses one node named
         // "scylla" with the "nam" region (default); multi mode emits one node per region.
@@ -267,7 +284,7 @@ internal static class PublishPhase
         return (rewritten, skipped);
     }
 
-    private static string SetupAnchor(PhaseLogger logger)
+    private static string SetupAnchor(PhaseLogger logger, bool webTls)
     {
         // AppContext.BaseDirectory is where the published binary lives (e.g. /opt/interfold-bootstrap/).
         // We expect operators to deploy `db/scylla/cassandra-rackdc.*.properties` alongside the binary
@@ -279,10 +296,16 @@ internal static class PublishPhase
         var anchor = Path.Combine(baseDir, Path.Combine(AnchorSegments));
         Directory.CreateDirectory(anchor);
 
-        string[] required =
-        [
+        var required = new List<string>
+        {
             Path.Combine(baseDir, "db", "scylla", "cassandra-rackdc.nam.properties"),
-        ];
+        };
+        if (webTls)
+        {
+            // The compose graph bind-mounts this template into octocon-web; missing it would
+            // surface as a docker mount failure on `docker compose up`.
+            required.Add(Path.Combine(baseDir, "web", "nginx", "default.conf.template"));
+        }
         var missing = required.Where(p => !File.Exists(p)).ToList();
         if (missing.Count > 0)
         {
@@ -333,6 +356,18 @@ internal static class PublishPhase
             ["Parameters:postgres-user"] = secrets.PostgresUser,
             ["Parameters:postgres-password"] = secrets.PostgresPassword,
             ["Parameters:postgres-init-password"] = secrets.PostgresInitPassword,
+            // Pushes the operator's database-name choice into the AppHost graph; the matching
+            // AddParameter("postgres-db", "interfold", publishValueAsDefault: true) in
+            // InterfoldAppHost picks this up via IConfiguration and Aspire writes it through
+            // to .env as POSTGRES_DB= (filled in by BuildEnvReplacements above).
+            ["Parameters:postgres-db"] = config.PostgresDatabase,
+            // ClusterName is read directly from IConfiguration in InterfoldAppHost (matching
+            // the include-scylla / scylla-topology pattern) rather than as an Aspire parameter
+            // resource, because the value also has to land on Scylla's WithArgs list and that
+            // overload takes plain strings. The value gets baked into the compose YAML at
+            // publish time as both CASSANDRA_CLUSTER_NAME and --cluster-name; no .env round
+            // trip needed.
+            ["Parameters:cluster-name"] = config.ClusterName,
             ["Parameters:scylla-user"] = secrets.ScyllaUser,
             ["Parameters:scylla-password"] = secrets.ScyllaPassword,
             ["Parameters:encryption-private-key"] = secrets.EncryptionPrivateKeyB64,
@@ -350,8 +385,17 @@ internal static class PublishPhase
             // Self-hosting stacks don't need the Aspire dev dashboard - it would pull an MCR-nightly
             // image at compose-up time which is inappropriate for production deployments.
             ["Parameters:include-dashboard"] = "false",
-            // Disable the optional web container for self-hosting by default; operators can flip it via config later.
-            ["Parameters:include-web"] = "false",
+            // The web container is opt-in: off by default, force-on whenever the operator
+            // opted into TLS termination at the web tier (it makes no sense to ship the cert
+            // wiring without the container that needs it). Operators that want HTTP-only web
+            // can still drop the toggle in interfold.bootstrap.json after generation.
+            ["Parameters:include-web"] = config.Deployment.WebHttps ? "true" : "false",
+            ["Parameters:web-tls"] = config.Deployment.WebHttps ? "true" : "false",
+            // Server name baked into the rendered nginx config. Domains is validated to be
+            // non-empty by ConfigPhase, so [0] is safe here.
+            ["Parameters:web-server-name"] = config.Deployment.Domains.Count > 0
+                ? config.Deployment.Domains[0]
+                : "_",
             ["Ports:postgres"] = config.Ports.Postgres.ToString(),
             ["Ports:scylla"] = config.Ports.Scylla.ToString(),
             ["Ports:api-http"] = config.Ports.ApiHttp.ToString(),

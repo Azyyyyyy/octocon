@@ -76,7 +76,7 @@ public sealed class MultiNodeScyllaTests(MultiNodeScyllaFixture fixture)
         try
         {
             // Column names match the live schema in
-            // csharp/Interfold.Infrastructure.Scylla/Migrations/002_create_octocon_schema.templated.cql
+            // csharp/Interfold.Infrastructure.Scylla/Migrations/002_create_interfold_schema.templated.cql
             // (PRIMARY KEY (user_id) on the `global.user_registry` table); the previous
             // `id` literal would now fail with "Unknown identifier id".
             var testUserId = $"test-{Guid.NewGuid():N}"[..20];

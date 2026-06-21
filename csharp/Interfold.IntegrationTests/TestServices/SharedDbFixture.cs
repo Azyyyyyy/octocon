@@ -100,6 +100,12 @@ public sealed class SharedDbFixture : AspireFixture<AppHost::Projects.Interfold_
             // the test process and DbInitHelper aligned without having to read back the
             // GenerateParameterDefault output from the AppHost service provider.
             $"Parameters:postgres-init-password={TestDbCredentials.PostgresInitPassword}",
+            // Pin the application database name so the AppHost's `Parameters:postgres-db`
+            // default and the in-process DbInitHelper.DefaultPostgresDb cannot silently diverge
+            // (e.g. if someone changes the AppHost default later). Both currently resolve to
+            // "interfold"; routing both through the same constant means a single rename moves
+            // them in lockstep.
+            $"Parameters:postgres-db={DbInitHelper.DefaultPostgresDb}",
             $"Parameters:scylla-user={TestDbCredentials.ScyllaAppUser}",
             $"Parameters:scylla-password={TestDbCredentials.ScyllaAppPassword}",
             "Parameters:encryption-private-key=TEST",
@@ -178,7 +184,7 @@ public sealed class SharedDbFixture : AspireFixture<AppHost::Projects.Interfold_
         PostgresConnectionString =
             $"Host={pgEndpoint.Host};Port={pgEndpoint.Port};" +
             $"Username={TestDbCredentials.PostgresAppUser};Password={TestDbCredentials.PostgresAppPassword};" +
-            "Database=octocon;SSL Mode=Disable;Maximum Pool Size=5";
+            $"Database={DbInitHelper.DefaultPostgresDb};SSL Mode=Disable;Maximum Pool Size=5";
 
         // Verify Postgres is actually reachable as the app user from the host before the
         // migration runner connects. Docker Desktop on Windows can delay host port forwarding

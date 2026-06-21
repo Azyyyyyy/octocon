@@ -20,7 +20,7 @@ options object inside the API process or on a seeded row inside Postgres.
 | **1. Compile-time defaults** | C# constants and property initialisers      | Source code (`Interfold.Contracts.Configuration.*`) | DI binding helpers                 |
 | **2. Operator file**         | `deploy/interfold.bootstrap.json`           | Operator's working copy                             | `Interfold.Bootstrapper` only      |
 | **3. Environment variables** | `deploy/.env` (compose-bound) + process env | `OCTOCON_*`, `ASPNETCORE_*`, `Parameters:*`         | API at DI bind time                |
-| **4. `internal.secrets`**    | Postgres row `internal.secrets` table       | Inside the `octocon` database                       | API at startup via `ISecretsStore` |
+| **4. `internal.secrets`**    | Postgres row `internal.secrets` table       | Inside the application database (default `interfold`, configurable via `BootstrapConfig.postgresDatabase`) | API at startup via `ISecretsStore` |
 
 
 Layers cascade right-to-left at boot: env binds first, then `SecretsBootstrapService`
@@ -83,6 +83,15 @@ Shape lives on `[BootstrapConfig](../csharp/Interfold.Bootstrapper/Configuration
   },
   "scyllaMode": "single",            // "single" | "multi" | "cassandra"
   "apiImage":   "ghcr.io/interfold/api:latest",
+  "postgresDatabase": "interfold",   // Postgres application DB name; any safe identifier
+                                     // matching ^[A-Za-z_][A-Za-z0-9_]{0,62}$. Becomes the
+                                     // Database= field on OCTOCON_POSTGRES_CONNECTION and
+                                     // the target of DatabaseInitPhase's CREATE DATABASE.
+  "clusterName": "InterfoldCluster", // Advertised CQL cluster identity. Lands on
+                                     // CASSANDRA_CLUSTER_NAME (Cassandra) and the
+                                     // --cluster-name CLI flag (Scylla). Pure metadata,
+                                     // visible via `SELECT cluster_name FROM system.local`.
+                                     // Allowed: 1..64 chars matching [A-Za-z0-9 ._-].
   "oauth": {
     "googleClientSecret":  "...",    // empty -> row skipped
     "discordClientSecret": "",       // empty -> row skipped
@@ -119,7 +128,7 @@ publish phase. Variables marked **(operator)** must be supplied by hand.
 | Env var                             | Default                                           | Notes                                                                                                  |
 | ----------------------------------- | ------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
 | `OCTOCON_PERSISTENCE`               | `scylla-postgres`                                 | `scylla-postgres` or `inmemory`. (bootstrapper-managed)                                                |
-| `OCTOCON_POSTGRES_CONNECTION`       | localhost fallback                                | Built from `Parameters:postgres-`*. (bootstrapper-managed)                                             |
+| `OCTOCON_POSTGRES_CONNECTION`       | localhost fallback                                | Built from `Parameters:postgres-*` (including `Parameters:postgres-db`, default `interfold`, sourced from `BootstrapConfig.postgresDatabase`). (bootstrapper-managed) |
 | `OCTOCON_SCYLLA_KEYSPACE`           | `nam`                                             | Per-instance region identity. **Single source.** No store fallback. (operator)                         |
 | `OCTOCON_SINGLE_SCYLLA_INSTANCE`    | `true` (`single`/`cassandra`) / `false` (`multi`) | Whether the migration service creates all regional keyspaces or just one. (bootstrapper-managed)       |
 | `OCTOCON_DB_RETRY_ATTEMPTS`         | `3`                                               | (operator)                                                                                             |
@@ -230,10 +239,16 @@ your `.env`, they are dead values — the API no longer reads them.
 
 | Env var                                           | Default           | Notes                                                                                                              |
 | ------------------------------------------------- | ----------------- | ------------------------------------------------------------------------------------------------------------------ |
-| `ASPNETCORE_HTTP_PORTS`                           | `5100`            | Set by AppHost. (bootstrapper-managed)                                                                             |
-| `ASPNETCORE_HTTPS_PORTS`                          | `5101`            | Set by AppHost. (bootstrapper-managed)                                                                             |
+| `ASPNETCORE_HTTP_PORTS`                           | `5100`            | Set by AppHost from `Ports:api-container-http`. (bootstrapper-managed)                                              |
+| `ASPNETCORE_HTTPS_PORTS`                          | `5101`            | Set by AppHost from `Ports:api-container-https`. (bootstrapper-managed)                                             |
 | `ASPNETCORE_Kestrel__Certificates__Default__Path` | `/certs/leaf.pfx` | Set by AppHost. (bootstrapper-managed)                                                                             |
 | *password is **not** an env var*                  | —                 | Fetched from `internal.secrets:certs:leaf_pfx_password` before Kestrel binds. See [boot ordering](#boot-ordering). |
+
+The API image itself (`/Dockerfile`) does not pin its listening ports — AppHost owns them
+end-to-end via the env vars above, plus the matching compose `targetPort` and the
+`curl http://localhost:<port>/health/ready` healthcheck. Operators who want to run the
+container standalone (outside AppHost) need to set `ASPNETCORE_URLS` themselves; otherwise
+ASP.NET Core falls through to its built-in default of `http://+:8080`.
 
 
 #### Testing
@@ -360,8 +375,8 @@ guards in the SQL/CQL. The ledger also detects post-deploy edits to applied file
 Each row records `checksum` (hex SHA-256 of the embedded resource bytes), `applied_at`,
 `duration_ms`, and `applied_by` (the assembly informational version of the runner that
 wrote the row). For Scylla the `scope` column is the regional keyspace name for the per-
-region templates (`001_create_octocon_keyspaces.cql`,
-`002_create_octocon_schema.templated.cql`) and `grants:<keyspace>` for the GRANT loop
+region templates (`001_create_interfold_keyspaces.cql`,
+`002_create_interfold_schema.templated.cql`) and `grants:<keyspace>` for the GRANT loop
 (version = `grants_v1`, bump that constant in
 `[ScyllaMigrationService.cs](../csharp/Interfold.Infrastructure.Scylla/ScyllaMigrationService.cs)`
 when the grant set changes).

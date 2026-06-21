@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Interfold.Bootstrapper.Cli;
 using Interfold.Bootstrapper.Configuration;
 
@@ -174,7 +175,49 @@ internal static class ConfigPhase
                 $"config.databaseMode='{config.DatabaseMode}' is invalid. Expected: single | multi | cassandra. " +
                 "(Translates to AppHost parameters include-scylla / include-cassandra / scylla-topology.)");
         }
+
+        // The value flows into both the API connection string (Database=<name>) and the seeder's
+        // CREATE DATABASE "<name>" call. Restricting to a Postgres-safe identifier keeps both
+        // call sites quoting-safe and inside Postgres' 63-byte NAMEDATALEN budget. We deliberately
+        // forbid leading digits and punctuation so the name doesn't need double-quoted-everywhere
+        // handling and so it can also serve as a default role / schema prefix downstream.
+        if (string.IsNullOrWhiteSpace(config.PostgresDatabase))
+        {
+            throw new InvalidOperationException(
+                "config.postgresDatabase must be a non-empty Postgres identifier (default: 'interfold').");
+        }
+        if (!PostgresIdentifierPattern.IsMatch(config.PostgresDatabase))
+        {
+            throw new InvalidOperationException(
+                $"config.postgresDatabase='{config.PostgresDatabase}' is not a safe Postgres identifier. " +
+                "Allowed: 1..63 chars matching [A-Za-z_][A-Za-z0-9_]*.");
+        }
+
+        // ClusterName flows into Cassandra's CASSANDRA_CLUSTER_NAME (which the entrypoint
+        // pastes into cassandra.yaml via an in-place rewrite) and Scylla's `--cluster-name`
+        // CLI flag. Single quotes would break the YAML rewrite; newlines / control chars
+        // would corrupt the YAML or the argv. The character set below is the intersection
+        // of what both backends accept without quoting gymnastics: letters, digits, spaces,
+        // dashes, dots, underscores. 1..64 chars matches Cassandra's documented limit.
+        if (string.IsNullOrWhiteSpace(config.ClusterName))
+        {
+            throw new InvalidOperationException(
+                "config.clusterName must be a non-empty cluster identifier (default: 'InterfoldCluster').");
+        }
+        if (!ClusterNamePattern.IsMatch(config.ClusterName))
+        {
+            throw new InvalidOperationException(
+                $"config.clusterName='{config.ClusterName}' contains characters that would break " +
+                "Cassandra's cassandra.yaml rewrite or Scylla's CLI argument parsing. " +
+                "Allowed: 1..64 chars matching [A-Za-z0-9 ._-].");
+        }
     }
+
+    private static readonly Regex PostgresIdentifierPattern =
+        new("^[A-Za-z_][A-Za-z0-9_]{0,62}$", RegexOptions.CultureInvariant | RegexOptions.Compiled);
+
+    private static readonly Regex ClusterNamePattern =
+        new("^[A-Za-z0-9 ._-]{1,64}$", RegexOptions.CultureInvariant | RegexOptions.Compiled);
 
     private static void ValidatePort(int port, string field)
     {

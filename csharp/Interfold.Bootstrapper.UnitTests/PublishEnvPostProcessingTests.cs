@@ -11,8 +11,10 @@ namespace Interfold.Bootstrapper.UnitTests;
 /// unit-level check catches drift in either direction at sub-second speed.
 ///
 /// After the JWT / OAuth-secret / leaf-PFX-password migration into <c>internal.secrets</c>,
-/// the parameter dict shrunk from 10 to 7 keys and the API bind-mount set dropped from two
-/// (<c>/keys</c> + <c>/certs</c>) to one (<c>/certs</c>). Single-mode total is now 7 + 1 + 1 = 9.
+/// the parameter dict shrunk from 10 to 6 keys; the subsequent addition of <c>POSTGRES_DB</c>
+/// (operator-tunable application database name) bumped it back to 7. The API bind-mount set
+/// dropped from two (<c>/keys</c> + <c>/certs</c>) to one (<c>/certs</c>). Single-mode total is
+/// now 7 + 1 + 1 = 9.
 /// </summary>
 public sealed class PublishEnvPostProcessingTests
 {
@@ -34,7 +36,7 @@ public sealed class PublishEnvPostProcessingTests
     }
 
     [Test]
-    public async Task BuildEnvReplacementsProducesAllSixParameterKeys()
+    public async Task BuildEnvReplacementsProducesAllSevenParameterKeys()
     {
         var (config, secrets) = MakeInputs();
         const string baseDir = "/var/lib/interfold";
@@ -47,6 +49,7 @@ public sealed class PublishEnvPostProcessingTests
             "POSTGRES_USER",
             "POSTGRES_PASSWORD",
             "POSTGRES_INIT_PASSWORD",
+            "POSTGRES_DB",
             "SCYLLA_USER",
             "SCYLLA_PASSWORD",
             "ENCRYPTION_PRIVATE_KEY",
@@ -73,7 +76,22 @@ public sealed class PublishEnvPostProcessingTests
     }
 
     [Test]
-    public async Task BuildEnvReplacementsProducesAllEightKeysInSingleMode()
+    public async Task BuildEnvReplacementsCarriesPostgresDatabaseNameFromConfig()
+    {
+        // POSTGRES_DB is operator-tunable via BootstrapConfig.PostgresDatabase; the env
+        // replacement must use the configured value verbatim so the API connection string
+        // (Database=<value>) lines up with the database DatabaseInitPhase actually creates.
+        var (config, secrets) = MakeInputs();
+        config.PostgresDatabase = "my_custom_db";
+
+        var replacements = PublishPhase.BuildEnvReplacements(config, secrets, "/base", "/out");
+
+        await Assert.That(replacements.Parameters.ContainsKey("POSTGRES_DB")).IsTrue();
+        await Assert.That(replacements.Parameters["POSTGRES_DB"]).IsEqualTo("my_custom_db");
+    }
+
+    [Test]
+    public async Task BuildEnvReplacementsProducesAllNineKeysInSingleMode()
     {
         var (config, secrets) = MakeInputs(databaseMode: "single");
         const string baseDir = "/var/lib/interfold";
@@ -82,8 +100,8 @@ public sealed class PublishEnvPostProcessingTests
         var replacements = PublishPhase.BuildEnvReplacements(config, secrets, baseDir, outputDir);
 
         var total = replacements.Parameters.Count + replacements.BindMounts.Count;
-        // Single mode: 6 parameter keys + 1 API bind mount (/certs) + 1 Scylla rackdc bind mount = 8.
-        await Assert.That(total).IsEqualTo(8);
+        // Single mode: 7 parameter keys + 1 API bind mount (/certs) + 1 Scylla rackdc bind mount = 9.
+        await Assert.That(total).IsEqualTo(9);
     }
 
     [Test]
@@ -175,6 +193,50 @@ public sealed class PublishEnvPostProcessingTests
 
         await Assert.That(ex.Message).Contains("databaseMode");
         await Assert.That(ex.Message).Contains("triple");
+    }
+
+    [Test]
+    public async Task WebHttpsOffDoesNotAddOctoconWebBindMounts()
+    {
+        var (config, secrets) = MakeInputs();
+        config.Deployment.WebHttps = false;
+        var replacements = PublishPhase.BuildEnvReplacements(config, secrets, "/base", "/out");
+
+        await Assert.That(replacements.BindMounts.ContainsKey("octocon-web:/certs")).IsFalse()
+            .Because("octocon-web:/certs must only appear when deployment.webHttps=true");
+        await Assert.That(replacements.BindMounts.ContainsKey(
+            "octocon-web:/etc/nginx/templates/default.conf.template")).IsFalse()
+            .Because("nginx template bind mount must only appear when deployment.webHttps=true");
+    }
+
+    [Test]
+    public async Task WebHttpsOnAddsCertsAndNginxTemplateBindMounts()
+    {
+        var (config, secrets) = MakeInputs();
+        config.Deployment.WebHttps = true;
+        var baseDir = Path.Combine(Path.GetTempPath(), "interfold-basedir");
+        var outputDir = Path.Combine(Path.GetTempPath(), "interfold-outdir");
+
+        var replacements = PublishPhase.BuildEnvReplacements(config, secrets, baseDir, outputDir);
+
+        // /certs is shared with the API: both services bind-mount {outputDir}/certs/, so the leaf
+        // PFX (read by Kestrel) and the leaf CRT/KEY (read by nginx) come from the same on-disk
+        // material rotated by CertificatePhase.
+        await Assert.That(replacements.BindMounts.ContainsKey("octocon-web:/certs")).IsTrue();
+        var webCerts = replacements.BindMounts["octocon-web:/certs"];
+        await Assert.That(Path.IsPathFullyQualified(webCerts)).IsTrue();
+        await Assert.That(webCerts).StartsWith(outputDir);
+        await Assert.That(replacements.BindMounts["interfold-api:/certs"]).IsEqualTo(webCerts)
+            .Because("API and web tiers must read from the same on-disk certs directory");
+
+        // The nginx template lives next to the bootstrapper binary (baseDir), not under outputDir,
+        // mirroring how cassandra-rackdc.* properties are shipped.
+        const string nginxKey = "octocon-web:/etc/nginx/templates/default.conf.template";
+        await Assert.That(replacements.BindMounts.ContainsKey(nginxKey)).IsTrue();
+        var nginxTemplate = replacements.BindMounts[nginxKey];
+        await Assert.That(Path.IsPathFullyQualified(nginxTemplate)).IsTrue();
+        await Assert.That(nginxTemplate).StartsWith(baseDir);
+        await Assert.That(nginxTemplate).EndsWith("default.conf.template");
     }
 
     [Test]

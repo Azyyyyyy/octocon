@@ -1,0 +1,4 @@
+{"seq":1,"timestamp":"2026-06-21T19:07:36.6072845Z","label":"Before(TestDiscovery)","sessionCount":"0","discoveryCount":"0"}
+{"seq":2,"timestamp":"2026-06-21T19:07:36.7131481Z","label":"After(TestDiscovery)","sessionCount":"216","discoveryCount":"216"}
+{"seq":3,"timestamp":"2026-06-21T19:07:36.8686990Z","label":"Before(TestSession)","sessionCount":"216","discoveryCount":"216"}
+{"seq":4,"timestamp":"2026-06-21T19:07:37.3439326Z","label":"SharedDbFixture.BuildArgs","sessionCount":"216","discoveryCount":"216"}
