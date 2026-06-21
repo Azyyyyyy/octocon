@@ -65,6 +65,7 @@ public sealed class SharedDbFixture : AspireFixture<AppHost::Projects.Interfold_
         // references. The [Before(HookType.TestDiscovery)] hook on BaseEndpointTest has
         // populated RequiredFixtures by the time AspireFixture.InitializeAsync (the only
         // caller of this Args getter) runs.
+        LifecycleProbe.Log("SharedDbFixture.BuildArgs");
         var args = new List<string>
         {
             "Parameters:include-api=false",
@@ -100,6 +101,20 @@ public sealed class SharedDbFixture : AspireFixture<AppHost::Projects.Interfold_
     // container resources to reach `Running` via `ResourceNotificationService`), so we tell
     // the base class not to do its own pre-flight wait.
     protected override ResourceWaitBehavior WaitBehavior => ResourceWaitBehavior.None;
+
+    public override async Task InitializeAsync()
+    {
+        // Raise fs.aio-max-nr before any Scylla node starts. We pass the *session-wide*
+        // total (this fixture's optional 1 + MultiNodeScyllaFixture's optional 7) so a mixed
+        // session that runs both fixtures together gets sized for all 8 nodes from the first
+        // call; MultiNodeScyllaFixture re-asserts the same total and short-circuits via
+        // HostAioPrerequisite's cache. No-op when neither Scylla nor MultiNode is requested
+        // (Cassandra-only / InMemory-only runs).
+        await HostAioPrerequisite
+            .EnsureAsync(HostAioPrerequisite.TotalScyllaNodesForSession())
+            .ConfigureAwait(false);
+        await base.InitializeAsync().ConfigureAwait(false);
+    }
 
     protected override async Task WaitForResourcesAsync(DistributedApplication app, CancellationToken cancellationToken)
     {

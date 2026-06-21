@@ -65,6 +65,24 @@ public static class InterfoldAppHost
         var scyllaTopology = builder.Configuration["Parameters:scylla-topology"] ?? "single";
         var isMultiScylla = string.Equals(scyllaTopology, "multi", StringComparison.OrdinalIgnoreCase);
 
+        // Postgres is unconditional in the dev `aspire run` workflow and the bootstrapper's
+        // publish flow (the API depends on it), but the integration test
+        // MultiNodeScyllaFixture flips this off so its multi-DC AppHost can share the
+        // SharedDbFixture's existing msg-db container instead of starting a redundant
+        // second Postgres instance. Defaulting to true preserves back-compat for every
+        // caller that doesn't set the parameter.
+        var includePostgres = ParseToggle(builder.Configuration["Parameters:include-postgres"], fallback: true);
+
+        if (includeApi && !includePostgres)
+        {
+            // Guard against a misconfiguration that would silently land in a deployment with
+            // an API that has nothing to talk to (the API's persistence path requires
+            // Postgres for internal.secrets, hosted services, and migrations). Test fixtures
+            // disable both toggles together.
+            throw new InvalidOperationException(
+                "Parameters:include-api=true requires Parameters:include-postgres=true (the API depends on msg-db).");
+        }
+
         static bool ParseToggle(string? raw, bool fallback)
             => string.IsNullOrEmpty(raw)
                 ? fallback
@@ -196,6 +214,12 @@ public static class InterfoldAppHost
         }
 
         // --- PostgreSQL (TimescaleDB) ---
+        // Skipped entirely when `Parameters:include-postgres=false` (the multi-DC integration
+        // test fixture sets this so it can share SharedDbFixture's existing msg-db rather
+        // than starting a redundant Postgres). The earlier guard (`includeApi && !includePostgres`)
+        // ensures every includeApi codepath below this point still has a non-null `msgDb` to
+        // wire up.
+        //
         // First-boot pattern (least-privilege):
         //   - `POSTGRES_USER=db_init`: postgres creates db_init as the bootstrap superuser
         //     (OID 10). We can't ever demote that role per postgres' own hard-coded restriction
@@ -210,57 +234,61 @@ public static class InterfoldAppHost
         // The interfold-api connection string below references `${POSTGRES_USER}` /
         // `${POSTGRES_PASSWORD}` which resolve to the *app* user (interfold), not db_init. So the
         // only PostgreSQL connection string in the compose graph is the app's.
-        var msgDb = builder.AddContainer("msg-db", "timescale/timescaledb", "latest-pg18")
-            .WithContainerNetworkAlias("msg-db")
-            .WithEnvironment("POSTGRES_USER", "db_init")
-            .WithEnvironment("POSTGRES_PASSWORD", postgresInitPassword)
-            .WithEnvironment("PGDATA", "/var/lib/postgresql/data/pgdata")
-            // initdb's default --auth-host is `trust`, which produces `host all all 127.0.0.1/32 trust`
-            // in pg_hba.conf BEFORE the entrypoint appends `host all all all scram-sha-256`. With
-            // first-match-wins ordering, TCP loopback connections (e.g. `psql -h 127.0.0.1` from
-            // inside the container) silently bypass the password check — defeating the bootstrapper's
-            // db_init password scramble. Forcing scram-sha-256 for every host entry closes that
-            // loophole and matches the security posture the rest of the stack assumes.
-            //
-            // Unix socket connections still use `local all all trust`, which is what the bootstrapper's
-            // DatabaseInitPhase relies on (it connects as db_init via the socket to mint the app +
-            // admin roles before the password is scrambled).
-            .WithEnvironment("POSTGRES_INITDB_ARGS", "--auth-host=scram-sha-256")
-            // Bump pg_ctl's wait timeout from the 60s default. The postgres image entrypoint
-            // does `pg_ctl -m fast -w stop` after the timescaledb-tune init script runs, then
-            // re-execs postgres in normal mode. On slow Docker-in-Docker disks the shutdown
-            // checkpoint can take well past 60s, which makes the entrypoint exit with
-            // "pg_ctl: server does not shut down" and the container die before the bootstrapper's
-            // WaitForPostgresAsync ever sees normal mode. 300s gives us comfortable headroom.
-            .WithEnvironment("PGCTLTIMEOUT", "300")
-            // timescaledb-tune (the image's 001_timescaledb_tune.sh init script) reads
-            // /sys/fs/cgroup/memory.max to size shared_buffers. Self-hosting hosts running on
-            // Docker Desktop / cgroup-v2-restricted environments may not expose that file, in
-            // which case the tune script panics and the container exits during init. Setting
-            // TS_TUNE_MEMORY + TS_TUNE_NUM_CPUS bypasses auto-detection with safe conservative
-            // defaults; operators on bigger boxes can override these env vars in a
-            // docker-compose.override.yaml without re-running the bootstrapper.
-            .WithEnvironment("TS_TUNE_MEMORY", "1GB")
-            .WithEnvironment("TS_TUNE_NUM_CPUS", "2")
-            .WithEndpoint(port: postgresPort, targetPort: 5432, name: "postgres", scheme: "tcp")
-            .PublishAsDockerComposeService((_, service) =>
-            {
-                service.Networks = ["postgres"];
-                service.Healthcheck = new Healthcheck
-                {
-                    Test = ["CMD-SHELL", "pg_isready -U $POSTGRES_USER -d postgres"],
-                    Interval = "10s",
-                    Timeout = "5s",
-                    Retries = 10,
-                    StartPeriod = "15s"
-                };
-            });
-        if (includeApi)
-            msgDb.WithHealthCheck("msg-db-health");
-        if (persistentContainers)
+        IResourceBuilder<ContainerResource>? msgDb = null;
+        if (includePostgres)
         {
-            msgDb.WithVolume("msg_pgdata", "/var/lib/postgresql/data");
-            msgDb.WithLifetime(ContainerLifetime.Persistent);
+            msgDb = builder.AddContainer("msg-db", "timescale/timescaledb", "latest-pg18")
+                .WithContainerNetworkAlias("msg-db")
+                .WithEnvironment("POSTGRES_USER", "db_init")
+                .WithEnvironment("POSTGRES_PASSWORD", postgresInitPassword)
+                .WithEnvironment("PGDATA", "/var/lib/postgresql/data/pgdata")
+                // initdb's default --auth-host is `trust`, which produces `host all all 127.0.0.1/32 trust`
+                // in pg_hba.conf BEFORE the entrypoint appends `host all all all scram-sha-256`. With
+                // first-match-wins ordering, TCP loopback connections (e.g. `psql -h 127.0.0.1` from
+                // inside the container) silently bypass the password check — defeating the bootstrapper's
+                // db_init password scramble. Forcing scram-sha-256 for every host entry closes that
+                // loophole and matches the security posture the rest of the stack assumes.
+                //
+                // Unix socket connections still use `local all all trust`, which is what the bootstrapper's
+                // DatabaseInitPhase relies on (it connects as db_init via the socket to mint the app +
+                // admin roles before the password is scrambled).
+                .WithEnvironment("POSTGRES_INITDB_ARGS", "--auth-host=scram-sha-256")
+                // Bump pg_ctl's wait timeout from the 60s default. The postgres image entrypoint
+                // does `pg_ctl -m fast -w stop` after the timescaledb-tune init script runs, then
+                // re-execs postgres in normal mode. On slow Docker-in-Docker disks the shutdown
+                // checkpoint can take well past 60s, which makes the entrypoint exit with
+                // "pg_ctl: server does not shut down" and the container die before the bootstrapper's
+                // WaitForPostgresAsync ever sees normal mode. 300s gives us comfortable headroom.
+                .WithEnvironment("PGCTLTIMEOUT", "300")
+                // timescaledb-tune (the image's 001_timescaledb_tune.sh init script) reads
+                // /sys/fs/cgroup/memory.max to size shared_buffers. Self-hosting hosts running on
+                // Docker Desktop / cgroup-v2-restricted environments may not expose that file, in
+                // which case the tune script panics and the container exits during init. Setting
+                // TS_TUNE_MEMORY + TS_TUNE_NUM_CPUS bypasses auto-detection with safe conservative
+                // defaults; operators on bigger boxes can override these env vars in a
+                // docker-compose.override.yaml without re-running the bootstrapper.
+                .WithEnvironment("TS_TUNE_MEMORY", "1GB")
+                .WithEnvironment("TS_TUNE_NUM_CPUS", "2")
+                .WithEndpoint(port: postgresPort, targetPort: 5432, name: "postgres", scheme: "tcp")
+                .PublishAsDockerComposeService((_, service) =>
+                {
+                    service.Networks = ["postgres"];
+                    service.Healthcheck = new Healthcheck
+                    {
+                        Test = ["CMD-SHELL", "pg_isready -U $POSTGRES_USER -d postgres"],
+                        Interval = "10s",
+                        Timeout = "5s",
+                        Retries = 10,
+                        StartPeriod = "15s"
+                    };
+                });
+            if (includeApi)
+                msgDb.WithHealthCheck("msg-db-health");
+            if (persistentContainers)
+            {
+                msgDb.WithVolume("msg_pgdata", "/var/lib/postgresql/data");
+                msgDb.WithLifetime(ContainerLifetime.Persistent);
+            }
         }
 
         // --- ScyllaDB / Cassandra (independent toggles, can both be on at once) ---
@@ -411,9 +439,6 @@ public static class InterfoldAppHost
         // file therefore contains only the app user's credentials - no init/admin password is
         // ever exposed via the compose graph.
 
-        // --- Endpoint references (resolve to localhost:{hostPort} in dev, container:{targetPort} in compose) ---
-        var pgEndpoint = msgDb.GetEndpoint("postgres");
-
         // --- Interfold API (from source for dev, or pre-built container image for self-hosting) ---
         // The self-hosting bootstrapper sets `Parameters:api-image` to a published image ref
         // (e.g. ghcr.io/interfold/api:1.2.3) so the published compose references the image
@@ -421,6 +446,11 @@ public static class InterfoldAppHost
         // directory (where the project file does not exist).
         if (includeApi)
         {
+            // The earlier guard (`includeApi && !includePostgres` -> throw) means msgDb is
+            // guaranteed non-null on this branch.
+            var msgDbResource = msgDb!;
+            var pgEndpoint = msgDbResource.GetEndpoint("postgres");
+
             void ConfigureApiCommon(IResourceBuilder<IResourceWithEnvironment> api)
             {
                 api.WithEnvironment("OCTOCON_PERSISTENCE", "scylla-postgres")
@@ -467,7 +497,7 @@ public static class InterfoldAppHost
                     .WithHttpsEndpoint(port: apiHttpsPort, targetPort: 5101, name: "https")
                     .WithHttpHealthCheck("/health/ready", endpointName: "http")
                     .WithExternalHttpEndpoints()
-                    .WaitFor(msgDb)
+                    .WaitFor(msgDbResource)
                     .PublishAsDockerComposeService((_, service) =>
                     {
                         service.Networks = ["scylla", "postgres", "api"];
@@ -509,7 +539,7 @@ public static class InterfoldAppHost
                     .WithHttpsEndpoint(port: apiHttpsPort, targetPort: 5101, name: "https")
                     .WithHttpHealthCheck("/health/ready", endpointName: "http")
                     .WithExternalHttpEndpoints()
-                    .WaitFor(msgDb)
+                    .WaitFor(msgDbResource)
                     .PublishAsDockerComposeService((_, service) =>
                     {
                         service.Networks = ["scylla", "postgres", "api"];

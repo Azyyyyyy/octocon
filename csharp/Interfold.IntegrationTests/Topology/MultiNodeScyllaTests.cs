@@ -1,13 +1,12 @@
 using Cassandra;
 using Interfold.IntegrationTests.TestServices;
-using TUnit.Core.Exceptions;
 
 namespace Interfold.IntegrationTests.Topology;
 
 /// <summary>
 /// Tests that a multi-node ScyllaDB cluster (7 regional DCs) correctly spins up
 /// and can serve cross-DC queries. Uses a dedicated <see cref="MultiNodeScyllaFixture"/>
-/// managed by TUnit.Aspire.
+/// managed by TUnit.Aspire that shares Postgres with <see cref="SharedDbFixture"/>.
 /// </summary>
 [ClassDataSource<MultiNodeScyllaFixture>(Shared = SharedType.PerTestSession)]
 public sealed class MultiNodeScyllaTests(MultiNodeScyllaFixture fixture)
@@ -17,9 +16,6 @@ public sealed class MultiNodeScyllaTests(MultiNodeScyllaFixture fixture)
     [Test]
     public async Task MultiNodeScylla_AllNodesReachUpNormalState()
     {
-        if (!fixture.IsAvailable)
-            throw new SkipTestException("Multi-node Scylla fixture is not available (Docker required).");
-
         var cluster = Cluster.Builder()
             .AddContactPoint("127.0.0.1")
             .WithPort(fixture.ScyllaPort)
@@ -67,9 +63,6 @@ public sealed class MultiNodeScyllaTests(MultiNodeScyllaFixture fixture)
     [DependsOn(nameof(MultiNodeScylla_AllNodesReachUpNormalState))]
     public async Task MultiNodeScylla_CrossDcCqlQuerySucceeds()
     {
-        if (!fixture.IsAvailable)
-            throw new SkipTestException("Multi-node Scylla fixture is not available (Docker required).");
-
         var namCluster = Cluster.Builder()
             .AddContactPoint("127.0.0.1")
             .WithPort(fixture.ScyllaPort)

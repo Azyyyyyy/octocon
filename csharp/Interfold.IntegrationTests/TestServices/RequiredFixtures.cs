@@ -1,54 +1,143 @@
+using TUnit.Core;
+
 namespace Interfold.IntegrationTests.TestServices;
 
 /// <summary>
 /// Process-static record of which <see cref="IWebFactoryFixture"/> implementations the current
-/// test session may request. Populated once by a TUnit
-/// <c>[Before(HookType.TestDiscovery)]</c> hook (see
-/// <c>BaseEndpointTest.RegisterRequiredFixtures</c>) — anchored to that single lifecycle
-/// point rather than scanned lazily on every property read.
+/// test session may request. Populated once per session by walking the scheduled
+/// <see cref="TestContext"/> set exposed via <see cref="TestSessionContext.Current"/> /
+/// <see cref="TestDiscoveryContext.Current"/>, anchored to the
+/// <c>[After(HookType.TestDiscovery)]</c> hook on <c>BaseEndpointTest</c>.
 /// </summary>
 /// <remarks>
 /// <para>
-/// We scan from <c>[Before(TestDiscovery)]</c> rather than <c>[Before(TestSession)]</c>
-/// because TUnit's <c>PerTestSession</c> <c>[ClassDataSource]</c> fixtures are constructed
-/// (and their <c>IAsyncInitializer.InitializeAsync</c> called) during session bootstrapping,
-/// which timestamped tracing showed lands ~500ms <em>before</em> session-level hooks fire.
-/// <c>BeforeTestDiscoveryContext</c> doesn't yet expose a test class list — discovery is what
-/// the hook precedes — so the scan walks loaded test-assembly types instead. This is the
-/// exact pattern the TUnit team recommends in
-/// <see href="https://github.com/thomhurst/TUnit/discussions/1496">Discussion #1496</see>
-/// for cross-assembly setup that has to run before the test graph touches any class.
+/// We rely on the scheduled-test contexts (rather than the previous assembly-wide reflection
+/// scan) so a narrow filter such as <c>--treenode-filter '/*/*/MultiNodeScyllaTests/*'</c>
+/// produces a precise <see cref="Discovered"/> set: in that example
+/// <see cref="NeedScylla"/> and <see cref="NeedCassandra"/> are <c>false</c>, so
+/// <see cref="SharedDbFixture"/> only spins up Postgres while
+/// <see cref="MultiNodeScyllaFixture"/> handles the multi-DC topology in its own host.
+/// A lifecycle probe (see <c>LifecycleProbe</c>) confirmed that
+/// <see cref="TestDiscoveryContext.Current"/> exposes the filter-aware <c>AllTests</c>
+/// list by the time <c>[After(TestDiscovery)]</c> fires — which is still strictly before
+/// TUnit's eager <c>PerTestSession</c> <see cref="ClassDataSourceAttribute{T}"/>
+/// initialization (the moment <c>SharedDbFixture.Args</c> is evaluated).
 /// </para>
 /// <para>
-/// <c>ClassDataSourceAttribute&lt;T&gt;</c> doesn't expose its type argument through a
-/// strongly-typed runtime API, so the hook reaches for <see cref="System.Reflection"/> to
-/// pull the generic argument out of the attribute on each test class. The reflection is
-/// bounded to a single hook invocation that runs once per process.
+/// To stay defensive: if both contexts are unexpectedly null at hook time we fall back to
+/// the previous assembly walk so the suite never silently runs against the wrong fixture
+/// set. The same fallback fires if <see cref="EnsureDiscovered"/> is called from a code path
+/// that ran before <c>[After(TestDiscovery)]</c> (e.g. an unforeseen TUnit lifecycle change).
 /// </para>
 /// </remarks>
 internal static class RequiredFixtures
 {
     private static readonly HashSet<Type> Discovered = new();
+    private static readonly object DiscoveryLock = new();
+    private static bool _populated;
 
-    public static bool NeedScylla => Discovered.Contains(typeof(ScyllaWebFactoryFixture));
+    public static bool NeedScylla => Has<ScyllaWebFactoryFixture>();
 
-    public static bool NeedCassandra => Discovered.Contains(typeof(CassandraWebFactoryFixture));
+    public static bool NeedCassandra => Has<CassandraWebFactoryFixture>();
+
+    public static bool NeedMultiNodeScylla => Has<MultiNodeScyllaFixture>();
 
     /// <summary>
-    /// Idempotent: re-invocation in the same process is a no-op once the set is populated, so
-    /// nested test sessions or accidental hook re-entry don't redo the walk.
+    /// Driven by the <c>[After(HookType.TestDiscovery)]</c> hook on <c>BaseEndpointTest</c>.
+    /// Idempotent: a re-invocation in the same process is a no-op once the set is populated.
     /// </summary>
     public static void Discover()
     {
-        if (Discovered.Count > 0)
+        EnsureDiscovered();
+    }
+
+    private static bool Has<TFixture>()
+    {
+        EnsureDiscovered();
+        return Discovered.Contains(typeof(TFixture));
+    }
+
+    private static void EnsureDiscovered()
+    {
+        if (_populated)
         {
             return;
         }
 
+        lock (DiscoveryLock)
+        {
+            if (_populated)
+            {
+                return;
+            }
+
+            var scheduled = TryGetScheduledClassTypes();
+            if (scheduled is not null)
+            {
+                foreach (var classType in scheduled)
+                {
+                    foreach (var fixtureType in ExtractClassDataSourceTypes(classType, transitive: true))
+                    {
+                        Discovered.Add(fixtureType);
+                    }
+                }
+
+                _populated = true;
+                return;
+            }
+
+            // Defensive fallback: the scheduled-test contexts weren't populated, so fall back
+            // to the legacy assembly walk. This keeps SharedDbFixture from silently running
+            // with the wrong toggles if we end up on a TUnit version that changes the
+            // discovery lifecycle. The over-eagerness only manifests under filtering, and is
+            // exactly the behavior we used to ship.
+            DiscoverViaAssemblyWalk();
+            _populated = true;
+        }
+    }
+
+    private static IEnumerable<Type>? TryGetScheduledClassTypes()
+    {
+        // Prefer the session context (populated alongside discovery) but fall back to the
+        // discovery context which is what fires the [After(TestDiscovery)] hook. Both list the
+        // *scheduled* tests post-filter once discovery has run.
+        var allTests = (IEnumerable<TestContext>?)TestSessionContext.Current?.AllTests
+                     ?? TestDiscoveryContext.Current?.AllTests;
+        if (allTests is null)
+        {
+            return null;
+        }
+
+        // Materialise once so multiple Linq passes don't re-enumerate the underlying TUnit
+        // collection (it isn't documented as multi-iteration safe).
+        var snapshot = allTests as IReadOnlyCollection<TestContext> ?? allTests.ToArray();
+        if (snapshot.Count == 0)
+        {
+            // Empty scheduled set still counts as "populated" — honour the filter even when
+            // the user explicitly excludes everything.
+            return Array.Empty<Type>();
+        }
+
+        var classTypes = new HashSet<Type>();
+        foreach (var test in snapshot)
+        {
+            // TestContext exposes test details via Metadata.TestDetails per TUnit.Core 1.56.
+            var classType = test.Metadata.TestDetails.ClassType;
+            if (classType is not null)
+            {
+                classTypes.Add(classType);
+            }
+        }
+
+        return classTypes;
+    }
+
+    private static void DiscoverViaAssemblyWalk()
+    {
         var assembly = typeof(RequiredFixtures).Assembly;
         foreach (var type in assembly.GetTypes())
         {
-            foreach (var fixtureType in ExtractClassDataSourceTypes(type))
+            foreach (var fixtureType in ExtractClassDataSourceTypes(type, transitive: false))
             {
                 Discovered.Add(fixtureType);
             }
@@ -58,29 +147,52 @@ internal static class RequiredFixtures
     /// <summary>
     /// Yields the generic arguments of every <c>TUnit.Core.ClassDataSourceAttribute&lt;...&gt;</c>
     /// declared on <paramref name="testClassType"/> (or any base class). Generic arities 1..5
-    /// are all covered by the <c>StartsWith</c> match on the open-generic full name.
+    /// are all covered by the <c>StartsWith</c> match on the open-generic full name. When
+    /// <paramref name="transitive"/> is <c>true</c> the walk also recurses into each yielded
+    /// fixture type so e.g. <c>ScyllaWebFactoryFixture</c> (which itself declares
+    /// <c>[ClassDataSource&lt;SharedDbFixture&gt;]</c>) seeds <c>SharedDbFixture</c> into the
+    /// discovered set even though no test class names <c>SharedDbFixture</c> directly. The
+    /// transitive walk only runs in the scheduled-test path because the assembly fallback
+    /// already enumerates every type.
     /// </summary>
-    private static IEnumerable<Type> ExtractClassDataSourceTypes(Type testClassType)
+    private static IEnumerable<Type> ExtractClassDataSourceTypes(Type testClassType, bool transitive)
     {
-        foreach (var attr in testClassType.GetCustomAttributes(inherit: true))
+        var visited = new HashSet<Type>();
+        var stack = new Stack<Type>();
+        stack.Push(testClassType);
+
+        while (stack.Count > 0)
         {
-            var attrType = attr.GetType();
-            if (!attrType.IsGenericType)
+            var current = stack.Pop();
+            if (!visited.Add(current))
             {
                 continue;
             }
 
-            var openGeneric = attrType.GetGenericTypeDefinition();
-            if (openGeneric.FullName?.StartsWith(
-                    "TUnit.Core.ClassDataSourceAttribute`",
-                    StringComparison.Ordinal) != true)
+            foreach (var attr in current.GetCustomAttributes(inherit: true))
             {
-                continue;
-            }
+                var attrType = attr.GetType();
+                if (!attrType.IsGenericType)
+                {
+                    continue;
+                }
 
-            foreach (var t in attrType.GetGenericArguments())
-            {
-                yield return t;
+                var openGeneric = attrType.GetGenericTypeDefinition();
+                if (openGeneric.FullName?.StartsWith(
+                        "TUnit.Core.ClassDataSourceAttribute`",
+                        StringComparison.Ordinal) != true)
+                {
+                    continue;
+                }
+
+                foreach (var t in attrType.GetGenericArguments())
+                {
+                    yield return t;
+                    if (transitive)
+                    {
+                        stack.Push(t);
+                    }
+                }
             }
         }
     }

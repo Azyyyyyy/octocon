@@ -17,37 +17,48 @@ public class BaseEndpointTest
     private const int SoakRepeatCount = 5;
 
     /// <summary>
-    /// Drives <see cref="RequiredFixtures.Discover"/> from the earliest TUnit hook so the
-    /// fixture set is populated before any <see cref="SharedDbFixture"/> initialization.
+    /// Drives <see cref="RequiredFixtures.Discover"/> from the earliest TUnit hook that has
+    /// the scheduled-test set populated, so <c>SharedDbFixture.BuildArgs</c> sees precise
+    /// <see cref="RequiredFixtures.NeedScylla"/> / <see cref="RequiredFixtures.NeedCassandra"/>
+    /// values reflecting the actual filtered run rather than the entire assembly.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// We initially used <c>[Before(HookType.TestSession)]</c>, but timestamped tracing showed
-    /// TUnit eagerly initializes <c>PerTestSession</c> <c>[ClassDataSource]</c> fixtures
-    /// (calling <c>AspireFixture.Args</c> via <c>IAsyncInitializer.InitializeAsync</c>) ~500ms
-    /// before <c>[Before(TestSession)]</c> fires. The published lifecycle table describes
-    /// per-test execution ordering; session-shared fixtures are constructed during session
-    /// bootstrapping, ahead of the hook.
-    /// </para>
-    /// <para>
-    /// <c>[Before(HookType.TestDiscovery)]</c> is the only hook that fires before that
-    /// initialization. <see cref="BeforeTestDiscoveryContext"/> doesn't expose a test class
-    /// list (discovery hasn't run yet), so the hook body delegates to an assembly walk over
-    /// the integration-test assembly. This matches the TUnit team's recommended pattern in
-    /// <see href="https://github.com/thomhurst/TUnit/discussions/1496">Discussion #1496</see>
-    /// for cross-assembly setup that needs to run before any test-graph machinery touches a
-    /// type. The scan is anchored to a single hook invocation, not lazily on every property
-    /// read.
+    /// We use <c>[After(HookType.TestDiscovery)]</c> — a lifecycle probe confirmed both
+    /// <see cref="TUnit.Core.TestSessionContext.Current"/> and
+    /// <see cref="TUnit.Core.TestDiscoveryContext.Current"/> expose the filter-aware
+    /// <c>AllTests</c> list by the time this hook fires. <c>PerTestSession</c>
+    /// <c>[ClassDataSource]</c> initialization (the moment <c>SharedDbFixture.Args</c> is
+    /// evaluated) still happens during session bootstrap, ahead of
+    /// <c>[Before(HookType.TestSession)]</c>, but it runs strictly after this hook so the
+    /// scheduled-test contexts are populated before any fixture's <c>InitializeAsync</c>
+    /// reads them.
     /// </para>
     /// <para>
     /// Hosted on this base class (every integration test derives from it) so TUnit's source
-    /// generator picks up the hook — hooks on static helper classes outside the test graph are
-    /// not scanned.
+    /// generator picks up the hook — hooks on static helper classes outside the test graph
+    /// are not scanned.
     /// </para>
     /// </remarks>
-    [Before(HookType.TestDiscovery)]
+    [After(HookType.TestDiscovery)]
     public static void RegisterRequiredFixtures()
-        => RequiredFixtures.Discover();
+    {
+        LifecycleProbe.Log("After(TestDiscovery)");
+        RequiredFixtures.Discover();
+    }
+
+    /// <summary>
+    /// Lifecycle-ordering probe — temporary. Removed in a follow-up cleanup commit once we've
+    /// validated end-to-end that <c>SharedDbFixture.BuildArgs</c> sees populated contexts at
+    /// the precise moment its <c>Args</c> getter runs.
+    /// </summary>
+    [Before(HookType.TestDiscovery)]
+    public static void Probe_BeforeTestDiscovery()
+        => LifecycleProbe.Log("Before(TestDiscovery)");
+
+    [Before(HookType.TestSession)]
+    public static void Probe_BeforeTestSession()
+        => LifecycleProbe.Log("Before(TestSession)");
 
     internal static bool ReadBoolField(string json, string fieldName)
     {
