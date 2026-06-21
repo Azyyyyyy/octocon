@@ -24,11 +24,18 @@ public sealed class CertificateGenerationTests
         FaultInject: null,
         PrintPhaseStatus: false);
 
+    // Default to trustStoreInstall=false so unit tests stay hermetic. With the previous default
+    // of `true`, CertificatePhase.InstallToTrustStoreAsync would File.Copy the generated root CA
+    // into /usr/local/share/ca-certificates/ and shell out to update-ca-certificates — fine when
+    // a developer happens to run the suite as root locally, but unprivileged CI runners trip
+    // straight into UnauthorizedAccessException on the copy. The trust-store install path is
+    // already covered by Interfold.Bootstrapper.IntegrationTests inside Docker; here we only
+    // want to exercise the pure-C# cert generation.
     private static (BootstrapConfig Config, GeneratedSecrets Secrets) MakeInputs(
         string? rootCaName = null,
         int? certYears = null,
         IList<string>? domains = null,
-        bool trustStoreInstall = true)
+        bool trustStoreInstall = false)
     {
         var config = new BootstrapConfig
         {

@@ -170,46 +170,58 @@ public static class InterfoldAppHost
         // parameter for it.
 
         // --- Reject well-known default passwords at startup (dev mode only; compose relies on shell guard) ---
+        // Each backend's check is gated on the matching `include-*` toggle so a caller that
+        // explicitly opted out of standing up that backend (e.g. integration tests like
+        // MultiNodeScyllaFixture run with include-postgres=false) doesn't have to invent
+        // placeholder credentials for resources the AppHost is about to skip below anyway.
+        // Defaults keep every toggle true, so the dev `aspire run` workflow still gets the
+        // full safety net.
         if (!builder.ExecutionContext.IsPublishMode)
         {
-            var scyllaPasswordValue = builder.Configuration["Parameters:scylla-password"];
-            if (string.IsNullOrEmpty(scyllaPasswordValue) || scyllaPasswordValue == "cassandra")
+            if (includeScylla)
             {
-                throw new InvalidOperationException(
-                    "SCYLLA_PASSWORD must be set to a non-default value. " +
-                    "The well-known default 'cassandra' is not allowed.\n" +
-                    "Fix: dotnet user-secrets set \"Parameters:scylla-password\" \"<your-secure-password>\" " +
-                    "--project csharp/Interfold.AppHost");
+                var scyllaPasswordValue = builder.Configuration["Parameters:scylla-password"];
+                if (string.IsNullOrEmpty(scyllaPasswordValue) || scyllaPasswordValue == "cassandra")
+                {
+                    throw new InvalidOperationException(
+                        "SCYLLA_PASSWORD must be set to a non-default value. " +
+                        "The well-known default 'cassandra' is not allowed.\n" +
+                        "Fix: dotnet user-secrets set \"Parameters:scylla-password\" \"<your-secure-password>\" " +
+                        "--project csharp/Interfold.AppHost");
+                }
+
+                var scyllaUserValue = builder.Configuration["Parameters:scylla-user"];
+                if (string.IsNullOrEmpty(scyllaUserValue) || scyllaUserValue == "cassandra")
+                {
+                    throw new InvalidOperationException(
+                        "SCYLLA_USER must be set to a non-default value. " +
+                        "The well-known default 'cassandra' is not allowed.\n" +
+                        "Fix: dotnet user-secrets set \"Parameters:scylla-user\" \"<your-username>\" " +
+                        "--project csharp/Interfold.AppHost");
+                }
             }
 
-            var scyllaUserValue = builder.Configuration["Parameters:scylla-user"];
-            if (string.IsNullOrEmpty(scyllaUserValue) || scyllaUserValue == "cassandra")
+            if (includePostgres)
             {
-                throw new InvalidOperationException(
-                    "SCYLLA_USER must be set to a non-default value. " +
-                    "The well-known default 'cassandra' is not allowed.\n" +
-                    "Fix: dotnet user-secrets set \"Parameters:scylla-user\" \"<your-username>\" " +
-                    "--project csharp/Interfold.AppHost");
-            }
+                var postgresPasswordValue = builder.Configuration["Parameters:postgres-password"];
+                if (string.IsNullOrEmpty(postgresPasswordValue) || postgresPasswordValue == "postgres")
+                {
+                    throw new InvalidOperationException(
+                        "POSTGRES_PASSWORD must be set to a non-default value. " +
+                        "The well-known default 'postgres' is not allowed.\n" +
+                        "Fix: dotnet user-secrets set \"Parameters:postgres-password\" \"<your-secure-password>\" " +
+                        "--project csharp/Interfold.AppHost");
+                }
 
-            var postgresPasswordValue = builder.Configuration["Parameters:postgres-password"];
-            if (string.IsNullOrEmpty(postgresPasswordValue) || postgresPasswordValue == "postgres")
-            {
-                throw new InvalidOperationException(
-                    "POSTGRES_PASSWORD must be set to a non-default value. " +
-                    "The well-known default 'postgres' is not allowed.\n" +
-                    "Fix: dotnet user-secrets set \"Parameters:postgres-password\" \"<your-secure-password>\" " +
-                    "--project csharp/Interfold.AppHost");
-            }
-
-            var postgresUserValue = builder.Configuration["Parameters:postgres-user"];
-            if (string.IsNullOrEmpty(postgresUserValue) || postgresUserValue == "postgres")
-            {
-                throw new InvalidOperationException(
-                    "POSTGRES_USER must be set to a non-default value. " +
-                    "The well-known default 'postgres' is not allowed.\n" +
-                    "Fix: dotnet user-secrets set \"Parameters:postgres-user\" \"<your-username>\" " +
-                    "--project csharp/Interfold.AppHost");
+                var postgresUserValue = builder.Configuration["Parameters:postgres-user"];
+                if (string.IsNullOrEmpty(postgresUserValue) || postgresUserValue == "postgres")
+                {
+                    throw new InvalidOperationException(
+                        "POSTGRES_USER must be set to a non-default value. " +
+                        "The well-known default 'postgres' is not allowed.\n" +
+                        "Fix: dotnet user-secrets set \"Parameters:postgres-user\" \"<your-username>\" " +
+                        "--project csharp/Interfold.AppHost");
+                }
             }
         }
 

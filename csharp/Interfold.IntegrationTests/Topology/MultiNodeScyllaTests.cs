@@ -75,20 +75,24 @@ public sealed class MultiNodeScyllaTests(MultiNodeScyllaFixture fixture)
 
         try
         {
-            var testId = $"test-{Guid.NewGuid():N}"[..20];
+            // Column names match the live schema in
+            // csharp/Interfold.Infrastructure.Scylla/Migrations/002_create_octocon_schema.templated.cql
+            // (PRIMARY KEY (user_id) on the `global.user_registry` table); the previous
+            // `id` literal would now fail with "Unknown identifier id".
+            var testUserId = $"test-{Guid.NewGuid():N}"[..20];
 
             await namSession.ExecuteAsync(new SimpleStatement(
-                "INSERT INTO global.user_registry (id, region) VALUES (?, ?)", testId, "nam"));
+                "INSERT INTO global.user_registry (user_id, region) VALUES (?, ?)", testUserId, "nam"));
 
             var result = await namSession.ExecuteAsync(new SimpleStatement(
-                "SELECT region FROM global.user_registry WHERE id = ?", testId));
+                "SELECT region FROM global.user_registry WHERE user_id = ?", testUserId));
 
             var row = result.FirstOrDefault();
             await Assert.That(row).IsNotNull();
             await Assert.That(row!.GetValue<string>("region")).IsEqualTo("nam");
 
             await namSession.ExecuteAsync(new SimpleStatement(
-                "DELETE FROM global.user_registry WHERE id = ?", testId));
+                "DELETE FROM global.user_registry WHERE user_id = ?", testUserId));
         }
         finally
         {

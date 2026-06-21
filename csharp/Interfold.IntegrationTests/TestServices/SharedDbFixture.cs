@@ -57,6 +57,23 @@ public sealed class SharedDbFixture : AspireFixture<AppHost::Projects.Interfold_
     /// </summary>
     public int? CassandraPort { get; private set; }
 
+    /// <summary>
+    /// Non-null when the Scylla container failed to reach Running, the host-level CQL
+    /// connectivity probe failed, or the Scylla seed/migration sequence threw during fixture
+    /// initialization. <see cref="ScyllaWebFactoryFixture"/> rethrows this from its own
+    /// <c>InitializeAsync</c> so only the tests that actually depend on Scylla fail when this
+    /// one backend is broken — Cassandra-only and InMemory-only tests in the same run keep
+    /// passing instead of inheriting the Scylla failure transitively through this fixture.
+    /// </summary>
+    public Exception? ScyllaInitException { get; private set; }
+
+    /// <summary>
+    /// Mirror of <see cref="ScyllaInitException"/> for the Cassandra backend. See that
+    /// property's remarks for the rationale (per-backend failure attribution instead of
+    /// fail-the-whole-suite when one container can't start).
+    /// </summary>
+    public Exception? CassandraInitException { get; private set; }
+
     protected override string[] Args => BuildArgs();
 
     private static string[] BuildArgs()
@@ -93,6 +110,18 @@ public sealed class SharedDbFixture : AspireFixture<AppHost::Projects.Interfold_
     protected override TimeSpan ResourceTimeout => TimeSpan.FromMinutes(5);
     protected override bool EnableTelemetryCollection => false;
 
+    /// <summary>
+    /// Per-container readiness budget enforced in addition to the outer
+    /// <see cref="ResourceTimeout"/>. Without this each individual
+    /// <c>WaitForResourceAsync(name, Running)</c> would happily eat the full 5-minute outer
+    /// budget on its own (a Scylla container that never reports Running starves the Cassandra
+    /// wait that follows it, and vice-versa). 2 minutes gives a comfortably loaded Docker
+    /// host enough headroom for image pulls + container start while still surfacing a
+    /// permanently-broken backend (e.g. missing <c>docker buildx</c>, image-pull auth
+    /// failure) as a clean per-backend timeout instead of a session-wide TimeoutException.
+    /// </summary>
+    private static readonly TimeSpan PerContainerReadyTimeout = TimeSpan.FromMinutes(2);
+
     // The AppHost only registers TCP healthchecks against `localhost:<hard-coded port>` when
     // `include-api=true`, so test mode has no Aspire-level health checks at all. The default
     // `AllHealthy` behaviour would also try to drive parameter resources (postgres-user, etc.)
@@ -120,32 +149,30 @@ public sealed class SharedDbFixture : AspireFixture<AppHost::Projects.Interfold_
     {
         var notifications = app.Services.GetRequiredService<ResourceNotificationService>();
 
+        // Postgres is foundational: every IWebFactoryFixture (InMemory aside) reads from
+        // internal.secrets, and the seed step below populates that table for both CQL backends
+        // in one go. Any failure here is unrecoverable for the suite, so we let it propagate.
         // Wait for Running (not Healthy) — Aspire testing randomises host ports, so the
         // hardcoded-port health checks declared in AppHost never pass in test mode.
         await notifications.WaitForResourceAsync("msg-db", KnownResourceStates.Running, cancellationToken);
-        if (RequiredFixtures.NeedScylla)
-            await notifications.WaitForResourceAsync("scylla", KnownResourceStates.Running, cancellationToken);
-        if (RequiredFixtures.NeedCassandra)
-            await notifications.WaitForResourceAsync("cassandra", KnownResourceStates.Running, cancellationToken);
 
-        // Resolve actual allocated ports (Aspire randomises them in test mode).
         var pgEndpoint = App.GetEndpoint("msg-db", "postgres");
-        var scyllaEndpoint = RequiredFixtures.NeedScylla ? App.GetEndpoint("scylla", "cql") : null;
-        var cassandraEndpoint = RequiredFixtures.NeedCassandra ? App.GetEndpoint("cassandra", "cql") : null;
 
-        // Postgres bootstrap. Pick the first available CQL endpoint (or a placeholder when
-        // neither backend is enabled — the seeder writes scylla connection details into
-        // internal.secrets, but those rows are unused by InMemory-only test paths).
-        var primaryCqlEndpoint = scyllaEndpoint ?? cassandraEndpoint;
-
+        // The CQL endpoints are looked up lazily inside each backend's section, so a Cassandra
+        // resource that never reached Running can't make us call App.GetEndpoint("cassandra")
+        // (which throws InvalidOperationException for a never-started resource).
         var initConnectionString =
             $"Host={pgEndpoint.Host};Port={pgEndpoint.Port};" +
             $"Username={DbInitHelper.PostgresInitUser};Password={TestDbCredentials.PostgresInitPassword};" +
             "Database=postgres;SSL Mode=Disable";
         await DbInitHelper.WaitForPostgresAsync(initConnectionString, cancellationToken);
+        // The seed writes the *Scylla* contact-point row into internal.secrets. We pass
+        // localhost+default-port as a placeholder when neither backend is enabled (an
+        // InMemory-only run never instantiates this fixture, so the placeholder only matters
+        // when the run is fully broken before this point and we still want a well-formed row).
         await DbInitHelper.SeedPostgresAsync(
             initConnectionString,
-            BuildPostgresSeedOptions(primaryCqlEndpoint),
+            BuildPostgresSeedOptions(cqlEndpoint: null),
             cancellationToken);
 
         PostgresConnectionString =
@@ -178,26 +205,119 @@ public sealed class SharedDbFixture : AspireFixture<AppHost::Projects.Interfold_
             NullLoggerFactory.Instance.CreateLogger<PostgresMigrationService>(),
             cancellationToken);
 
-        if (scyllaEndpoint is not null)
+        // Each CQL backend gets its own try/catch around the container-wait + seed + migration
+        // sequence. A failure is captured into the matching `*InitException` property so only
+        // the per-backend web-factory fixture surfaces it (see ScyllaWebFactoryFixture and
+        // CassandraWebFactoryFixture). Scylla-only test runs survive a broken cassandra
+        // container, and vice versa, instead of every DB-bound test in the session failing
+        // with the same generic AspireFixture timeout.
+        if (RequiredFixtures.NeedScylla)
         {
-            await DbInitHelper.WaitForScyllaAsync(scyllaEndpoint.Host, scyllaEndpoint.Port, cancellationToken);
-            await DbInitHelper.SeedScyllaAsync(
-                scyllaEndpoint.Host, scyllaEndpoint.Port,
-                BuildScyllaSeedOptions(),
-                cancellationToken);
-            await RunScyllaMigrationsAsync(scyllaEndpoint, persistenceConfig, secretsStore, cancellationToken);
-            ScyllaPort = scyllaEndpoint.Port;
+            ScyllaInitException = await TryInitialiseCqlBackendAsync(
+                resourceName: "scylla",
+                endpointName: "cql",
+                notifications: notifications,
+                persistenceConfig: persistenceConfig,
+                secretsStore: secretsStore,
+                assignPort: port => ScyllaPort = port,
+                cancellationToken: cancellationToken);
         }
 
-        if (cassandraEndpoint is not null)
+        if (RequiredFixtures.NeedCassandra)
         {
-            await DbInitHelper.WaitForScyllaAsync(cassandraEndpoint.Host, cassandraEndpoint.Port, cancellationToken);
+            CassandraInitException = await TryInitialiseCqlBackendAsync(
+                resourceName: "cassandra",
+                endpointName: "cql",
+                notifications: notifications,
+                persistenceConfig: persistenceConfig,
+                secretsStore: secretsStore,
+                assignPort: port => CassandraPort = port,
+                cancellationToken: cancellationToken);
+        }
+    }
+
+    /// <summary>
+    /// Runs the full container-wait + connectivity-probe + seed + migration sequence for one
+    /// CQL backend, returning <c>null</c> on success or the captured exception on failure.
+    /// Never throws so the caller can attribute the failure to a single backend without
+    /// aborting the rest of <see cref="WaitForResourcesAsync"/>.
+    /// </summary>
+    private async Task<Exception?> TryInitialiseCqlBackendAsync(
+        string resourceName,
+        string endpointName,
+        ResourceNotificationService notifications,
+        PersistenceConfiguration persistenceConfig,
+        ISecretsStore secretsStore,
+        Action<int> assignPort,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await WaitForContainerRunningAsync(notifications, resourceName, cancellationToken).ConfigureAwait(false);
+
+            var endpoint = App.GetEndpoint(resourceName, endpointName);
+            await DbInitHelper.WaitForScyllaAsync(endpoint.Host, endpoint.Port, cancellationToken).ConfigureAwait(false);
             await DbInitHelper.SeedScyllaAsync(
-                cassandraEndpoint.Host, cassandraEndpoint.Port,
+                endpoint.Host, endpoint.Port,
                 BuildScyllaSeedOptions(),
-                cancellationToken);
-            await RunScyllaMigrationsAsync(cassandraEndpoint, persistenceConfig, secretsStore, cancellationToken);
-            CassandraPort = cassandraEndpoint.Port;
+                cancellationToken).ConfigureAwait(false);
+            await RunScyllaMigrationsAsync(endpoint, persistenceConfig, secretsStore, cancellationToken).ConfigureAwait(false);
+            assignPort(endpoint.Port);
+            return null;
+        }
+        catch (Exception ex)
+        {
+            // Swallow everything — including OperationCanceledException tied to the outer
+            // ResourceTimeout. Letting OCE propagate would let the base AspireFixture
+            // recategorise it as a session-wide "Timed out after Xs waiting for Aspire
+            // resources" exception and re-fail every test in the session.
+            return ex;
+        }
+    }
+
+    /// <summary>
+    /// Waits for <paramref name="resourceName"/> to reach Running, racing the wait against a
+    /// transition into FailedToStart (immediate failure) and a per-container readiness budget
+    /// from <see cref="PerContainerReadyTimeout"/> (so a permanently-stuck container can't
+    /// starve any other resource of the outer <see cref="ResourceTimeout"/>).
+    /// </summary>
+    private async Task WaitForContainerRunningAsync(
+        ResourceNotificationService notifications,
+        string resourceName,
+        CancellationToken outerCancellationToken)
+    {
+        using var perResourceCts = CancellationTokenSource.CreateLinkedTokenSource(outerCancellationToken);
+        perResourceCts.CancelAfter(PerContainerReadyTimeout);
+        var token = perResourceCts.Token;
+
+        var readyTask = notifications.WaitForResourceAsync(
+            resourceName, KnownResourceStates.Running, token);
+        var failedTask = notifications.WaitForResourceAsync(
+            resourceName, KnownResourceStates.FailedToStart, token);
+
+        try
+        {
+            var completed = await Task.WhenAny(readyTask, failedTask).ConfigureAwait(false);
+            if (completed == failedTask)
+            {
+                // Observe the completed task (so any exception it carries is surfaced rather
+                // than being silently lost), then throw a domain-specific error the captured-
+                // exception machinery above can attribute to this backend.
+                await failedTask.ConfigureAwait(false);
+                throw new InvalidOperationException(
+                    $"Aspire resource '{resourceName}' entered FailedToStart before reaching Running. " +
+                    "Check the AppHost container logs for the underlying error.");
+            }
+
+            await readyTask.ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (perResourceCts.IsCancellationRequested && !outerCancellationToken.IsCancellationRequested)
+        {
+            throw new TimeoutException(
+                $"Aspire resource '{resourceName}' did not reach Running within " +
+                $"{PerContainerReadyTimeout.TotalSeconds:0}s. The container is either still " +
+                "pulling an image, failing to build (e.g. missing 'docker buildx'), or stuck " +
+                "in a restart loop — inspect the AppHost container logs for details.");
         }
     }
 

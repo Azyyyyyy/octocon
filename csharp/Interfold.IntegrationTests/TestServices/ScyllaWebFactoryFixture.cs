@@ -23,6 +23,19 @@ public sealed class ScyllaWebFactoryFixture : IWebFactoryFixture, IAsyncInitiali
 
     public Task InitializeAsync()
     {
+        // SharedDbFixture captures per-backend startup failures into ScyllaInitException /
+        // CassandraInitException rather than aborting its own InitializeAsync. Rethrowing the
+        // captured exception here (wrapped so the trigger is obvious in the test report)
+        // scopes the failure to Scylla-backed tests only — Cassandra-backed and InMemory
+        // tests in the same run keep passing.
+        if (Aspire.ScyllaInitException is { } scyllaFailure)
+        {
+            throw new InvalidOperationException(
+                "ScyllaWebFactoryFixture cannot start because the shared Scylla backend failed " +
+                "to initialise. See the inner exception for the underlying cause.",
+                scyllaFailure);
+        }
+
         Factory = new InterfoldWebApplicationFactory("scylla-postgres", "scylla-single-node")
             .WithConfiguration("OCTOCON_POSTGRES_CONNECTION", Aspire.PostgresConnectionString)
             .WithConfiguration("OCTOCON_SCYLLA_PORT", Aspire.ScyllaPort!.Value.ToString())

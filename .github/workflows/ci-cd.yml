@@ -31,7 +31,14 @@ jobs:
           script: |
             core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env['ACTIONS_RUNTIME_TOKEN']);
             core.exportVariable('ACTIONS_RESULTS_URL', process.env['ACTIONS_RESULTS_URL']);
-        
+
+      # Produce the self-contained linux-x64 binary at
+      # csharp/Interfold.Bootstrapper/bin/Release/net10.0/linux-x64/publish/interfold-bootstrap
+      # so BinarySizeGuardrailTests.PublishedLinuxX64BinaryIsBelowThreshold executes instead of
+      # self-skipping. The skip message in that test is literally the command below.
+      - name: Publish bootstrapper (linux-x64) for binary-size guardrail test
+        run: dotnet publish csharp/Interfold.Bootstrapper -c Release -r linux-x64 /p:PublishProfile=linux-x64
+
       - name: Test
         run: dotnet test --verbosity normal --coverage --coverage-output-format cobertura
 

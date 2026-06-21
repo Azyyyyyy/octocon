@@ -23,6 +23,17 @@ public sealed class CassandraWebFactoryFixture : IWebFactoryFixture, IAsyncIniti
 
     public Task InitializeAsync()
     {
+        // See ScyllaWebFactoryFixture for the rationale: SharedDbFixture captures per-backend
+        // failures into CassandraInitException so that a wedged Cassandra container only
+        // breaks Cassandra-backed tests, not the entire DB-bound test cohort.
+        if (Aspire.CassandraInitException is { } cassandraFailure)
+        {
+            throw new InvalidOperationException(
+                "CassandraWebFactoryFixture cannot start because the shared Cassandra backend " +
+                "failed to initialise. See the inner exception for the underlying cause.",
+                cassandraFailure);
+        }
+
         Factory = new InterfoldWebApplicationFactory("scylla-postgres", "cassandra")
             .WithConfiguration("OCTOCON_POSTGRES_CONNECTION", Aspire.PostgresConnectionString)
             .WithConfiguration("OCTOCON_SCYLLA_PORT", Aspire.CassandraPort!.Value.ToString())
