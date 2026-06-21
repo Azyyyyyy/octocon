@@ -15,31 +15,94 @@ This repository contains the backend code for Octocon, which is structured into 
 - **octocon-web**: The Phoenix web application that serves the REST API, metrics, and admin dashboard.
 - **octocon-discord**: Legacy Discord bot integration (currently being phased out and disabled by default).
 
-## Development setup TO EDIT
+## Self-hosting (production)
 
-To set up a development environment for Octocon, you'll need to have the following prerequisites installed on a Unix-like operating system or WSL:
-- [Docker](https://www.docker.com/get-started)
-- [Docker Compose](https://docs.docker.com/compose/install/)
-- Git
+Interfold ships a single bootstrapper binary that brings a fresh Linux box from `git clone` to a
+running stack. The bootstrapper IS an Aspire AppHost — it reuses the same resource graph as the
+dev `aspire run` flow, with a Docker Compose publisher and a host-side prep wrapper around it.
 
-Once installed, follow these steps to set up your development environment:
-1. Clone the repository:
+### One-shot install
+
+1. Download the latest release tarball (TO BE CREATED) and unpack it on a fresh Ubuntu 22.04+/Debian 12+/Fedora 40+/RHEL 9+ box:
+
    ```bash
-   git clone
-   cd octocon
+   tar -xzf interfold-bootstrap-linux-x64.tar.gz
+   cd interfold-bootstrap
    ```
 
-2. Run the provided setup script:
-   ```bash
-   ./dev/setup.sh
-   ```
-   This script will ensure your system is configured correctly, build the necessary Docker images, install dependencies, and perform database migrations.
+2. Author `interfold.bootstrap.json` (or run the binary with no arguments to be prompted):
 
-3. Start the development environment:
-   ```bash
-   ./dev/bin/iex
+   ```json
+   {
+     "deployment": {
+       "outputDir": "./deploy",
+       "domains": ["api.example.com"],
+       "rootCaName": "Interfold Root CA",
+       "certYears": 5,
+       "trustStoreInstall": true
+     },
+     "ports": { "apiHttp": 5000, "apiHttps": 5001, "webHttp": 8080, "webHttps": 8081 },
+     "databaseMode": "single",
+     "apiImage": "ghcr.io/interfold/api:latest",
+     "oauth": {
+       "googleClientSecret": "...",
+       "discordClientSecret": ""
+     }
+   }
    ```
-    This command will launch an interactive Elixir shell running the Octocon application inside a Docker container.
+
+3. Run the bootstrapper as root:
+
+   ```bash
+   sudo ./interfold-bootstrap bootstrap --config interfold.bootstrap.json
+   ```
+
+   This walks through six phases — prereqs → config → secrets → certs → publish → launch —
+   ending with the API's `/health/ready` returning 200.
+
+Generated artifacts land under `./deploy/`:
+
+```
+deploy/
+  interfold.bootstrap.json    # canonical config (re-emitted on first run)
+  secrets/secrets.json        # mode 0600, never overwritten without --rotate-secrets
+  certs/{rootCA,leaf}.{crt,key,pfx}
+  docker-compose.yaml         # emitted by the embedded AppHost
+  .env                        # bound to compose `${VAR}` references
+```
+
+### Operational commands
+
+| Command | Effect |
+|---|---|
+| `interfold-bootstrap` (default `bootstrap`) | Run all six phases. Idempotent on rerun. |
+| `interfold-bootstrap publish` | Run config + secrets + certs + compose-emit; do not `docker compose up`. |
+| `interfold-bootstrap up` | Run only `docker compose up -d` + health wait against an already-generated compose file. |
+| `interfold-bootstrap rotate-secrets` | Regenerate DB/admin passwords + encryption keypair + pepper, re-emit compose, restart the API. Certs unchanged. |
+| `interfold-bootstrap rotate-certs` | Regenerate root CA + leaf cert, re-install into the trust store, re-emit compose. Secrets unchanged. |
+
+Common flags:
+
+- `--config <path>` — point at a populated `interfold.bootstrap.json` instead of using the
+  default `deploy/interfold.bootstrap.json` lookup or interactive prompt.
+- `--output-dir <path>` — override the artifact root (default `./deploy`).
+- `--skip-prereqs` — skip the Docker/openssl/AIO install. Use on re-runs where the host is
+  already configured.
+- `--non-interactive` — fail rather than prompt when config values are missing.
+
+### Local dev (Aspire)
+
+Self-hosting and dev use the same resource graph. For local development, run the Aspire
+AppHost directly:
+
+```bash
+cd csharp/Interfold.AppHost
+aspire run
+```
+
+This brings the same Postgres + ScyllaDB + bootstrap-auth + API stack up under the Aspire
+dashboard. Use `dotnet user-secrets` to populate the `Parameters:*` secrets the AppHost
+guards on (see `csharp/Interfold.AppHost/InterfoldAppHost.cs`).
 
 ## Contributing
 
@@ -69,45 +132,55 @@ There are 3 node groups:
 
 ## Configuration & integrations
 
-Every Octocon node must be configured with a set of environment variables to function properly. These variables are used to connect to the database, configure the Discord bot, and set up other integrations, such as cloud object storage.
+> **Full reference:** [`docs/configuration.md`](docs/configuration.md) documents every
+> configuration layer, every env var, the `internal.secrets` row inventory, the boot-time
+> ordering between Kestrel / `SecretsBootstrapService` / migration services, and the
+> rotation story. This README only covers the short operator-facing surface.
 
-### OAuth
-- `APPLE_TEAM_ID` - Used for Sign in with Apple integration.
-- `APPLE_CLIENT_ID` - Used for Sign in with Apple integration.
-- `APPLE_PRIVATE_KEY_ID` - Used for Sign in with Apple integration.
-- `APPLE_PRIVATE_KEY` - Used for Sign in with Apple integration. (PEM in base64 format).
-- `GOOGLE_CLIENT_ID` - Used for Google OAuth integration.
-- `GOOGLE_CLIENT_SECRET` - Used for Google OAuth integration.
-- `DISCORD_CLIENT_ID` - Used for Discord OAuth integration.
-- `DISCORD_CLIENT_SECRET` - Used for Discord OAuth integration.
-### Discord
-- `DISCORD_TOKEN` - The bot token for the Discord bot (only required when `ENABLE_DISCORD=true`).
-- `ENABLE_DISCORD` - Optional toggle for legacy Discord runtime (`true`/`1` to enable, disabled by default).
-### Security
-- `SECRET_KEY_BASE` - Used by Phoenix to sign/encrypt cookies and other secrets; generate with `mix phx.gen.secret`.
-- `ENCRYPTION_PEPPER` - Static server-side pepper used during the end-to-end encryption process.
-- `GUARDIAN_SECRET_KEY` - Used by Guardian (OAuth) for JWT authentication.
-- `ENCRYPTION_PRIVATE_KEY` - The private key used for end-to-end encryption of user data (PEM in base64 format).
-### Admin Dashboard
-- `ADMIN_USERNAME` - The username for the admin dashboard.
-- `ADMIN_PASSWORD` - The password for the admin dashboard (HTTP Basic auth).
-### Storage (S3-compatible)
-- `S3_ACCESS_HOST` - The URL assets are stored at (e.g. `https://cdn.octocon.app`).
-- `S3_ASSET_HOST` - Same as above.
-- `S3_HOST` - The storage host (e.g. `xyz.r2.cloudflarestorage.com`).
-- `S3_REGION` - The region of the storage bucket (e.g. `auto` for Cloudflare R2).
-- `S3_ACCESS_KEY_ID` - The access key ID for the S3-compatible storage service.
-- `S3_SECRET_ACCESS_KEY` - The secret access key for the S3-compatible storage service.
-- `S3_BUCKET_NAME` - The name of the bucket to store assets in.
-### Monitoring/o11y
-- `SENTRY_DSN` - The Sentry DSN for error tracking.
-- `GRAFANA_HOST` - The URL of the Grafana instance to automatically upload dashboards.
-- `GRAFANA_TOKEN` - Auth token for Grafana API access.
-### Node configuration
-- `NODE_GROUP` - The group this node belongs to (`primary`, `auxiliary`, or `sidecar`).
-- `PRIMARY_NODE_COUNT` - Number of primary nodes in the cluster (**values other than 1 are experimental**).
-- `POOL_SIZE` - Size of the database connection pool.
-- `PORT` - Port to run the Phoenix web server on.
-- `TAILSCALE_API_AUTHKEY` - When present, enables Tailscale-based clustering using the provided auth key.
-- `NODE_LIST` - When present, enables static clustering with the provided comma-separated list of node IPs.
-If neither `TAILSCALE_API_AUTHKEY` nor `NODE_LIST` are present, a single-node cluster is assumed, which will run as a `primary` node.
+For a self-hosted deployment, the bootstrapper writes:
+
+- `deploy/secrets/secrets.json` (mode 0600) — auto-generated DB passwords, encryption
+  pepper, JWT signing keypairs (RSA-2048 + ES256), deep-link HMAC secret, leaf PFX
+  password. Never overwritten without `--rotate-secrets`.
+- `deploy/.env` — compose-bound subset that needs to be visible to Docker at `up` time
+  (DB usernames/passwords, encryption private key, encryption pepper). Re-emitted from
+  `secrets.json` on every bootstrapper run.
+- `internal.secrets` rows inside Postgres — the durable, in-cluster source of truth for
+  everything the API reads at runtime (auth/OAuth secrets, JWT keys, deep-link HMAC,
+  leaf PFX password, Scylla credentials). Seeded by `DatabaseInitPhase`.
+
+The only secrets you set by hand live in [`interfold.bootstrap.json`](#one-shot-install):
+OAuth client secrets (`googleClientSecret`, `discordClientSecret`, `appleClientSecret`).
+Leave them empty to skip the corresponding `internal.secrets` row.
+
+### Env vars you must set by hand
+
+These are *not* generated by the bootstrapper. Export them via systemd, a sibling
+`.env.local`, your orchestrator, or the AppHost user-secrets in dev.
+
+| Variable | Purpose |
+|---|---|
+| `OCTOCON_SCYLLA_KEYSPACE` | Per-node region identity (`nam`, `eur`, `ocn`, `eas`, `sam`, `sas`, `gdpr`). Default `nam`. **No store fallback.** |
+| `OCTOCON_NODE_GROUP` | `primary`, `auxiliary`, or `sidecar`. Default `auxiliary`. (Wins over `FLY_PROCESS_GROUP` only when Fly isn't injecting one.) |
+| `OCTOCON_CORS_ALLOWED_ORIGINS` | Comma-separated CORS allow-list. Empty falls back to "allow any origin". |
+| `OCTOCON_GOOGLE_OAUTH_CLIENT_ID` | Public OAuth client ID. (Client *secret* lives in `internal.secrets`.) |
+| `OCTOCON_DISCORD_OAUTH_CLIENT_ID` | Same. |
+| `OCTOCON_APPLE_OAUTH_CLIENT_ID` | Same. |
+| `OCTOCON_AUTH_CALLBACK_BASE_URL` | Base URL the OAuth callbacks return to (e.g. `https://api.example.com`). |
+| `OCTOCON_AVATAR_STORAGE_ROOT` / `OCTOCON_AVATAR_PUBLIC_BASE` | Local avatar storage root and public CDN base URL. |
+| `OCTOCON_OTLP_ENDPOINT` | OTLP gRPC endpoint for traces/metrics, e.g. `http://localhost:4317`. |
+
+### Env vars the bootstrapper manages (do not set by hand)
+
+These are written into `deploy/.env` by the publish phase and overwritten by
+`SecretsBootstrapService` at API startup. Editing them by hand has no effect — the
+authoritative value lives in `internal.secrets`.
+
+- `OCTOCON_{GOOGLE,DISCORD,APPLE}_OAUTH_CLIENT_SECRET`
+- `OCTOCON_POSTGRES_CONNECTION`
+- `OCTOCON_PERSISTENCE`, `OCTOCON_SINGLE_SCYLLA_INSTANCE`
+
+The encryption pepper, JWT signing keys, deep-link HMAC secret, and leaf PFX password
+have no env-var representation at all — they live in `internal.secrets` exclusively and
+are read directly by `SecretsBootstrapService` (or `Program.LoadLeafPfxPasswordFromStoreIfNeeded`
+for the PFX password) at startup.

@@ -1,0 +1,39 @@
+# Test fixture - NOT shipped. Used by PrereqsPhaseTests to drive the bootstrapper's
+# prerequisites phase against a Linux host where Docker and openssl are deliberately ABSENT.
+#
+# Differences vs Dockerfile.ubuntu-dind:
+#   * No docker-ce / containerd / compose plugin install — the bootstrapper must install them.
+#   * No openssl — the bootstrapper must install it.
+#   * Entrypoint just sleeps; there is no inner dockerd to wait for (we don't preload images).
+#   * We DO ship a tiny `apt-utils` set so apt-get update works inside the container; that's
+#     not part of "Docker tooling" so it's not what we're trying to detect installation of.
+FROM ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Minimal base: ca-certificates so apt over HTTPS works, curl/gnupg so the bootstrapper can
+# fetch the Docker repo key, sudo so we can simulate running with sudo. Crucially NO docker
+# package, NO openssl package — those are what PrereqsPhase will install at test time.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        curl \
+        gnupg \
+        iproute2 \
+        sudo \
+ && apt-get remove -y openssl \
+ && rm -rf /var/lib/apt/lists/*
+
+# Sanity-check that our "bare" assumption actually holds at build time. If a future base image
+# starts shipping docker or openssl by default these will fail loudly here.
+RUN ! command -v docker >/dev/null 2>&1 || (echo "ERROR: docker pre-installed in bare fixture" && exit 1)
+RUN ! command -v openssl >/dev/null 2>&1 || (echo "ERROR: openssl pre-installed in bare fixture" && exit 1)
+
+# Create a non-root test user used by the RefusesWhenNotRoot test. UID/GID are arbitrary.
+RUN useradd --create-home --uid 4242 testuser
+
+WORKDIR /opt
+
+# No dockerd entrypoint — the bootstrapper will install docker but we never need to actually
+# run any containers inside this fixture. Sleep keeps the container alive for `docker exec`.
+ENTRYPOINT ["sleep", "infinity"]

@@ -1,0 +1,49 @@
+# Test fixture - NOT shipped. Used by the Bootstrapper integration tests' UbuntuDinDFixture to
+# host an isolated Docker daemon inside a DinD container. The bootstrapper binary and its
+# support files (scripts/, migrations, db/) are bind-mounted in at runtime.
+#
+# Notes:
+#  * Uses Ubuntu 24.04 LTS so we exercise the Debian/Ubuntu code path of PrerequisitesPhase.
+#  * `iptables-legacy` is required because Docker-in-Docker on modern kernels still expects
+#    the legacy backend for its built-in bridge network.
+#  * `--storage-driver=vfs` keeps the inner dockerd portable across hosts whose overlay2
+#    setup interacts badly with nested mounts.
+FROM ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        curl \
+        gnupg \
+        iptables \
+        iproute2 \
+        kmod \
+        openssl \
+        sudo \
+        xz-utils \
+ && install -m 0755 -d /etc/apt/keyrings \
+ && curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg \
+ && chmod a+r /etc/apt/keyrings/docker.gpg \
+ && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu noble stable" \
+        > /etc/apt/sources.list.d/docker.list \
+ && apt-get update \
+ && apt-get install -y --no-install-recommends docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin \
+ && rm -rf /var/lib/apt/lists/*
+
+# Switch to legacy iptables so dockerd's built-in NAT rules apply cleanly inside the container.
+RUN update-alternatives --set iptables /usr/sbin/iptables-legacy \
+ && update-alternatives --set ip6tables /usr/sbin/ip6tables-legacy
+
+COPY dockerd-entrypoint.sh /usr/local/bin/dockerd-entrypoint.sh
+# Strip any CRLF line endings that snuck in from a Windows checkout; otherwise the shebang
+# resolves to `/usr/bin/env bash\r` and the container exits immediately on start.
+RUN sed -i 's/\r$//' /usr/local/bin/dockerd-entrypoint.sh \
+ && chmod +x /usr/local/bin/dockerd-entrypoint.sh
+
+# Keep the bootstrapper artifacts mounted from the host fixture.
+WORKDIR /opt
+EXPOSE 2375
+
+ENTRYPOINT ["/usr/local/bin/dockerd-entrypoint.sh"]

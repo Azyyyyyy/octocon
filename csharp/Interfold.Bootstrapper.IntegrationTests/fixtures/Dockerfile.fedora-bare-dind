@@ -1,0 +1,32 @@
+# Test fixture - NOT shipped. RedHat-family analog of Dockerfile.ubuntu-bare-dind. Drives the
+# bootstrapper's PrereqsPhase against a host where the dnf-based docker install path will run.
+#
+# Same shape as the Ubuntu bare fixture: no docker, no openssl, no inner dockerd.
+FROM fedora:40
+
+# Minimal base + sudo so we can simulate non-root drop-down. Crucially NO docker, NO openssl.
+# `crypto-policies` is pulled in implicitly by ca-certificates and brings *libraries* that
+# look like openssl (libcrypto.so) but NOT the `openssl` CLI, which is what PrereqsPhase
+# detects via `command -v openssl`.
+RUN dnf install -y --setopt=install_weak_deps=False \
+        ca-certificates \
+        curl \
+        gnupg2 \
+        iproute \
+        sudo \
+        which \
+ && dnf remove -y openssl || true \
+ && dnf clean all
+
+# Build-time guards so we catch base-image regressions early. If Fedora ever ships docker or
+# openssl by default in this image these will fail with a clear message.
+RUN ! command -v docker >/dev/null 2>&1 || (echo "ERROR: docker pre-installed in bare fixture" && exit 1)
+RUN ! command -v openssl >/dev/null 2>&1 || (echo "ERROR: openssl pre-installed in bare fixture" && exit 1)
+
+# Non-root user for RefusesWhenNotRoot. Distinct UID from the ubuntu fixture so a stray exec
+# can't accidentally match the wrong user.
+RUN useradd --create-home --uid 4343 testuser
+
+WORKDIR /opt
+
+ENTRYPOINT ["sleep", "infinity"]

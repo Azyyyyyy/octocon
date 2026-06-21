@@ -1,0 +1,74 @@
+using Interfold.Bootstrapper.IntegrationTests.Attributes;
+using Interfold.Bootstrapper.IntegrationTests.Fixtures;
+using TUnit.Core;
+
+namespace Interfold.Bootstrapper.IntegrationTests;
+
+/// <summary>
+/// RHEL/Fedora-side smoke coverage. Scenarios overlap with the Ubuntu suite in spirit but
+/// specifically exercise the <c>dnf</c> install path of <c>PrerequisitesPhase</c> and the
+/// <c>update-ca-trust extract</c> trust-store install in <c>CertificatePhase</c>.
+/// Each test allocates its own scratch dir so the suite can execute concurrently.
+/// </summary>
+[RequiresDocker]
+[ClassDataSource<FedoraDinDFixture>(Shared = SharedType.PerTestSession)]
+public class FedoraBootstrapTests(FedoraDinDFixture dinD)
+{
+    private static string TestConfigJsonPath => Path.Combine(AppContext.BaseDirectory, "fixtures", "interfold.bootstrap.test.json");
+
+    // Trust-store-install tests use a variant that enables /etc/pki/ca-trust/source/anchors/
+    // writes. See Ubuntu suite for the parallel-safety rationale.
+    private static string TrustInstallConfigJsonPath => Path.Combine(AppContext.BaseDirectory, "fixtures", "interfold.bootstrap.test.trust-install.json");
+
+    [After(Test)]
+    public async Task DumpOnFailure(TestContext ctx)
+    {
+        if (ctx.Execution.Result?.State == TestState.Failed)
+        {
+            await dinD.CaptureFailureArtifactsAsync(ctx.Metadata.TestName);
+        }
+        // Always release the DinD's host ports so the next [NotInParallel] test can bind them.
+        await dinD.TearDownComposeAsync(ctx.Metadata.TestName);
+    }
+
+    // Serialise compose-up tests in this fixture - see Ubuntu suite for rationale (host ports
+    // are bound on the DinD's network namespace, so concurrent `compose up`s would collide).
+    [Test]
+    [NotInParallel("fedora-compose-up")]
+    public async Task StackComesUpHealthyOnRhelFamily()
+    {
+        var scratch = await dinD.CreateScratchAsync(nameof(StackComesUpHealthyOnRhelFamily), TestConfigJsonPath);
+
+        var result = await dinD.RunBootstrapperAsync(nameof(StackComesUpHealthyOnRhelFamily),
+            ["bootstrap", "--config", scratch.ConfigPath, "--output-dir", scratch.OutputDir, "--non-interactive", "--skip-prereqs"]);
+
+        await Assert.That(result.ExitCode).IsEqualTo(0)
+            .Because($"full bootstrap failed on Fedora: {result.Stderr}");
+
+        var ps = await dinD.ExecAsync(
+            ["docker", "compose", "-f", $"{scratch.OutputDir}/docker-compose.yaml", "ps", "--format", "json"]);
+        await Assert.That(ps.ExitCode).IsEqualTo(0L);
+        await Assert.That(ps.Stdout).Contains("\"State\":\"running\"").Or.Contains("\"Health\":\"healthy\"")
+            .Because("expected at least one healthy/running service in Fedora compose ps output");
+    }
+
+    // Trust-store install writes /etc/pki/ca-trust/source/anchors/interfold-root-ca.crt, a
+    // process-global path shared across tests in this DinD - serialise on a per-fixture key.
+    [Test]
+    [NotInParallel("fedora-trust-install")]
+    public async Task RootCaInstalledInRhelTrustStore()
+    {
+        var scratch = await dinD.CreateScratchAsync(nameof(RootCaInstalledInRhelTrustStore), TrustInstallConfigJsonPath);
+
+        var result = await dinD.RunBootstrapperAsync(nameof(RootCaInstalledInRhelTrustStore),
+            ["publish", "--config", scratch.ConfigPath, "--output-dir", scratch.OutputDir, "--non-interactive"]);
+        await Assert.That(result.ExitCode).IsEqualTo(0).Because(result.Stderr);
+
+        // update-ca-trust extract writes the extracted PEM bundles to /etc/pki/ca-trust/extracted/.
+        var lookup = await dinD.ExecAsync(
+            ["sh", "-c",
+             "grep -l 'Interfold Test Root CA' /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem || true"]);
+        await Assert.That(lookup.Stdout.Trim()).IsNotEmpty()
+            .Because("root CA subject should appear in /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem after update-ca-trust extract");
+    }
+}

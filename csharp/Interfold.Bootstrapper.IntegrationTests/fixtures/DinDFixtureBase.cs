@@ -1,0 +1,325 @@
+using System.Collections.Concurrent;
+using System.Text;
+using DotNet.Testcontainers.Builders;
+using DotNet.Testcontainers.Configurations;
+using DotNet.Testcontainers.Containers;
+using DotNet.Testcontainers.Images;
+using TUnit.Core.Interfaces;
+
+namespace Interfold.Bootstrapper.IntegrationTests.Fixtures;
+
+/// <summary>
+/// Shared TUnit fixture base for Docker-in-Docker integration tests of the bootstrapper.
+/// Each concrete subclass picks a per-distro <see cref="DockerfileName"/>; the lifetime hooks
+/// here handle the work that's identical across all distros:
+/// <list type="number">
+///   <item>Publish the bootstrapper once for the entire test session (cached via <see cref="Lazy{T}"/>).</item>
+///   <item>Build the API container image once and save it to a tarball (also session-cached).</item>
+///   <item>Build the DinD image for this distro (per-fixture-type cached).</item>
+///   <item>Spawn a privileged DinD container, wait for the inner <c>dockerd</c>, then load the
+///         saved API image and pre-pull external images.</item>
+/// </list>
+/// </summary>
+public abstract class DinDFixtureBase : IAsyncInitializer, IAsyncDisposable
+{
+    /// <summary>Mount target inside the DinD container for the published bootstrapper binary.</summary>
+    public const string BootstrapperMountPath = "/opt/bootstrapper";
+
+    /// <summary>Mount target for the repo's <c>scripts/</c>, <c>csharp/Interfold.Infrastructure.Postgres/Migrations/</c>, and <c>db/</c>.</summary>
+    public const string SupportFilesMountPath = "/opt/support";
+
+    /// <summary>Root directory under which per-test scratch dirs are created.</summary>
+    public const string ScratchRoot = "/opt/scratch";
+
+    /// <summary>Per-test stdout/stderr capture; flushed by <c>CaptureFailureArtifactsAsync</c>.</summary>
+    public ConcurrentDictionary<string, StringBuilder> BootstrapperLogs { get; } = new();
+
+    /// <summary>Per-test scratch directory metadata, keyed by test name. Populated by <c>CreateScratchAsync</c>.</summary>
+    public ConcurrentDictionary<string, DinDScratch> Scratches { get; } = new();
+
+    private IContainer? _dinD;
+    private string? _publishedBootstrapperDir;
+
+    /// <summary>Name (without directory) of the Dockerfile to use, e.g. <c>Dockerfile.ubuntu-dind</c>.</summary>
+    protected abstract string DockerfileName { get; }
+
+    /// <summary>If false, the fixture skips the API image pre-load / external image pre-pull (used by the Alpine negative-path).</summary>
+    protected virtual bool PreloadImages => true;
+
+    public async Task InitializeAsync()
+    {
+        _publishedBootstrapperDir = await BootstrapperBuild.PublishedDirectory.Value.ConfigureAwait(false);
+        var apiImageTarPath = PreloadImages
+            ? await BootstrapperBuild.ApiImageTarPath.Value.ConfigureAwait(false)
+            : null;
+
+        // Build the DinD image once per concrete fixture type. Keyed by the Dockerfile name so the
+        // three subclasses each get their own cached image entry.
+        var dindImage = await DinDImageCache.GetOrBuildAsync(DockerfileName, FixturesDir).ConfigureAwait(false);
+
+#pragma warning disable CS0618 // Parameterless ctor planned for removal in TC 5.x; the new ctor signature isn't yet stable.
+        var builder = new ContainerBuilder()
+            .WithImage(dindImage)
+            .WithPrivileged(true)
+            // Mount the bootstrapper publish output and a tmpfs config dir.
+            .WithBindMount(_publishedBootstrapperDir, BootstrapperMountPath, AccessMode.ReadWrite)
+            // Mount repo support files needed at compose-up time.
+            .WithBindMount(SupportFilesHostPath(), SupportFilesMountPath, AccessMode.ReadOnly);
+
+        if (apiImageTarPath is not null)
+        {
+            builder = builder.WithBindMount(apiImageTarPath, "/opt/api-image.tar", AccessMode.ReadOnly);
+        }
+
+        _dinD = builder.Build();
+#pragma warning restore CS0618
+        await _dinD.StartAsync().ConfigureAwait(false);
+
+        if (PreloadImages)
+        {
+            await WaitForInnerDockerAsync().ConfigureAwait(false);
+            await ExecAsync(["docker", "load", "-i", "/opt/api-image.tar"]).ConfigureAwait(false);
+            await ExecAsync(["docker", "pull", "timescale/timescaledb:latest-pg18"]).ConfigureAwait(false);
+            await ExecAsync(["docker", "pull", "scylladb/scylla:2026.1"]).ConfigureAwait(false);
+        }
+
+        // Provision the in-container scratch root once. Each test will mkdir its own
+        // subdirectory underneath so they can run in parallel without stomping on each other.
+        await ExecAsync(["mkdir", "-p", ScratchRoot]).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Creates a fresh per-test scratch dir inside the shared DinD container, drops the test config
+    /// into it, and returns the in-container paths. Tests pass the scratch's <c>OutputDir</c> and
+    /// <c>ConfigPath</c> to the bootstrapper via <c>--output-dir</c> / <c>--config</c> so each test
+    /// has its own deploy directory and they can run concurrently.
+    /// </summary>
+    /// <remarks>
+    /// The scratch dir itself is used as the bootstrapper output dir (no nested <c>deploy/</c>),
+    /// because <c>docker compose -f &lt;file&gt;</c> derives its project name from the parent
+    /// directory's basename. Giving every test a uniquely-named parent dir means each
+    /// <c>compose up</c> creates its own isolated container/volume/network namespace - tests that
+    /// invoke <c>bootstrap</c> never share state with each other or with other tests.
+    /// </remarks>
+    public async Task<DinDScratch> CreateScratchAsync(string testName, string configHostPath, CancellationToken ct = default)
+    {
+        if (_dinD is null) throw new InvalidOperationException("Fixture not initialized.");
+
+        // Compose project names must be lowercase ASCII. We lowercase the test name and drop any
+        // remaining illegal chars to avoid `docker compose` rejecting the implicit project name.
+        var sanitized = string.Concat(testName.ToLowerInvariant()
+            .Where(c => (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' || c == '_'));
+        // Short random suffix so re-runs of the same test name within a session still get a clean
+        // workspace, and so multiple `[DataDrivenTest]` invocations of one method don't collide.
+        var suffix = Guid.NewGuid().ToString("N").Substring(0, 8);
+        var dir = $"{ScratchRoot}/{sanitized}-{suffix}";
+        var configPath = $"{dir}/interfold.bootstrap.json";
+
+        await ExecAsync(["mkdir", "-p", dir], ct).ConfigureAwait(false);
+        var bytes = await File.ReadAllBytesAsync(configHostPath, ct).ConfigureAwait(false);
+        const UnixFileModes Mode0600 = UnixFileModes.UserRead | UnixFileModes.UserWrite;
+        await _dinD.CopyAsync(bytes, configPath, 0, 0, Mode0600, ct).ConfigureAwait(false);
+
+        var scratch = new DinDScratch(dir, dir, configPath);
+        // Stash the scratch so [After(Test)] hooks can recover it from the fixture by test name
+        // without needing to mutate test-class instance fields (which TUnit discourages).
+        Scratches[testName] = scratch;
+        return scratch;
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_dinD is not null)
+        {
+            await _dinD.DisposeAsync().ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>
+    /// Executes a command inside the DinD container. Surfaces non-zero exit codes as exceptions
+    /// for tests that just want a sanity-check, but returns the full result for tests that need
+    /// to assert on output.
+    /// </summary>
+    public async Task<ExecResult> ExecAsync(IList<string> command, CancellationToken ct = default)
+    {
+        if (_dinD is null) throw new InvalidOperationException("Fixture not initialized.");
+        var result = await _dinD.ExecAsync(command, ct).ConfigureAwait(false);
+        return new ExecResult(result.ExitCode ?? -1, result.Stdout ?? string.Empty, result.Stderr ?? string.Empty);
+    }
+
+    /// <summary>Copy a file out of the DinD container into a byte buffer.</summary>
+    public async Task<byte[]> CopyOutAsync(string containerPath, CancellationToken ct = default)
+    {
+        if (_dinD is null) throw new InvalidOperationException("Fixture not initialized.");
+        return await _dinD.ReadFileAsync(containerPath, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>Copy a host file into the DinD container.</summary>
+    public async Task CopyInAsync(string hostPath, string containerPath, CancellationToken ct = default)
+    {
+        if (_dinD is null) throw new InvalidOperationException("Fixture not initialized.");
+        var bytes = await File.ReadAllBytesAsync(hostPath, ct).ConfigureAwait(false);
+        // CopyAsync(content, path, userId, groupId, fileMode, ct) - mode 0600 (owner rw only).
+        const UnixFileModes Mode0600 = UnixFileModes.UserRead | UnixFileModes.UserWrite;
+        await _dinD.CopyAsync(bytes, containerPath, 0, 0, Mode0600, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Runs the bootstrapper binary inside the DinD container with the given args, capturing
+    /// stdout/stderr into <see cref="BootstrapperLogs"/> keyed by <paramref name="testName"/>.
+    /// </summary>
+    public async Task<ExecResult> RunBootstrapperAsync(string testName, IList<string> args, CancellationToken ct = default)
+    {
+        var cmd = new List<string> { $"{BootstrapperMountPath}/interfold-bootstrap" };
+        cmd.AddRange(args);
+        var result = await ExecAsync(cmd, ct).ConfigureAwait(false);
+
+        var sb = BootstrapperLogs.GetOrAdd(testName, _ => new StringBuilder());
+        sb.AppendLine($"$ {string.Join(' ', cmd)}");
+        sb.AppendLine($"# exit={result.ExitCode}");
+        sb.AppendLine("--- stdout ---");
+        sb.AppendLine(result.Stdout);
+        sb.AppendLine("--- stderr ---");
+        sb.AppendLine(result.Stderr);
+        return result;
+    }
+
+    /// <summary>
+    /// Dumps the per-test scratch directory (with secret values redacted), the docker compose
+    /// log tail, and the captured bootstrapper stdout/stderr for the named test to
+    /// <c>{bin}/test-artifacts/{testName}/</c>. Called from each test class's <c>[After(Test)]</c>
+    /// hook when the test fails. Returns silently if no scratch was created for the test (e.g.
+    /// the test failed before calling <c>CreateScratchAsync</c>).
+    /// </summary>
+    public async Task CaptureFailureArtifactsAsync(string testName, CancellationToken ct = default)
+    {
+        if (!Scratches.TryGetValue(testName, out var scratch))
+        {
+            return;
+        }
+        await CaptureFailureArtifactsAsync(scratch, testName, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Tears down any docker compose stack a test brought up, releasing the DinD's host ports
+    /// (5000 / 5432 / 9042 / 9180) so the next test in the [NotInParallel] queue can bind them.
+    /// Idempotent: silently no-ops if the test never created a scratch or never ran compose up.
+    /// </summary>
+    /// <remarks>
+    /// We share one DinD container across the whole test session, so the DinD's network namespace
+    /// has a single set of host ports. Tests that run `compose up -d` keep those ports bound for
+    /// the lifetime of the container. Without an explicit `compose down -v --remove-orphans`
+    /// between tests, the next serialised test races into "port already allocated" inside the
+    /// shared DinD. We invoke this from each test class's [After(Test)] hook unconditionally -
+    /// down is cheap when there's nothing to remove.
+    /// </remarks>
+    public async Task TearDownComposeAsync(string testName, CancellationToken ct = default)
+    {
+        if (_dinD is null) return;
+        if (!Scratches.TryGetValue(testName, out var scratch)) return;
+
+        // -v drops named volumes too so a follow-up test starts from a clean Postgres / Scylla
+        // data volume. --remove-orphans cleans up any service that was renamed between tests.
+        // We swallow errors and the result here: the only thing this needs to do is release
+        // host ports, and any failure here would just be surfaced again on the next compose up.
+        try
+        {
+            await ExecAsync(
+                ["sh", "-c", $"docker compose -f {scratch.OutputDir}/docker-compose.yaml down -v --remove-orphans --timeout 10 2>&1 || true"],
+                ct).ConfigureAwait(false);
+        }
+        catch
+        {
+            // best-effort cleanup; the next compose up will report any real issue
+        }
+    }
+
+    private async Task CaptureFailureArtifactsAsync(DinDScratch scratch, string testName, CancellationToken ct)
+    {
+        var sanitized = string.Concat(testName.Where(c => !Path.GetInvalidFileNameChars().Contains(c)));
+        var dest = Path.Combine(AppContext.BaseDirectory, "test-artifacts", sanitized);
+        Directory.CreateDirectory(dest);
+
+        // 1. Snapshot the test's deploy directory. Redact the secrets file before writing locally.
+        var listing = await ExecAsync(["sh", "-c", $"find {scratch.OutputDir} -type f 2>/dev/null || true"], ct).ConfigureAwait(false);
+        foreach (var path in listing.Stdout.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            try
+            {
+                var content = await CopyOutAsync(path, ct).ConfigureAwait(false);
+                var rel = path.StartsWith(scratch.OutputDir + "/") ? path[(scratch.OutputDir.Length + 1)..] : path.TrimStart('/');
+                var target = Path.Combine(dest, rel);
+                Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+                if (rel.EndsWith("secrets.json", StringComparison.Ordinal))
+                {
+                    await File.WriteAllTextAsync(target, RedactSecrets(content), ct).ConfigureAwait(false);
+                }
+                else
+                {
+                    await File.WriteAllBytesAsync(target, content, ct).ConfigureAwait(false);
+                }
+            }
+            catch
+            {
+                // best-effort capture; one unreadable file shouldn't sink the rest
+            }
+        }
+
+        // 2. Compose logs for this test's project (compose namespaces by file's parent directory name).
+        var logs = await ExecAsync(
+            ["sh", "-c", $"docker compose -f {scratch.OutputDir}/docker-compose.yaml logs --tail 200 || true"], ct).ConfigureAwait(false);
+        await File.WriteAllTextAsync(Path.Combine(dest, "compose-logs.txt"), logs.Stdout + "\n--- stderr ---\n" + logs.Stderr, ct).ConfigureAwait(false);
+
+        // 3. Bootstrapper stdout/stderr captured during the failing test.
+        if (BootstrapperLogs.TryGetValue(testName, out var sb))
+        {
+            await File.WriteAllTextAsync(Path.Combine(dest, "bootstrapper.log"), sb.ToString(), ct).ConfigureAwait(false);
+        }
+    }
+
+    private static string RedactSecrets(byte[] raw)
+    {
+        // Cheap textual scrub - the secrets file is small enough that the perf cost is irrelevant,
+        // and using System.Text.Json directly would need the source-gen context from the bootstrapper
+        // project which we deliberately don't reference.
+        var text = Encoding.UTF8.GetString(raw);
+        return System.Text.RegularExpressions.Regex.Replace(
+            text,
+            @"""(postgresPassword|scyllaPassword|scyllaAdminPassword|encryptionPrivateKeyB64|encryptionPepper|leafPfxPassword)""\s*:\s*""[^""]*""",
+            "\"$1\": \"***\"");
+    }
+
+    private async Task WaitForInnerDockerAsync()
+    {
+        const int maxAttempts = 60;
+        for (var i = 0; i < maxAttempts; i++)
+        {
+            var probe = await ExecAsync(["docker", "info"]).ConfigureAwait(false);
+            if (probe.ExitCode == 0) return;
+            await Task.Delay(TimeSpan.FromSeconds(1)).ConfigureAwait(false);
+        }
+        throw new TimeoutException("Inner dockerd inside the DinD fixture failed to become ready within 60 seconds.");
+    }
+
+    private static string FixturesDir => Path.Combine(AppContext.BaseDirectory, "fixtures");
+
+    private static string SupportFilesHostPath()
+    {
+        // The bootstrapper expects scripts/, csharp/Interfold.Infrastructure.Postgres/Migrations/,
+        // and db/ relative to its own directory. We bind the repo root directly so the layout
+        // matches the release tarball when the bootstrapper resolves its anchor.
+        return RepoRoot.Path;
+    }
+}
+
+/// <summary>Result of an <c>ExecAsync</c> call inside the DinD container.</summary>
+public readonly record struct ExecResult(long ExitCode, string Stdout, string Stderr);
+
+/// <summary>
+/// In-container paths that uniquely identify a test's scratch workspace. The fixture issues one
+/// of these per test so parallel tests don't share <c>/opt/deploy</c>.
+/// </summary>
+/// <param name="Root">The scratch root, e.g. <c>/opt/scratch/IsIdempotentOnRerun-7a1b3c0d</c>.</param>
+/// <param name="OutputDir">Where the bootstrapper emits compose/secrets/certs (<c>{Root}/deploy</c>).</param>
+/// <param name="ConfigPath">Per-test copy of <c>interfold.bootstrap.json</c> (<c>{Root}/interfold.bootstrap.json</c>).</param>
+public readonly record struct DinDScratch(string Root, string OutputDir, string ConfigPath);

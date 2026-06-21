@@ -1,0 +1,111 @@
+using Interfold.Bootstrapper.Cli;
+using Interfold.Bootstrapper.Configuration;
+
+namespace Interfold.Bootstrapper.Phases;
+
+/// <summary>
+/// Dispatches the per-command phase sequence. Phases are designed to be idempotent — second runs
+/// short-circuit unless an explicit rotate flag is passed.
+/// </summary>
+internal static class Orchestrator
+{
+    public static async Task<int> RunAsync(BootstrapOptions options, PhaseLogger logger, CancellationToken ct)
+    {
+        // Phase sequence per command:
+        //   bootstrap       prereqs -> config -> secrets -> certs -> publish -> db-init -> launch
+        //   publish         config  -> secrets -> certs -> publish
+        //   up                                                                    -> launch
+        //   rotate-secrets  config  -> secrets (force) -> publish -> db-init -> launch
+        //   rotate-certs    config  -> certs   (force) -> publish -> db-init -> launch
+        //
+        // `publish` is intentionally artifact-only: no docker calls, no live infrastructure
+        // changes. That lets tests run it as a fast smoke check and lets operators inspect
+        // generated compose / .env before deciding to commit. The db-init phase below owns the
+        // admin / internal.secrets bootstrap that previously lived in the pg-bootstrap-auth /
+        // scylla-bootstrap-auth init containers; it runs for any command that subsequently
+        // hits `launch` (bootstrap, rotate-secrets, rotate-certs). The phase is itself
+        // idempotent - a rerun against an already-initialised cluster short-circuits via
+        // PostgresAlreadyInitializedAsync / ScyllaAlreadyInitializedAsync. We run it on
+        // rotate-certs even though that command doesn't touch DB state because the operator's
+        // expectation is "the stack still works after the call"; if their DB volume happens to
+        // be empty (clean rebuild, etc) we still want launch to succeed.
+
+        // --- Prerequisites (only the `bootstrap` command runs these by default) ---
+        if (options.Command == BootstrapCommand.Bootstrap && !options.SkipPrereqs)
+        {
+            await PrerequisitesPhase.RunAsync(options, logger, ct).ConfigureAwait(false);
+            if (HaltAfter(options, "prereqs", logger)) return 0;
+        }
+
+        // --- Config (skipped only for raw `up`) ---
+        BootstrapConfig? config = null;
+        if (options.Command != BootstrapCommand.Up)
+        {
+            config = await ConfigPhase.RunAsync(options, logger, ct).ConfigureAwait(false);
+            if (HaltAfter(options, "config", logger)) return 0;
+        }
+
+        // --- Secrets ---
+        GeneratedSecrets? secrets = null;
+        if (options.Command != BootstrapCommand.Up && options.Command != BootstrapCommand.RotateCerts)
+        {
+            secrets = await SecretsPhase.RunAsync(options, config!, logger, ct).ConfigureAwait(false);
+            if (HaltAfter(options, "secrets", logger)) return 0;
+        }
+        else if (options.Command == BootstrapCommand.RotateCerts)
+        {
+            // Cert rotation still needs the leaf PFX password from the secrets file; load read-only.
+            secrets = SecretsPhase.LoadExisting(options);
+        }
+
+        // --- Certificates ---
+        if (options.Command != BootstrapCommand.Up && options.Command != BootstrapCommand.RotateSecrets)
+        {
+            await CertificatePhase.RunAsync(options, config!, secrets!, logger, ct).ConfigureAwait(false);
+            if (HaltAfter(options, "certs", logger)) return 0;
+        }
+
+        // --- Compose publish ---
+        if (options.Command != BootstrapCommand.Up)
+        {
+            await PublishPhase.RunAsync(options, config!, secrets!, logger, ct).ConfigureAwait(false);
+            if (HaltAfter(options, "publish", logger)) return 0;
+        }
+
+        // --- Database init (admin role + internal.secrets seeding) ---
+        // Runs for any command that subsequently invokes launch (bootstrap, rotate-secrets,
+        // rotate-certs). `publish` stays artifact-only and skips this phase. The phase is
+        // idempotent: a subsequent run against an already-initialised cluster short-circuits
+        // via PostgresAlreadyInitializedAsync / ScyllaAlreadyInitializedAsync.
+        if (options.Command is BootstrapCommand.Bootstrap
+            or BootstrapCommand.RotateSecrets
+            or BootstrapCommand.RotateCerts)
+        {
+            await DatabaseInitPhase.RunAsync(options, config!, secrets!, logger, ct).ConfigureAwait(false);
+            if (HaltAfter(options, "db-init", logger)) return 0;
+        }
+
+        // --- Launch ---
+        if (options.Command is BootstrapCommand.Bootstrap or BootstrapCommand.Up
+            or BootstrapCommand.RotateSecrets or BootstrapCommand.RotateCerts)
+        {
+            await LaunchPhase.RunAsync(options, logger, ct).ConfigureAwait(false);
+            if (HaltAfter(options, "launch", logger)) return 0;
+        }
+
+        return 0;
+    }
+
+    private static bool HaltAfter(BootstrapOptions options, string phase, PhaseLogger logger)
+    {
+        if (!string.Equals(options.FaultInject, $"after-{phase}", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+        logger.Warn($"--fault-inject=after-{phase} triggered; exiting before next phase.");
+        // Tests use the non-zero process exit (Environment.Exit) elsewhere; here we return 0 because the
+        // orchestrator caller decides what to do. The test scenario kills the process with SIGKILL, so
+        // this code path is mostly a safety net for `--fault-inject` style assertions in local debugging.
+        return true;
+    }
+}

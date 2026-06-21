@@ -1,0 +1,29 @@
+# Test fixture - NOT shipped. Fedora 40 variant of the DinD harness; exercises the dnf install
+# path and the update-ca-trust-extract trust-store install in CertificatePhase.
+FROM fedora:40
+
+RUN dnf install -y \
+        ca-certificates \
+        curl \
+        iptables \
+        iproute \
+        kmod \
+        openssl \
+        sudo \
+        xz \
+ && dnf -y install dnf-plugins-core \
+ # Fedora 40 ships dnf4 where `addrepo --from-repofile` (dnf5 syntax) is not recognised.
+ # `--add-repo URL` is the portable form across dnf4 and dnf5.
+ && dnf config-manager --add-repo https://download.docker.com/linux/fedora/docker-ce.repo \
+ && dnf install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin \
+ && dnf clean all
+
+COPY dockerd-entrypoint.sh /usr/local/bin/dockerd-entrypoint.sh
+# Same CRLF guard as the Ubuntu fixture - the script may have Windows line endings on checkout.
+RUN sed -i 's/\r$//' /usr/local/bin/dockerd-entrypoint.sh \
+ && chmod +x /usr/local/bin/dockerd-entrypoint.sh
+
+WORKDIR /opt
+EXPOSE 2375
+
+ENTRYPOINT ["/usr/local/bin/dockerd-entrypoint.sh"]

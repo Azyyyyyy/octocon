@@ -7,6 +7,9 @@
   <Folder Name="/csharp/">
     <Project Path="csharp/Interfold.Api/Interfold.Api.csproj" />
     <Project Path="csharp/Interfold.AppHost/Interfold.AppHost.csproj" />
+    <Project Path="csharp/Interfold.Bootstrapper.IntegrationTests/Interfold.Bootstrapper.IntegrationTests.csproj" />
+    <Project Path="csharp/Interfold.Bootstrapper.UnitTests/Interfold.Bootstrapper.UnitTests.csproj" />
+    <Project Path="csharp/Interfold.Bootstrapper/Interfold.Bootstrapper.csproj" />
     <Project Path="csharp/Interfold.Contracts/Interfold.Contracts.csproj" />
     <Project Path="csharp/Interfold.DatabaseBootstrap/Interfold.DatabaseBootstrap.csproj" />
     <Project Path="csharp/Interfold.Domain/Interfold.Domain.csproj" />

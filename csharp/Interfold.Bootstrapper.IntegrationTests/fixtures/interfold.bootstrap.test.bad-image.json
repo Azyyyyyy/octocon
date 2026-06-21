@@ -1,0 +1,16 @@
+{
+  "deployment": {
+    "outputDir": "/opt/deploy",
+    "domains": ["api.test.local", "alt.test.local"],
+    "rootCaName": "Interfold Test Root CA",
+    "certYears": 2,
+    "trustStoreInstall": false
+  },
+  "ports": { "apiHttp": 5000, "apiHttps": 5001, "webHttp": 8080, "webHttps": 8081 },
+  "databaseMode": "single",
+  "apiImage": "interfold-api:nonexistent-tag-for-health-timeout-test",
+  "oauth": {
+    "googleClientSecret": "test-google-secret",
+    "discordClientSecret": ""
+  }
+}
