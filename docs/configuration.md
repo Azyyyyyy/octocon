@@ -343,6 +343,68 @@ Two ordering invariants are critical:
    controller that reads `IOptionsMonitor<AuthenticationConfiguration>` already sees
    patched values.
 
+## Migration ledger
+
+Both database providers track which embedded migrations have already been applied so
+subsequent startups skip already-applied files instead of relying purely on `IF NOT EXISTS`
+guards in the SQL/CQL. The ledger also detects post-deploy edits to applied files
+(SHA-256 checksum drift) and refuses to start the API until the drift is resolved.
+
+### Where the ledger lives
+
+| Provider | Table                                                            | Scope key              | Created by                                            |
+| -------- | ---------------------------------------------------------------- | ---------------------- | ----------------------------------------------------- |
+| Postgres | `internal.schema_migrations` (`version` primary key)             | filename only          | `PostgresMigrationService.EnsureLedgerAsync`          |
+| Scylla   | `global.schema_migrations` (`PRIMARY KEY (scope, version)`)      | `(keyspace, filename)` | `ScyllaMigrationService.EnsureLedgerAsync`            |
+
+Each row records `checksum` (hex SHA-256 of the embedded resource bytes), `applied_at`,
+`duration_ms`, and `applied_by` (the assembly informational version of the runner that
+wrote the row). For Scylla the `scope` column is the regional keyspace name for the per-
+region templates (`001_create_octocon_keyspaces.cql`,
+`002_create_octocon_schema.templated.cql`) and `grants:<keyspace>` for the GRANT loop
+(version = `grants_v1`, bump that constant in
+`[ScyllaMigrationService.cs](../csharp/Interfold.Infrastructure.Scylla/ScyllaMigrationService.cs)`
+when the grant set changes).
+
+### Bootstrap order
+
+- **Postgres:** the runner acquires the session-level
+  `pg_advisory_lock(MigrationAdvisoryLockId)` first, then `CREATE SCHEMA IF NOT EXISTS
+  internal` + `CREATE TABLE IF NOT EXISTS internal.schema_migrations` *before* querying
+  the ledger. Each not-yet-applied migration body and its ledger insert run inside the
+  same `NpgsqlTransaction` so a partial failure leaves no orphan row.
+- **Scylla:** the runner renders `000_create_singleton_keyspaces.cql` unconditionally to
+  create `global` / `nam_nt` / `dummy` (the only "always-run" bootstrap step, untracked
+  because `global` is the precondition for the ledger itself), then creates
+  `global.schema_migrations` and reads it. Per-keyspace files (`001_*`,
+  `002_*.templated.cql`) are then rendered and applied per regional keyspace, with each
+  ledger insert issued as `INSERT IF NOT EXISTS` so concurrent migrators converge on a
+  single row.
+
+### Drift behaviour
+
+If a recorded migration's recomputed checksum no longer matches the row, the runner
+throws `InvalidOperationException` mentioning the version and both checksums and the API
+refuses to start. Migration files are immutable once applied. To intentionally repurpose
+an existing version (e.g., you re-wrote the file and want to mark it re-applied), pick the
+appropriate path:
+
+- **Force re-record (no DB change required):** update the ledger checksum to the new file
+  hash before restart. The runner will see the row exists with the new checksum and skip
+  the file body next start. Compute the new checksum locally with `sha256sum` and:
+  - Postgres:
+    `UPDATE internal.schema_migrations SET checksum = '<NEW_HEX>' WHERE version = '<file>';`
+  - Scylla:
+    `UPDATE global.schema_migrations SET checksum = '<NEW_HEX>' WHERE scope = '<keyspace>' AND version = '<file>';`
+- **Force re-run from scratch (rare):** delete the ledger row(s) for the file. The runner
+  will treat the file as new on the next start, run the body, and re-insert the row. Only
+  do this if every statement in the file remains idempotent (`CREATE … IF NOT EXISTS`,
+  etc.) — the runner does not roll back the schema before re-applying.
+
+Both rewrites require admin credentials (the app user has no access to `internal.secrets`-
+adjacent tables or `global.schema_migrations`); use the same `postgres:admin_*` /
+`scylla:admin_*` rows the runner consumes.
+
 ## Rotation story
 
 Three independent rotation surfaces, each with a single command:

@@ -147,10 +147,11 @@ internal static class DatabaseInitPhase
 
     private static int ResolveScyllaPort()
     {
-        // We don't actually open a TCP connection here — cqlsh runs inside the container —
-        // but the contact_points secret seeded into internal.secrets uses the host port so
-        // the API on the same docker network can reach the cluster. Defaults to 9042; the
-        // host port allocation happens in Aspire/compose.
+        // CQL port the API uses to reach Scylla *over the compose docker network* (resolving the
+        // scylla service name via docker DNS). That target is always the container's listening
+        // port — 9042 — irrespective of whatever host port the operator (or test fixture) chose
+        // for external access via `config.ports.scylla`. The host-port choice flows into the
+        // compose YAML via PublishPhase; here we deliberately stay on the in-network port.
         return 9042;
     }
 

@@ -140,15 +140,32 @@ internal static class ConfigPhase
         ValidatePort(config.Ports.ApiHttps, nameof(config.Ports.ApiHttps));
         ValidatePort(config.Ports.WebHttp, nameof(config.Ports.WebHttp));
         ValidatePort(config.Ports.WebHttps, nameof(config.Ports.WebHttps));
+        ValidatePort(config.Ports.Postgres, nameof(config.Ports.Postgres));
+        ValidatePort(config.Ports.Scylla, nameof(config.Ports.Scylla));
 
-        // Same host port can only be bound once per compose project, so plain-HTTP and HTTPS
-        // listeners cannot share it. We only check the API pair here because the API container is
-        // the only one whose plain-HTTP + HTTPS endpoints are both bound by default; the web
-        // listeners share their port-pair handling at the AppHost layer.
-        if (config.Ports.ApiHttp == config.Ports.ApiHttps)
+        // Every host port in the bound set must be unique — docker compose can only bind a given
+        // port on the host once per project, so any collision (api-http with web-http, postgres
+        // with scylla, etc.) would surface as a "port already allocated" error deep inside the
+        // launch phase. Catch it here with a clear operator message instead.
+        var portFields = new (string Name, int Port)[]
         {
-            throw new InvalidOperationException(
-                $"config.ports.apiHttp ({config.Ports.ApiHttp}) and config.ports.apiHttps must be different ports.");
+            (nameof(config.Ports.ApiHttp), config.Ports.ApiHttp),
+            (nameof(config.Ports.ApiHttps), config.Ports.ApiHttps),
+            (nameof(config.Ports.WebHttp), config.Ports.WebHttp),
+            (nameof(config.Ports.WebHttps), config.Ports.WebHttps),
+            (nameof(config.Ports.Postgres), config.Ports.Postgres),
+            (nameof(config.Ports.Scylla), config.Ports.Scylla),
+        };
+        var seen = new Dictionary<int, string>(portFields.Length);
+        foreach (var (name, port) in portFields)
+        {
+            if (seen.TryGetValue(port, out var other))
+            {
+                throw new InvalidOperationException(
+                    $"config.ports.{char.ToLowerInvariant(name[0])}{name[1..]} ({port}) collides with " +
+                    $"config.ports.{char.ToLowerInvariant(other[0])}{other[1..]}; every bound host port must be unique.");
+            }
+            seen[port] = name;
         }
 
         if (config.DatabaseMode is not ("single" or "multi" or "cassandra"))

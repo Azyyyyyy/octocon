@@ -1,5 +1,7 @@
 using System.Collections.Concurrent;
 using System.Text;
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using DotNet.Testcontainers.Builders;
 using DotNet.Testcontainers.Configurations;
 using DotNet.Testcontainers.Containers;
@@ -30,6 +32,28 @@ public abstract class DinDFixtureBase : IAsyncInitializer, IAsyncDisposable
 
     /// <summary>Root directory under which per-test scratch dirs are created.</summary>
     public const string ScratchRoot = "/opt/scratch";
+
+    /// <summary>
+    /// Width of the host-port window each test reserves inside the shared DinD's network
+    /// namespace. We allocate 6 ports per test (api-http, api-https, web-http, web-https,
+    /// postgres, scylla) and round up to 10 so the integer math leaves clean 4-port gaps for
+    /// debugging / future expansion. With a starting cursor of <see cref="PortAllocationStart"/>
+    /// and a step of 10 we can issue ~4,000 unique blocks before bumping into the ephemeral
+    /// range — far more than any plausible suite size.
+    /// </summary>
+    private const int PortAllocationStride = 10;
+
+    /// <summary>
+    /// First base port handed out by <see cref="AllocatePorts"/>. Sits well below the standard
+    /// Linux ephemeral range (32768-60999) so we never collide with whatever the inner dockerd
+    /// happens to grab for outbound ephemeral sockets.
+    /// </summary>
+    private const int PortAllocationStart = 25000;
+
+    // First Interlocked.Add(ref _portCursor, PortAllocationStride) call returns PortAllocationStart;
+    // we pre-decrement so the first allocation lands exactly on the start value rather than one
+    // stride past it.
+    private static int _portCursor = PortAllocationStart - PortAllocationStride;
 
     /// <summary>Per-test stdout/stderr capture; flushed by <c>CaptureFailureArtifactsAsync</c>.</summary>
     public ConcurrentDictionary<string, StringBuilder> BootstrapperLogs { get; } = new();
@@ -95,11 +119,22 @@ public abstract class DinDFixtureBase : IAsyncInitializer, IAsyncDisposable
     /// has its own deploy directory and they can run concurrently.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// The scratch dir itself is used as the bootstrapper output dir (no nested <c>deploy/</c>),
     /// because <c>docker compose -f &lt;file&gt;</c> derives its project name from the parent
     /// directory's basename. Giving every test a uniquely-named parent dir means each
     /// <c>compose up</c> creates its own isolated container/volume/network namespace - tests that
     /// invoke <c>bootstrap</c> never share state with each other or with other tests.
+    /// </para>
+    /// <para>
+    /// On top of the per-test scratch dir we also allocate a private 6-port window (api-http,
+    /// api-https, web-http, web-https, postgres, scylla) via <see cref="AllocatePorts"/> and
+    /// substitute it into the <c>ports</c> block of the supplied JSON template before copying it
+    /// into the DinD. Without this rewrite every test would emit a compose file binding the same
+    /// host ports inside the shared DinD's single network namespace and concurrent
+    /// <c>compose up</c> calls would collide on "port already allocated". The per-test rewrite is
+    /// what lets the assembly drop the <c>*-compose-up</c> <c>NotInParallel</c> serialisers.
+    /// </para>
     /// </remarks>
     public async Task<DinDScratch> CreateScratchAsync(string testName, string configHostPath, CancellationToken ct = default)
     {
@@ -116,15 +151,57 @@ public abstract class DinDFixtureBase : IAsyncInitializer, IAsyncDisposable
         var configPath = $"{dir}/interfold.bootstrap.json";
 
         await ExecAsync(["mkdir", "-p", dir], ct).ConfigureAwait(false);
-        var bytes = await File.ReadAllBytesAsync(configHostPath, ct).ConfigureAwait(false);
+        var templateBytes = await File.ReadAllBytesAsync(configHostPath, ct).ConfigureAwait(false);
+        var ports = AllocatePorts();
+        var rewritten = RewriteConfigWithPorts(templateBytes, ports);
         const UnixFileModes Mode0600 = UnixFileModes.UserRead | UnixFileModes.UserWrite;
-        await _dinD.CopyAsync(bytes, configPath, 0, 0, Mode0600, ct).ConfigureAwait(false);
+        await _dinD.CopyAsync(rewritten, configPath, 0, 0, Mode0600, ct).ConfigureAwait(false);
 
-        var scratch = new DinDScratch(dir, dir, configPath);
+        var scratch = new DinDScratch(dir, dir, configPath, ports);
         // Stash the scratch so [After(Test)] hooks can recover it from the fixture by test name
         // without needing to mutate test-class instance fields (which TUnit discourages).
         Scratches[testName] = scratch;
         return scratch;
+    }
+
+    /// <summary>
+    /// Hands out a fresh 6-port allocation for a single test. Uses <see cref="Interlocked.Add(ref int, int)"/>
+    /// so concurrent fixtures (Ubuntu + Fedora + bare-prereqs) draw from the same monotonic
+    /// counter without any locking. The first call returns ports starting at
+    /// <see cref="PortAllocationStart"/>; each subsequent call advances by <see cref="PortAllocationStride"/>.
+    /// </summary>
+    public static DinDPortAllocation AllocatePorts()
+    {
+        var basePort = Interlocked.Add(ref _portCursor, PortAllocationStride);
+        return new DinDPortAllocation(
+            ApiHttp: basePort + 0,
+            ApiHttps: basePort + 1,
+            WebHttp: basePort + 2,
+            WebHttps: basePort + 3,
+            Postgres: basePort + 4,
+            Scylla: basePort + 5);
+    }
+
+    /// <summary>
+    /// Returns a copy of <paramref name="configBytes"/> with the top-level <c>ports</c> object
+    /// replaced by the supplied <paramref name="ports"/>. Uses <see cref="JsonNode"/> so the
+    /// surrounding config (deployment, databaseMode, apiImage, oauth) is preserved verbatim.
+    /// </summary>
+    private static byte[] RewriteConfigWithPorts(byte[] configBytes, DinDPortAllocation ports)
+    {
+        var root = JsonNode.Parse(configBytes)
+            ?? throw new InvalidOperationException("test bootstrap config parsed to null");
+        root["ports"] = new JsonObject
+        {
+            ["apiHttp"] = ports.ApiHttp,
+            ["apiHttps"] = ports.ApiHttps,
+            ["webHttp"] = ports.WebHttp,
+            ["webHttps"] = ports.WebHttps,
+            ["postgres"] = ports.Postgres,
+            ["scylla"] = ports.Scylla,
+        };
+        var json = root.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
+        return Encoding.UTF8.GetBytes(json);
     }
 
     public async ValueTask DisposeAsync()
@@ -201,17 +278,17 @@ public abstract class DinDFixtureBase : IAsyncInitializer, IAsyncDisposable
     }
 
     /// <summary>
-    /// Tears down any docker compose stack a test brought up, releasing the DinD's host ports
-    /// (5000 / 5432 / 9042 / 9180) so the next test in the [NotInParallel] queue can bind them.
-    /// Idempotent: silently no-ops if the test never created a scratch or never ran compose up.
+    /// Tears down any docker compose stack a test brought up, releasing the test's reserved
+    /// host-port window inside the DinD network namespace so reruns within the same session can
+    /// allocate fresh ports without the previous bind lingering. Idempotent: silently no-ops if
+    /// the test never created a scratch or never ran compose up.
     /// </summary>
     /// <remarks>
-    /// We share one DinD container across the whole test session, so the DinD's network namespace
-    /// has a single set of host ports. Tests that run `compose up -d` keep those ports bound for
-    /// the lifetime of the container. Without an explicit `compose down -v --remove-orphans`
-    /// between tests, the next serialised test races into "port already allocated" inside the
-    /// shared DinD. We invoke this from each test class's [After(Test)] hook unconditionally -
-    /// down is cheap when there's nothing to remove.
+    /// We share one DinD container across the whole test session. The per-test port allocator in
+    /// <see cref="CreateScratchAsync"/> guarantees no two concurrent tests bind the same host
+    /// ports, but if a test exits without `compose down` those ports stay bound until the DinD
+    /// itself goes away. Tearing down in [After(Test)] keeps the port pool tidy and means
+    /// failing-then-rerunning a test never trips over its own stale binds.
     /// </remarks>
     public async Task TearDownComposeAsync(string testName, CancellationToken ct = default)
     {
@@ -316,10 +393,26 @@ public abstract class DinDFixtureBase : IAsyncInitializer, IAsyncDisposable
 public readonly record struct ExecResult(long ExitCode, string Stdout, string Stderr);
 
 /// <summary>
-/// In-container paths that uniquely identify a test's scratch workspace. The fixture issues one
-/// of these per test so parallel tests don't share <c>/opt/deploy</c>.
+/// In-container paths and bound host ports that uniquely identify a test's scratch workspace.
+/// The fixture issues one of these per test so parallel tests don't share <c>/opt/deploy</c>
+/// or contend for the same host port window inside the DinD's network namespace.
 /// </summary>
 /// <param name="Root">The scratch root, e.g. <c>/opt/scratch/IsIdempotentOnRerun-7a1b3c0d</c>.</param>
 /// <param name="OutputDir">Where the bootstrapper emits compose/secrets/certs (<c>{Root}/deploy</c>).</param>
 /// <param name="ConfigPath">Per-test copy of <c>interfold.bootstrap.json</c> (<c>{Root}/interfold.bootstrap.json</c>).</param>
-public readonly record struct DinDScratch(string Root, string OutputDir, string ConfigPath);
+/// <param name="Ports">Per-test host-port allocation embedded into the per-test config's <c>ports</c> block.</param>
+public readonly record struct DinDScratch(string Root, string OutputDir, string ConfigPath, DinDPortAllocation Ports);
+
+/// <summary>
+/// 6-port allocation issued per test by <see cref="DinDFixtureBase.AllocatePorts"/>. The values
+/// are baked into the per-test <c>interfold.bootstrap.json</c> via the
+/// <c>CreateScratchAsync</c> rewrite step, then read back through
+/// <see cref="Interfold.Bootstrapper.Configuration.PortsSection"/> when the bootstrapper runs.
+/// </summary>
+public readonly record struct DinDPortAllocation(
+    int ApiHttp,
+    int ApiHttps,
+    int WebHttp,
+    int WebHttps,
+    int Postgres,
+    int Scylla);

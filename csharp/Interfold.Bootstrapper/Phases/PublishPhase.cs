@@ -352,8 +352,8 @@ internal static class PublishPhase
             ["Parameters:include-dashboard"] = "false",
             // Disable the optional web container for self-hosting by default; operators can flip it via config later.
             ["Parameters:include-web"] = "false",
-            ["Ports:postgres"] = "4200",
-            ["Ports:scylla"] = "9042",
+            ["Ports:postgres"] = config.Ports.Postgres.ToString(),
+            ["Ports:scylla"] = config.Ports.Scylla.ToString(),
             ["Ports:api-http"] = config.Ports.ApiHttp.ToString(),
             ["Ports:api-https"] = config.Ports.ApiHttps.ToString(),
             ["Ports:web-http"] = config.Ports.WebHttp.ToString(),

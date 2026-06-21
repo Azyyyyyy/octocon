@@ -42,23 +42,22 @@ jobs:
       - name: Test
         run: dotnet test --verbosity normal --coverage --coverage-output-format cobertura
 
-      - name: Code Coverage Summary Report
-        uses: irongut/CodeCoverageSummary@v1.3.0
+      - name: Generate code coverage report
+        uses: danielpalme/ReportGenerator-GitHub-Action@5
         with:
-          filename: '**/TestResults/*.xml'
-          badge: true
-          format: 'markdown'
-          output: 'both'
+          reports: '**/TestResults/*.cobertura.xml'
+          targetdir: coveragereport
+          reporttypes: MarkdownSummaryGithub
 
       - name: Add Coverage PR Comment
         uses: marocchino/sticky-pull-request-comment@v2
         if: github.event_name == 'pull_request'
         with:
           recreate: true
-          path: code-coverage-results.md
+          path: coveragereport/SummaryGithub.md
 
       - name: Write to Job Summary
-        run: cat code-coverage-results.md >> $GITHUB_STEP_SUMMARY
+        run: cat coveragereport/SummaryGithub.md >> $GITHUB_STEP_SUMMARY
 
       - name: Publish
         run: dotnet publish ${{ env.PROJECT_PATH }} --configuration Release --no-build --output ./publish

@@ -17,9 +17,11 @@ namespace Interfold.Bootstrapper.IntegrationTests;
 ///   </list>
 /// </summary>
 /// <remarks>
-/// Each test runs a full bootstrap against its own scratch directory; they share the
-/// <c>ubuntu-compose-up</c> NotInParallel key with the other launch-style tests because every
-/// bootstrap host-binds the same DinD ports.
+/// Each test runs a full bootstrap against its own scratch directory and a private host-port
+/// window inside the shared DinD (see <see cref="DinDFixtureBase.CreateScratchAsync"/>'s port
+/// allocator), so they execute concurrently with each other and with the other compose-up
+/// tests in the assembly. The previous <c>ubuntu-compose-up</c> NotInParallel serialiser is no
+/// longer needed.
 /// </remarks>
 [RequiresDocker]
 [ClassDataSource<UbuntuDinDFixture>(Shared = SharedType.PerTestSession)]
@@ -53,7 +55,6 @@ public class DbInitSecurityInvariantsTests(UbuntuDinDFixture dinD)
     }
 
     [Test]
-    [NotInParallel("ubuntu-compose-up")]
     public async Task CassandraDefaultIsLockedAfterBootstrap()
     {
         var (_, composeFile) = await BootstrapStackAsync(nameof(CassandraDefaultIsLockedAfterBootstrap));
@@ -73,7 +74,6 @@ public class DbInitSecurityInvariantsTests(UbuntuDinDFixture dinD)
     }
 
     [Test]
-    [NotInParallel("ubuntu-compose-up")]
     public async Task DbInitPostgresPasswordIsScrambledInCluster()
     {
         var (scratch, composeFile) = await BootstrapStackAsync(nameof(DbInitPostgresPasswordIsScrambledInCluster));
@@ -100,7 +100,6 @@ public class DbInitSecurityInvariantsTests(UbuntuDinDFixture dinD)
     }
 
     [Test]
-    [NotInParallel("ubuntu-compose-up")]
     public async Task InterfoldPostgresUserIsDmlOnly()
     {
         var (scratch, composeFile) = await BootstrapStackAsync(nameof(InterfoldPostgresUserIsDmlOnly));
@@ -127,7 +126,6 @@ public class DbInitSecurityInvariantsTests(UbuntuDinDFixture dinD)
     }
 
     [Test]
-    [NotInParallel("ubuntu-compose-up")]
     public async Task InterfoldScyllaUserIsNonSuperuser()
     {
         var (scratch, composeFile) = await BootstrapStackAsync(nameof(InterfoldScyllaUserIsNonSuperuser));
@@ -180,7 +178,6 @@ public class DbInitSecurityInvariantsTests(UbuntuDinDFixture dinD)
     }
 
     [Test]
-    [NotInParallel("ubuntu-compose-up")]
     public async Task InterfoldAdminPostgresUserIsSuperuser()
     {
         var (scratch, composeFile) = await BootstrapStackAsync(nameof(InterfoldAdminPostgresUserIsSuperuser));
@@ -204,7 +201,6 @@ public class DbInitSecurityInvariantsTests(UbuntuDinDFixture dinD)
     }
 
     [Test]
-    [NotInParallel("ubuntu-compose-up")]
     public async Task InternalSecretsTableIsSeeded()
     {
         var (scratch, composeFile) = await BootstrapStackAsync(nameof(InternalSecretsTableIsSeeded));

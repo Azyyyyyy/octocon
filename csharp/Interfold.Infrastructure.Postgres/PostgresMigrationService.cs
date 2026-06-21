@@ -1,4 +1,7 @@
+using System.Diagnostics;
 using System.Reflection;
+using System.Security.Cryptography;
+using System.Text;
 using Interfold.Contracts.Configuration;
 using Interfold.Contracts.Secrets;
 using Microsoft.Extensions.Hosting;
@@ -12,6 +15,14 @@ namespace Interfold.Infrastructure.Postgres;
 /// Derives the admin connection string from the app connection + admin password from secrets.
 /// Runs before the app accepts traffic (IHostedLifecycleService.StartingAsync).
 /// </summary>
+/// <remarks>
+/// Each migration is tracked in <c>internal.schema_migrations</c> by version + SHA-256
+/// checksum. On startup the runner reads the ledger, skips any file whose checksum matches
+/// an existing row, and fails fast if a previously-applied file's content has drifted. The
+/// migration body and the ledger insert are executed inside the same transaction so a partial
+/// failure leaves no orphan ledger row behind. The ledger table itself is bootstrapped by the
+/// runner (not a `.sql` migration) so the very first run can still record `000_*` correctly.
+/// </remarks>
 public sealed class PostgresMigrationService(
     PersistenceConfiguration options,
     ISecretsStore secretsStore,
@@ -28,8 +39,8 @@ public sealed class PostgresMigrationService(
     /// credentials from <paramref name="secretsStore"/>. The integration test
     /// <c>SharedDbFixture</c> calls this once per test session so the per-test
     /// <c>InterfoldWebApplicationFactory</c> doesn't need to rebuild migrations on every host.
-    /// Idempotent: each migration is wrapped in <c>IF NOT EXISTS</c> guards / advisory locks so
-    /// running it twice is a no-op.
+    /// Idempotent: each migration is tracked in <c>internal.schema_migrations</c> and skipped
+    /// on subsequent runs.
     /// </summary>
     public static async Task MigrateAsync(
         PersistenceConfiguration options,
@@ -67,15 +78,73 @@ public sealed class PostgresMigrationService(
 
         try
         {
+            await EnsureLedgerAsync(connection, cancellationToken);
+            var applied = await LoadAppliedAsync(connection, cancellationToken);
+
             var migrations = GetMigrationScripts();
+            var appliedBy = Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "unknown";
+            var newlyApplied = 0;
+            var skipped = 0;
+
             foreach (var (name, sql) in migrations)
             {
+                var checksum = ComputeChecksum(sql);
+
+                if (applied.TryGetValue(name, out var existingChecksum))
+                {
+                    if (!string.Equals(existingChecksum, checksum, StringComparison.Ordinal))
+                    {
+                        throw new InvalidOperationException(
+                            $"[pg-migrate] Checksum mismatch for migration '{name}': " +
+                            $"recorded={existingChecksum}, actual={checksum}. Migration files must not be " +
+                            "edited after they have been applied. Restore the original file or, if the change " +
+                            "is intentional, manually update internal.schema_migrations.checksum for this row.");
+                    }
+
+                    logger.LogDebug("[pg-migrate] Skipping {Migration}, already applied.", name);
+                    skipped++;
+                    continue;
+                }
+
                 logger.LogInformation("[pg-migrate] Applying: {Migration}", name);
-                await using var cmd = new NpgsqlCommand(sql, connection);
-                await cmd.ExecuteNonQueryAsync(cancellationToken);
+                var stopwatch = Stopwatch.StartNew();
+
+                await using var tx = await connection.BeginTransactionAsync(cancellationToken);
+                try
+                {
+                    await using (var cmd = new NpgsqlCommand(sql, connection, tx))
+                    {
+                        await cmd.ExecuteNonQueryAsync(cancellationToken);
+                    }
+
+                    stopwatch.Stop();
+
+                    await using (var insertCmd = new NpgsqlCommand(
+                                     "INSERT INTO internal.schema_migrations " +
+                                     "(version, checksum, duration_ms, applied_by) " +
+                                     "VALUES (@version, @checksum, @duration_ms, @applied_by)",
+                                     connection, tx))
+                    {
+                        insertCmd.Parameters.AddWithValue("version", name);
+                        insertCmd.Parameters.AddWithValue("checksum", checksum);
+                        insertCmd.Parameters.AddWithValue("duration_ms", (int)stopwatch.ElapsedMilliseconds);
+                        insertCmd.Parameters.AddWithValue("applied_by", appliedBy);
+                        await insertCmd.ExecuteNonQueryAsync(cancellationToken);
+                    }
+
+                    await tx.CommitAsync(cancellationToken);
+                    newlyApplied++;
+                }
+                catch
+                {
+                    await tx.RollbackAsync(cancellationToken);
+                    throw;
+                }
             }
 
-            logger.LogInformation("[pg-migrate] All migrations applied ({Count} files).", migrations.Count);
+            logger.LogInformation(
+                "[pg-migrate] Applied {New} new migration(s), skipped {Skipped} already-applied.",
+                newlyApplied, skipped);
         }
         finally
         {
@@ -106,5 +175,46 @@ public sealed class PostgresMigrationService(
                 return (Name: n[prefix.Length..], Sql: reader.ReadToEnd());
             })
             .ToList();
+    }
+
+    /// <summary>
+    /// Ensures the <c>internal</c> schema and the <c>internal.schema_migrations</c> ledger
+    /// table exist. Runs unconditionally on every startup — both statements are idempotent
+    /// and the runner relies on the ledger being queryable before the per-file loop starts.
+    /// </summary>
+    private static async Task EnsureLedgerAsync(NpgsqlConnection connection, CancellationToken cancellationToken)
+    {
+        const string ddl = """
+                           CREATE SCHEMA IF NOT EXISTS internal;
+                           CREATE TABLE IF NOT EXISTS internal.schema_migrations (
+                               version      TEXT PRIMARY KEY,
+                               checksum     TEXT NOT NULL,
+                               applied_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+                               duration_ms  INTEGER NOT NULL,
+                               applied_by   TEXT
+                           );
+                           """;
+
+        await using var cmd = new NpgsqlCommand(ddl, connection);
+        await cmd.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    private static async Task<Dictionary<string, string>> LoadAppliedAsync(
+        NpgsqlConnection connection, CancellationToken cancellationToken)
+    {
+        var applied = new Dictionary<string, string>(StringComparer.Ordinal);
+        await using var cmd = new NpgsqlCommand(
+            "SELECT version, checksum FROM internal.schema_migrations", connection);
+        await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            applied[reader.GetString(0)] = reader.GetString(1);
+        }
+        return applied;
+    }
+
+    internal static string ComputeChecksum(string sql)
+    {
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(sql)));
     }
 }

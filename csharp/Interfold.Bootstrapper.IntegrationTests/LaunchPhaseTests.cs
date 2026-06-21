@@ -22,7 +22,6 @@ public class LaunchPhaseTests(UbuntuDinDFixture dinD)
 {
     private static string TestConfigJsonPath => Path.Combine(AppContext.BaseDirectory, "fixtures", "interfold.bootstrap.test.json");
     private static string BadImageConfigJsonPath => Path.Combine(AppContext.BaseDirectory, "fixtures", "interfold.bootstrap.test.bad-image.json");
-    private static string CustomPortConfigJsonPath => Path.Combine(AppContext.BaseDirectory, "fixtures", "interfold.bootstrap.test.custom-port.json");
 
     [After(Test)]
     public async Task DumpOnFailure(TestContext ctx)
@@ -35,7 +34,6 @@ public class LaunchPhaseTests(UbuntuDinDFixture dinD)
     }
 
     [Test]
-    [NotInParallel("ubuntu-compose-up")]
     public async Task UpCommandLaunchesPrePublishedStack()
     {
         // Stage the stack via `publish` first (no DB init, no launch), then run `up` standalone.
@@ -69,7 +67,6 @@ public class LaunchPhaseTests(UbuntuDinDFixture dinD)
     }
 
     [Test]
-    [NotInParallel("ubuntu-compose-up")]
     public async Task HealthTimeoutDumpsComposeLogs()
     {
         // We override apiImage to a tag that doesn't exist in the DinD's local image store. The
@@ -96,24 +93,26 @@ public class LaunchPhaseTests(UbuntuDinDFixture dinD)
     }
 
     [Test]
-    [NotInParallel("ubuntu-compose-up")]
     public async Task RespectsCustomApiHttpPort()
     {
-        // The custom-port fixture sets apiHttp=15000. LaunchPhase reads ports back from the
-        // persisted bootstrap config in ResolveApiHttpPortAsync and logs the URL it polls. If
-        // a future refactor accidentally hard-codes 5000, this test catches it because the
-        // health-poll line emits the bound port in stdout.
-        var scratch = await dinD.CreateScratchAsync(nameof(RespectsCustomApiHttpPort), CustomPortConfigJsonPath);
+        // Every test now gets its own apiHttp port via the DinD port allocator (the rewrite in
+        // CreateScratchAsync substitutes the allocated 6-port window into the test config). That
+        // makes this test redundant with every other launch-style test in terms of "does the
+        // operator's port actually get used", but we keep it as the explicit canary: we assert
+        // LaunchPhase emits a polling line for the allocator's port specifically, so a future
+        // refactor that hard-codes 5000 / 4200 / 9042 in the launch path is caught directly.
+        var scratch = await dinD.CreateScratchAsync(nameof(RespectsCustomApiHttpPort), TestConfigJsonPath);
 
         var result = await dinD.RunBootstrapperAsync(nameof(RespectsCustomApiHttpPort),
             ["bootstrap", "--config", scratch.ConfigPath, "--output-dir", scratch.OutputDir,
              "--non-interactive", "--skip-prereqs"]);
 
         // The test passes whether or not the API ultimately reached healthy state — what we're
-        // pinning is that the launch phase polled the custom port. If the API doesn't come up
+        // pinning is that the launch phase polled the allocated port. If the API doesn't come up
         // (e.g. DinD pressure causes a health timeout) we still want to see the polling line.
         var combined = result.Stdout + result.Stderr;
-        await Assert.That(combined).Contains("http://localhost:15000")
-            .Because($"LaunchPhase should poll the custom apiHttp port: {result.Stderr}");
+        var expectedUrl = $"http://localhost:{scratch.Ports.ApiHttp}";
+        await Assert.That(combined).Contains(expectedUrl)
+            .Because($"LaunchPhase should poll the allocated apiHttp port ({expectedUrl}): {result.Stderr}");
     }
 }

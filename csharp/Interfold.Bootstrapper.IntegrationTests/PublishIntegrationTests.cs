@@ -12,9 +12,9 @@ namespace Interfold.Bootstrapper.IntegrationTests;
 /// disk</em> after Aspire publish + our env post-processing matches the contract.
 /// </summary>
 /// <remarks>
-/// All tests here run the <c>publish</c> command only (no <c>compose up</c>), so they neither
-/// need the <c>ubuntu-compose-up</c> NotInParallel serialiser nor the multi-minute health-wait
-/// budget that the launch-style tests do. They run in well under 30 seconds each.
+/// All tests here run the <c>publish</c> command only (no <c>compose up</c>), so they don't
+/// need the multi-minute health-wait budget that the launch-style tests do — they run in well
+/// under 30 seconds each, fully in parallel with every other test in the assembly.
 /// </remarks>
 [RequiresDocker]
 [ClassDataSource<UbuntuDinDFixture>(Shared = SharedType.PerTestSession)]

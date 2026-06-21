@@ -1,4 +1,7 @@
+using System.Diagnostics;
 using System.Reflection;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.RegularExpressions;
 using Cassandra;
 using Interfold.Contracts.Configuration;
@@ -15,6 +18,17 @@ namespace Interfold.Infrastructure.Scylla;
 /// Supports both single-node (SimpleStrategy) and multi-DC (NetworkTopologyStrategy) deployments.
 /// Runs before the app accepts traffic (IHostedLifecycleService.StartingAsync).
 /// </summary>
+/// <remarks>
+/// Each migration is tracked in <c>global.schema_migrations</c> by <c>(scope, version)</c>
+/// + SHA-256 checksum so previously-applied files are skipped on subsequent runs and
+/// post-deploy edits are detected (fail-fast). The cluster-wide singleton keyspaces
+/// (<c>global</c>, <c>nam_nt</c>, <c>dummy</c>) are bootstrapped from
+/// <c>000_create_singleton_keyspaces.cql</c> unconditionally — they're a precondition for
+/// the ledger itself and every statement is idempotent. Templated per-region files
+/// (<c>001_create_octocon_keyspaces.cql</c>, <c>002_create_octocon_schema.templated.cql</c>)
+/// are tracked once per regional keyspace, so adding a new region later only re-applies the
+/// rendered template to the new keyspace.
+/// </remarks>
 public sealed partial class ScyllaMigrationService(
     PersistenceConfiguration options,
     ISecretsStore secretsStore,
@@ -22,6 +36,22 @@ public sealed partial class ScyllaMigrationService(
     ILogger<ScyllaMigrationService> logger) : IHostedLifecycleService
 {
     private static readonly string[] RegionalKeyspaces = ["nam", "eur", "sam", "sas", "eas", "ocn", "gdpr"];
+
+    // Singleton keyspaces created once during bootstrap from 000_create_singleton_keyspaces.cql.
+    private static readonly string[] SingletonKeyspaces = ["global", "nam_nt", "dummy"];
+
+    // Ledger constants.
+    private const string LedgerKeyspace = "global";
+    private const string LedgerTable = "schema_migrations";
+    private const string LedgerTableFqn = $"{LedgerKeyspace}.{LedgerTable}";
+    private const string SingletonsMigration = "000_create_singleton_keyspaces.cql";
+    private const string KeyspacesMigration = "001_create_octocon_keyspaces.cql";
+    private const string SchemaMigration = "002_create_octocon_schema.templated.cql";
+    private const string GrantsVersion = "grants_v1";
+
+    // Stable template hashed for grant tracking. Bump GrantsVersion whenever this string
+    // changes so existing rows mismatch and grants get re-applied across all scopes.
+    private const string GrantTemplate = "GRANT SELECT ON KEYSPACE {ks} TO {user};GRANT MODIFY ON KEYSPACE {ks} TO {user}";
 
     private string? _adminUsername;
     private string? _adminPassword;
@@ -100,9 +130,15 @@ public sealed partial class ScyllaMigrationService(
             logger.LogInformation("[scylla-migrate] Visible datacenters: {DCs}, database: {Db}",
                 string.Join(", ", visibleDcs), isScylla ? "ScyllaDB" : "Cassandra");
 
-            await ApplyKeyspaces(session, visibleDcs, isScylla);
-            await ApplySchema(session);
-            await GrantPermissions(session);
+            // Bootstrap: create the singleton keyspaces (global, nam_nt, dummy) unconditionally
+            // so the ledger table can live in `global` and the rest of the run can be tracked.
+            await EnsureSingletonKeyspacesAsync(session, visibleDcs, isScylla);
+            await EnsureLedgerAsync(session);
+            var applied = await LoadAppliedAsync(session);
+
+            await ApplyKeyspaces(session, visibleDcs, isScylla, applied);
+            await ApplySchema(session, applied);
+            await GrantPermissions(session, applied);
         }
         finally
         {
@@ -254,63 +290,105 @@ public sealed partial class ScyllaMigrationService(
         }
     }
 
+    // --- Singleton Keyspace Bootstrap (untracked) ---
+
+    /// <summary>
+    /// Renders and applies <see cref="SingletonsMigration"/> to create the cluster-wide
+    /// singleton keyspaces (<c>global</c>, <c>nam_nt</c>, <c>dummy</c>). This step is
+    /// intentionally not recorded in the ledger: <c>global</c> must exist before the ledger
+    /// table can be created and the statements are cheap idempotent CREATE/ALTERs anyway.
+    /// </summary>
+    private async Task EnsureSingletonKeyspacesAsync(ISession session, HashSet<string> dcs, bool isScylla)
+    {
+        var cqlTemplate = GetEmbeddedResource(SingletonsMigration);
+        var (tabletsClause, tabletsClauseDisabled) = ComputeTabletsClauses(dcs, isScylla);
+        var rendered = cqlTemplate
+            .Replace("{{GLOBAL_REPLICATION}}", GlobalReplication(dcs))
+            .Replace("{{NAM_NT_REPLICATION}}", NamNtReplication(dcs))
+            .Replace("{{TABLETS_CLAUSE_DISABLED}}", tabletsClauseDisabled)
+            .Replace("{{TABLETS_CLAUSE}}", tabletsClause);
+
+        logger.LogInformation("[scylla-migrate] Bootstrapping singleton keyspaces ({Singletons})...",
+            string.Join(", ", SingletonKeyspaces));
+        await ExecuteStatements(session, rendered);
+    }
+
     // --- Keyspace Creation ---
 
-    private async Task ApplyKeyspaces(ISession session, HashSet<string> dcs, bool isScylla)
+    private async Task ApplyKeyspaces(
+        ISession session,
+        HashSet<string> dcs,
+        bool isScylla,
+        Dictionary<(string Scope, string Version), string> applied)
     {
-        var cqlTemplate = GetEmbeddedResource("001_create_octocon_keyspaces.cql");
-        var globalRepl = GlobalReplication(dcs);
-        var namNtRepl = NamNtReplication(dcs);
+        var cqlTemplate = GetEmbeddedResource(KeyspacesMigration);
+        var checksum = ComputeChecksum(cqlTemplate);
+        var (tabletsClause, _) = ComputeTabletsClauses(dcs, isScylla);
 
-        var keyspaces = options.IsSingleScyllaInstance
-            ? [_keyspace!]
-            : RegionalKeyspaces;
+        var keyspaces = TargetKeyspaces();
 
-        // Create keyspaces for target regions
         foreach (var keyspace in keyspaces)
         {
+            if (ShouldSkip(applied, keyspace, KeyspacesMigration, checksum))
+            {
+                logger.LogDebug("[scylla-migrate] Skipping {Migration} for '{Keyspace}', already applied.",
+                    KeyspacesMigration, keyspace);
+                continue;
+            }
+
             var regionalRepl = RegionalReplicationFor(keyspace, dcs);
-            var tabletsClause = isScylla && IsMultiDc(dcs)
-                ? " AND tablets = {'enabled': true}"
-                : "";
-            var tabletsClauseDisabled = isScylla
-                ? " AND tablets = {'enabled': false}"
-                : "";
             var rendered = cqlTemplate
                 .Replace("{{KEYSPACE}}", keyspace)
                 .Replace("{{KEYSPACE_REPLICATION}}", regionalRepl)
-                .Replace("{{GLOBAL_REPLICATION}}", globalRepl)
-                .Replace("{{NAM_NT_REPLICATION}}", namNtRepl)
-                .Replace("{{TABLETS_CLAUSE_DISABLED}}", tabletsClauseDisabled)
                 .Replace("{{TABLETS_CLAUSE}}", tabletsClause);
 
-            logger.LogInformation("[scylla-migrate] Creating keyspaces for region '{Region}' (replication={Repl})...",
+            logger.LogInformation("[scylla-migrate] Creating keyspace '{Region}' (replication={Repl})...",
                 keyspace, regionalRepl);
+            var stopwatch = Stopwatch.StartNew();
             await ExecuteStatements(session, rendered);
+            stopwatch.Stop();
+
+            await RecordMigrationAsync(session, keyspace, KeyspacesMigration, checksum,
+                (int)stopwatch.ElapsedMilliseconds);
         }
     }
 
     // --- Schema Application ---
 
-    private async Task ApplySchema(ISession session)
+    private async Task ApplySchema(
+        ISession session,
+        Dictionary<(string Scope, string Version), string> applied)
     {
-        var cqlTemplate = GetEmbeddedResource("002_create_octocon_schema.templated.cql");
+        var cqlTemplate = GetEmbeddedResource(SchemaMigration);
+        var checksum = ComputeChecksum(cqlTemplate);
 
-        var keyspaces = options.IsSingleScyllaInstance
-            ? [_keyspace!]
-            : RegionalKeyspaces;
+        var keyspaces = TargetKeyspaces();
 
         foreach (var keyspace in keyspaces)
         {
+            if (ShouldSkip(applied, keyspace, SchemaMigration, checksum))
+            {
+                logger.LogDebug("[scylla-migrate] Skipping {Migration} for '{Keyspace}', already applied.",
+                    SchemaMigration, keyspace);
+                continue;
+            }
+
             var rendered = cqlTemplate.Replace("{{KEYSPACE}}", keyspace);
             logger.LogInformation("[scylla-migrate] Applying schema to keyspace '{Keyspace}'...", keyspace);
+            var stopwatch = Stopwatch.StartNew();
             await ExecuteStatements(session, rendered);
+            stopwatch.Stop();
+
+            await RecordMigrationAsync(session, keyspace, SchemaMigration, checksum,
+                (int)stopwatch.ElapsedMilliseconds);
         }
     }
 
     // --- Permission Grants ---
 
-    private async Task GrantPermissions(ISession session)
+    private async Task GrantPermissions(
+        ISession session,
+        Dictionary<(string Scope, string Version), string> applied)
     {
         var appUser = _appUsername;
         if (string.IsNullOrWhiteSpace(appUser))
@@ -328,20 +406,27 @@ public sealed partial class ScyllaMigrationService(
 
         logger.LogInformation("[scylla-migrate] Granting DML permissions to '{AppUser}'...", appUser);
 
-        var keyspaces = options.IsSingleScyllaInstance
-            ? [_keyspace!]
-            : RegionalKeyspaces;
+        var grantChecksum = ComputeChecksum(GrantTemplate);
+        var keyspaces = TargetKeyspaces()
+            .Concat(SingletonKeyspaces)
+            .ToArray();
 
-        // Grant on regional keyspaces
         foreach (var keyspace in keyspaces)
         {
-            await GrantKeyspacePermissions(session, keyspace, appUser);
-        }
+            var scope = $"grants:{keyspace}";
+            if (ShouldSkip(applied, scope, GrantsVersion, grantChecksum))
+            {
+                logger.LogDebug("[scylla-migrate] Skipping grants for '{Keyspace}', already applied.", keyspace);
+                continue;
+            }
 
-        // Grant on fixed keyspaces (global, nam_nt, dummy)
-        await GrantKeyspacePermissions(session, "global", appUser);
-        await GrantKeyspacePermissions(session, "nam_nt", appUser);
-        await GrantKeyspacePermissions(session, "dummy", appUser);
+            var stopwatch = Stopwatch.StartNew();
+            await GrantKeyspacePermissions(session, keyspace, appUser);
+            stopwatch.Stop();
+
+            await RecordMigrationAsync(session, scope, GrantsVersion, grantChecksum,
+                (int)stopwatch.ElapsedMilliseconds);
+        }
     }
 
     private async Task GrantKeyspacePermissions(ISession session, string keyspace, string user)
@@ -363,6 +448,108 @@ public sealed partial class ScyllaMigrationService(
                 // Permission already granted — idempotent
             }
         }
+    }
+
+    // --- Ledger Helpers ---
+
+    /// <summary>
+    /// Ensures the <c>global.schema_migrations</c> ledger table exists. Assumes the
+    /// <c>global</c> keyspace has already been created by <see cref="EnsureSingletonKeyspacesAsync"/>.
+    /// </summary>
+    private static async Task EnsureLedgerAsync(ISession session)
+    {
+        var ddl = $$"""
+                    CREATE TABLE IF NOT EXISTS {{LedgerTableFqn}} (
+                        scope        text,
+                        version      text,
+                        checksum     text,
+                        applied_at   timestamp,
+                        duration_ms  int,
+                        applied_by   text,
+                        PRIMARY KEY (scope, version)
+                    )
+                    """;
+        await session.ExecuteAsync(new SimpleStatement(ddl));
+    }
+
+    private static async Task<Dictionary<(string Scope, string Version), string>> LoadAppliedAsync(ISession session)
+    {
+        var applied = new Dictionary<(string, string), string>();
+        var rs = await session.ExecuteAsync(new SimpleStatement(
+            $"SELECT scope, version, checksum FROM {LedgerTableFqn}"));
+        foreach (var row in rs)
+        {
+            var scope = row.GetValue<string>("scope");
+            var version = row.GetValue<string>("version");
+            var checksum = row.GetValue<string>("checksum");
+            applied[(scope, version)] = checksum;
+        }
+        return applied;
+    }
+
+    /// <summary>
+    /// Returns true if the migration is already recorded with a matching checksum. Throws
+    /// <see cref="InvalidOperationException"/> if a row exists with a different checksum
+    /// (fail-fast on post-deploy file drift).
+    /// </summary>
+    private static bool ShouldSkip(
+        Dictionary<(string Scope, string Version), string> applied,
+        string scope,
+        string version,
+        string checksum)
+    {
+        if (!applied.TryGetValue((scope, version), out var existing)) return false;
+        if (string.Equals(existing, checksum, StringComparison.Ordinal)) return true;
+
+        throw new InvalidOperationException(
+            $"[scylla-migrate] Checksum mismatch for migration '{version}' (scope='{scope}'): " +
+            $"recorded={existing}, actual={checksum}. Migration files must not be edited after " +
+            $"they have been applied. Restore the original file or, if the change is intentional, " +
+            $"manually update {LedgerTableFqn}.checksum for this row.");
+    }
+
+    private async Task RecordMigrationAsync(
+        ISession session,
+        string scope,
+        string version,
+        string checksum,
+        int durationMs)
+    {
+        var appliedBy = Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "unknown";
+        var stmt = new SimpleStatement(
+            $"INSERT INTO {LedgerTableFqn} (scope, version, checksum, applied_at, duration_ms, applied_by) " +
+            "VALUES (?, ?, ?, ?, ?, ?) IF NOT EXISTS",
+            scope, version, checksum, DateTimeOffset.UtcNow, durationMs, appliedBy);
+
+        var rs = await session.ExecuteAsync(stmt);
+        var row = rs.FirstOrDefault();
+        // [applied]=false means a concurrent migrator inserted the same row first. Safe to ignore:
+        // if the existing checksum differs we'll catch it on the next startup via ShouldSkip.
+        if (row is not null && !row.GetValue<bool>("[applied]"))
+        {
+            logger.LogDebug("[scylla-migrate] Ledger row for ({Scope}, {Version}) already inserted by concurrent run.",
+                scope, version);
+        }
+    }
+
+    internal static string ComputeChecksum(string content) =>
+        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(content)));
+
+    private string[] TargetKeyspaces() =>
+        options.IsSingleScyllaInstance
+            ? [_keyspace!]
+            : RegionalKeyspaces;
+
+    private static (string TabletsClause, string TabletsClauseDisabled) ComputeTabletsClauses(
+        HashSet<string> dcs, bool isScylla)
+    {
+        var tabletsClause = isScylla && IsMultiDc(dcs)
+            ? " AND tablets = {'enabled': true}"
+            : "";
+        var tabletsClauseDisabled = isScylla
+            ? " AND tablets = {'enabled': false}"
+            : "";
+        return (tabletsClause, tabletsClauseDisabled);
     }
 
     // --- CQL Execution ---

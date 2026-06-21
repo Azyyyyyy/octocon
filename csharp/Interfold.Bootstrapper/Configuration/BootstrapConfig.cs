@@ -68,6 +68,25 @@ public sealed class PortsSection
 
     [JsonPropertyName("webHttps")]
     public int WebHttps { get; set; } = 8081;
+
+    /// <summary>
+    /// Host port the Postgres / TimescaleDB container binds (compose-side). The AppHost graph
+    /// reads this from <c>Ports:postgres</c> and the matching connection-string that the API
+    /// consumes is derived from it. Defaults to 4200 to match the upstream AppHost configuration
+    /// and keep existing operator configs working unchanged. Tests can override the value to
+    /// run multiple compose stacks in parallel inside the same Docker host.
+    /// </summary>
+    [JsonPropertyName("postgres")]
+    public int Postgres { get; set; } = 4200;
+
+    /// <summary>
+    /// Host port the Scylla / Cassandra container binds (compose-side). The AppHost graph reads
+    /// this from <c>Ports:scylla</c> for both Scylla and the lone-Cassandra fallback (see
+    /// <c>InterfoldAppHost.Configure</c>). Defaults to 9042 to match the upstream AppHost and
+    /// the long-standing CQL convention; tests can override it for parallel compose stacks.
+    /// </summary>
+    [JsonPropertyName("scylla")]
+    public int Scylla { get; set; } = 9042;
 }
 
 public sealed class OAuthSection

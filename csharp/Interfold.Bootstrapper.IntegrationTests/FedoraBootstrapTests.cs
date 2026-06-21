@@ -27,14 +27,15 @@ public class FedoraBootstrapTests(FedoraDinDFixture dinD)
         {
             await dinD.CaptureFailureArtifactsAsync(ctx.Metadata.TestName);
         }
-        // Always release the DinD's host ports so the next [NotInParallel] test can bind them.
+        // Tear the per-test compose stack down so the dedicated host-port window inside the
+        // DinD is freed for reallocation across reruns. Always safe to invoke.
         await dinD.TearDownComposeAsync(ctx.Metadata.TestName);
     }
 
-    // Serialise compose-up tests in this fixture - see Ubuntu suite for rationale (host ports
-    // are bound on the DinD's network namespace, so concurrent `compose up`s would collide).
+    // Each compose-up test draws a unique host-port window from the DinD-wide port allocator
+    // (see DinDFixtureBase.CreateScratchAsync), so the previous fedora-compose-up serialiser
+    // is no longer required to avoid host-port collisions.
     [Test]
-    [NotInParallel("fedora-compose-up")]
     public async Task StackComesUpHealthyOnRhelFamily()
     {
         var scratch = await dinD.CreateScratchAsync(nameof(StackComesUpHealthyOnRhelFamily), TestConfigJsonPath);

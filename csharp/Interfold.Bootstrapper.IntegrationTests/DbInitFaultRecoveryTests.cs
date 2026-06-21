@@ -18,8 +18,9 @@ namespace Interfold.Bootstrapper.IntegrationTests;
 /// non-zero, and skips Launch — leaving the postgres data volume populated with the
 /// <c>interfold_admin</c> role but no scylla role yet.
 ///
-/// Serialised with the existing <c>ubuntu-compose-up</c> NotInParallel key because both passes
-/// bring the postgres/scylla services up against the DinD's host ports.
+/// Runs against its own per-test host-port window inside the shared DinD (via
+/// <see cref="DinDFixtureBase.CreateScratchAsync"/>'s port allocator), so it can execute
+/// alongside any other compose-up test without colliding on postgres/scylla/api ports.
 /// </remarks>
 [RequiresDocker]
 [ClassDataSource<UbuntuDinDFixture>(Shared = SharedType.PerTestSession)]
@@ -38,7 +39,6 @@ public class DbInitFaultRecoveryTests(UbuntuDinDFixture dinD)
     }
 
     [Test]
-    [NotInParallel("ubuntu-compose-up")]
     public async Task PartiallyBootstrappedDbCompletesOnRerun()
     {
         var scratch = await dinD.CreateScratchAsync(nameof(PartiallyBootstrappedDbCompletesOnRerun), TestConfigJsonPath);

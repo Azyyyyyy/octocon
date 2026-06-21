@@ -12,8 +12,9 @@ namespace Interfold.Bootstrapper.IntegrationTests;
 /// </summary>
 /// <remarks>
 /// Both tests in this file run a full bootstrap (which host-binds postgres / scylla / api
-/// ports) and so must share the existing <c>ubuntu-compose-up</c> NotInParallel key with
-/// <see cref="UbuntuBootstrapTests.StackComesUpHealthy"/> and the rotate-* tests.
+/// ports) but each one lands on its own port window inside the shared DinD via
+/// <see cref="DinDFixtureBase.CreateScratchAsync"/>'s allocator, so they can execute
+/// concurrently with each other and with every other compose-up test in the assembly.
 /// </remarks>
 [RequiresDocker]
 [ClassDataSource<UbuntuDinDFixture>(Shared = SharedType.PerTestSession)]
@@ -32,7 +33,6 @@ public class BootstrapIdempotenceTests(UbuntuDinDFixture dinD)
     }
 
     [Test]
-    [NotInParallel("ubuntu-compose-up")]
     public async Task SecondBootstrapShortCircuitsDbInit()
     {
         var scratch = await dinD.CreateScratchAsync(nameof(SecondBootstrapShortCircuitsDbInit), TestConfigJsonPath);
@@ -70,7 +70,6 @@ public class BootstrapIdempotenceTests(UbuntuDinDFixture dinD)
     }
 
     [Test]
-    [NotInParallel("ubuntu-compose-up")]
     public async Task SecondBootstrapLeavesContainersHealthy()
     {
         var scratch = await dinD.CreateScratchAsync(nameof(SecondBootstrapLeavesContainersHealthy), TestConfigJsonPath);

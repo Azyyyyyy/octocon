@@ -33,8 +33,9 @@ public class UbuntuBootstrapTests(UbuntuDinDFixture dinD)
         {
             await dinD.CaptureFailureArtifactsAsync(ctx.Metadata.TestName);
         }
-        // Always release the DinD's host ports so the next [NotInParallel] test can bind them.
-        // Tests that never called CreateScratchAsync are no-ops here.
+        // Tear the per-test compose stack down so the test's dedicated host-port window inside
+        // the DinD is released for re-allocation across reruns within the same session. Tests
+        // that never called CreateScratchAsync are no-ops here.
         await dinD.TearDownComposeAsync(ctx.Metadata.TestName);
     }
 
@@ -77,11 +78,11 @@ public class UbuntuBootstrapTests(UbuntuDinDFixture dinD)
             .Because("compose must reference POSTGRES_INIT_PASSWORD for the disposable cluster owner");
     }
 
-    // The bootstrap path host-binds postgres/scylla/api ports inside the DinD network namespace.
-    // Two `compose up` invocations against the same DinD would collide on those ports, so we serialise
-    // all bootstrap-style tests sharing this fixture via a fixture-scoped NotInParallel key.
+    // Each compose-up test now binds a private host-port window inside the shared DinD via
+    // CreateScratchAsync's port allocator, so concurrent `compose up` calls no longer collide on
+    // 5000/5432/9042/etc. The previous `ubuntu-compose-up` NotInParallel serialiser is therefore
+    // gone — the DinD's inner dockerd throughput is the new (much higher) ceiling.
     [Test]
-    [NotInParallel("ubuntu-compose-up")]
     public async Task StackComesUpHealthy()
     {
         var scratch = await dinD.CreateScratchAsync(nameof(StackComesUpHealthy), TestConfigJsonPath);
@@ -166,11 +167,11 @@ public class UbuntuBootstrapTests(UbuntuDinDFixture dinD)
             .Because("secrets file must be owned by root");
     }
 
-    // Rotate-secrets now also runs db-init -> launch (it has to refresh the in-cluster admin
-    // password). That means it host-binds postgres / scylla / api ports just like
-    // StackComesUpHealthy, so it must share the same NotInParallel key to avoid collisions.
+    // Rotate-secrets runs db-init -> launch (it has to refresh the in-cluster admin password) so
+    // it host-binds postgres / scylla / api ports too. Per-test port allocation in
+    // CreateScratchAsync means each invocation lands on a private port window, so the previous
+    // NotInParallel("ubuntu-compose-up") key is no longer required for safety.
     [Test]
-    [NotInParallel("ubuntu-compose-up")]
     public async Task RotateSecretsRegeneratesPasswordsAndPreservesCerts()
     {
         var scratch = await dinD.CreateScratchAsync(nameof(RotateSecretsRegeneratesPasswordsAndPreservesCerts), TestConfigJsonPath);
@@ -191,11 +192,10 @@ public class UbuntuBootstrapTests(UbuntuDinDFixture dinD)
         await Assert.That(postLeafSha).IsEqualTo(preLeafSha).Because("certs must remain unchanged on rotate-secrets");
     }
 
-    // Rotate-certs now also runs db-init (defensive against an empty DB volume) -> launch, so
-    // like rotate-secrets it host-binds postgres / scylla / api ports and must share the
-    // serialisation key with StackComesUpHealthy.
+    // Rotate-certs also runs db-init (defensive against an empty DB volume) -> launch, so like
+    // rotate-secrets it host-binds postgres / scylla / api ports. The per-test port allocation
+    // makes that safe to run concurrently with sibling compose-up tests.
     [Test]
-    [NotInParallel("ubuntu-compose-up")]
     public async Task RotateCertsRegeneratesCertsAndPreservesSecrets()
     {
         var scratch = await dinD.CreateScratchAsync(nameof(RotateCertsRegeneratesCertsAndPreservesSecrets), TestConfigJsonPath);
