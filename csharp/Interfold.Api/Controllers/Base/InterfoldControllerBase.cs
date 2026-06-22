@@ -8,6 +8,7 @@ using Microsoft.AspNetCore.Mvc;
 using Interfold.Contracts.Operations;
 using Interfold.Domain.Abstractions;
 using Interfold.Contracts;
+using Interfold.Contracts.Enums;
 using Interfold.Contracts.Models;
 using Interfold.Domain.Abstractions.Repository;
 
@@ -70,8 +71,21 @@ public abstract class InterfoldControllerBase : ControllerBase
     /// Returns <paramref name="url"/> with the server origin prepended when the stored
     /// value is a relative path. Already-absolute URLs are returned unchanged.
     /// </summary>
+    /// <remarks>
+    /// Avatar callers should prefer <see cref="QualifyAvatar"/>, which uses the persisted
+    /// <see cref="AvatarSource"/> as the authoritative discriminator instead of inferring
+    /// hosting from the URL prefix.
+    /// </remarks>
     protected string? QualifyUrl(string? url)
         => AvatarUrlQualifier.Qualify(url, Request.Scheme, Request.Host);
+
+    /// <summary>
+    /// Source-aware avatar qualification: prepends the server origin only when the avatar
+    /// is locally hosted (<see cref="AvatarSource.Local"/>). External URLs are passed
+    /// through verbatim, and a null source (no avatar set) is returned unchanged.
+    /// </summary>
+    protected string? QualifyAvatar(string? url, AvatarSource? source)
+        => AvatarUrlQualifier.QualifyAvatar(url, source, Request.Scheme, Request.Host);
 
     /// <summary>
     /// Executes a command handler with:

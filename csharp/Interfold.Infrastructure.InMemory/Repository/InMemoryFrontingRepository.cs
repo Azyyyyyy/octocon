@@ -154,7 +154,7 @@ public sealed class InMemoryFrontingRepository : IFrontingRepository
 
             var results = set.Values
                 .Select(x => new FrontActiveReadModel(
-                    new BareAlter(x.AlterId, $"Alter {x.AlterId}", null, null, null, null, null!),
+                    new BareAlter(x.AlterId, $"Alter {x.AlterId}", null, null, null, null, null, null!),
                     new FrontHistoryReadModel(x.FrontId, x.AlterId, x.Comment, x.StartedAt, null, systemId),
                     primary == x.AlterId))
                 .OrderByDescending(x => x.Front.TimeStart)
@@ -219,7 +219,7 @@ public sealed class InMemoryFrontingRepository : IFrontingRepository
                 return Task.FromResult<FrontActiveReadModel?>(null);
 
             return Task.FromResult<FrontActiveReadModel?>(new FrontActiveReadModel(
-                new BareAlter(found.AlterId, $"Alter {found.AlterId}", null, null, null, null, null!),
+                new BareAlter(found.AlterId, $"Alter {found.AlterId}", null, null, null, null, null, null!),
                 new FrontHistoryReadModel(found.FrontId, found.AlterId, found.Comment, found.StartedAt, null, systemId),
                 primary == found.AlterId));
         }

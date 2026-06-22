@@ -36,7 +36,7 @@ public static class AlterSocketEventHandlers
             return;
         }
 
-        alter.AvatarUrl = AvatarUrlQualifier.Qualify(alter.AvatarUrl, context.RequestOrigin);
+        alter.AvatarUrl = AvatarUrlQualifier.QualifyAvatar(alter.AvatarUrl, alter.AvatarSource, context.RequestOrigin);
         await context.SendAsync(topic, joinRef, asArray, eventName, new AlterSocketPayload(alter));
     }
 }

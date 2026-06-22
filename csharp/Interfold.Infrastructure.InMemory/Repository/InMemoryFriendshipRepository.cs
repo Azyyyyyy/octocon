@@ -68,7 +68,7 @@ public sealed class InMemoryFriendshipRepository : IFriendshipRepository
         var list = store.Values
             .OrderByDescending(x => x.Since)
             .Select(x => new FriendshipReadModel(
-                new FriendProfileReadModel(x.FriendSystemId, null, null, null, null),
+                new FriendProfileReadModel(x.FriendSystemId, null, null, null, null, null),
                 new FriendshipModel(
                 x.Level,
                 x.Since),
@@ -89,7 +89,7 @@ public sealed class InMemoryFriendshipRepository : IFriendshipRepository
         }
 
         return Task.FromResult<FriendshipReadModel?>(new FriendshipReadModel(
-            new FriendProfileReadModel(state.FriendSystemId, null, null, null, null),
+            new FriendProfileReadModel(state.FriendSystemId, null, null, null, null, null),
             new FriendshipModel(
                 state.Level,
                 state.Since),
@@ -136,7 +136,7 @@ public sealed class InMemoryFriendshipRepository : IFriendshipRepository
             ? outStore.Values
                 .OrderByDescending(r => r.DateSent)
                 .Select(r => new FriendRequestReadModel(
-                    new FriendProfileReadModel(r.OtherSystemId, null, null, null, null),
+                    new FriendProfileReadModel(r.OtherSystemId, null, null, null, null, null),
                     new FriendshipRequestModel(r.DateSent)))
                 .ToList()
             : new List<FriendRequestReadModel>();
@@ -146,7 +146,7 @@ public sealed class InMemoryFriendshipRepository : IFriendshipRepository
             .Where(x => x.Request.OtherSystemId == normalizedSystemId)
             .OrderByDescending(x => x.Request.DateSent)
             .Select(x => new FriendRequestReadModel(
-                new FriendProfileReadModel(x.From, null, null, null, null),
+                new FriendProfileReadModel(x.From, null, null, null, null, null),
                 new FriendshipRequestModel(x.Request.DateSent)))
             .ToList();
 

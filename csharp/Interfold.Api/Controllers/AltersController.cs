@@ -2,8 +2,10 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.Net.Http.Headers;
 using System.Text;
+using Interfold.Api.Helpers;
 using Interfold.Api.Models;
 using Interfold.Api.Services;
+using Interfold.Contracts.Enums;
 using Interfold.Contracts.Models;
 using Interfold.Contracts.Models.Commands;
 using Interfold.Contracts.Models.Read;
@@ -54,7 +56,7 @@ public sealed class AltersController : InterfoldControllerBase
             return NotFound(new { error = "Alter not found.", code = "alter_not_found" });
         }
 
-        alter.AvatarUrl = QualifyUrl(alter.AvatarUrl);
+        alter.AvatarUrl = QualifyAvatar(alter.AvatarUrl, alter.AvatarSource);
         return Ok(new { data = alter });
     }
 
@@ -89,11 +91,16 @@ public sealed class AltersController : InterfoldControllerBase
     {
         await CheckAlterId(alterId);
         var fields = req.Fields?.Select(f => new AlterFieldCommand(f.Id, f.Value)).ToList();
+
+        // PATCH does not currently expose AvatarUrl as a mutable field — avatar updates go
+        // through the dedicated PUT .../avatar endpoints (multipart for Local, JSON for External)
+        // so we never observe a half-set (url-without-source) here.
         var payload = new UpdateAlterCommand(
             AlterId: alterId,
             Name: req.Name,
             Description: req.Description,
-            AvatarUrl: req.AvatarUrl,
+            AvatarUrl: null,
+            AvatarSource: null,
             Color: req.Color,
             Pronouns: req.Pronouns,
             SecurityLevel: req.SecurityLevel,
@@ -163,10 +170,12 @@ public sealed class AltersController : InterfoldControllerBase
         }
 
         string? currentAvatarUrl = null;
+        AvatarSource? currentAvatarSource = null;
         try
         {
             var existingAlter = await _alterRepository.GetAsync(principal, alterId, ct);
             currentAvatarUrl = existingAlter?.AvatarUrl;
+            currentAvatarSource = existingAlter?.AvatarSource;
         }
         catch
         {
@@ -178,6 +187,7 @@ public sealed class AltersController : InterfoldControllerBase
             Name: null,
             Description: null,
             AvatarUrl: avatarUrl,
+            AvatarSource: AvatarSource.Local,
             Color: null,
             Pronouns: null,
             SecurityLevel: null,
@@ -205,13 +215,95 @@ public sealed class AltersController : InterfoldControllerBase
             return result;
         }
 
+        // Only the local storage owns the previous bytes; an external URL was never ours
+        // to delete.
+        if (currentAvatarSource == AvatarSource.Local)
+        {
+            try
+            {
+                await _avatarStorage.DeleteByUrlAsync(currentAvatarUrl, ct);
+            }
+            catch
+            {
+                // Alter metadata update succeeded; tolerate storage cleanup failures.
+            }
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// JSON sibling of <see cref="UploadAvatarMultipart"/>: stores the supplied URL on
+    /// <c>avatar_url</c> with <c>avatar_source = External</c> without fetching the bytes.
+    /// </summary>
+    [HttpPut("{alterId:int}/avatar")]
+    [Consumes("application/json")]
+    public async Task<Response> UploadAvatarByUrl(int alterId, [FromBody] AvatarUrlUploadRequest req, CancellationToken ct)
+    {
+        await CheckAlterId(alterId);
+
+        if (req is null)
+            return new ErrorResponse("Avatar URL payload required.", "avatar_url_invalid", System.Net.HttpStatusCode.BadRequest);
+
+        if (!AvatarUrlValidator.TryNormalize(req.Url, out var url, out var err))
+            return new ErrorResponse("Invalid avatar URL.", err, System.Net.HttpStatusCode.BadRequest);
+
+        var principal = PrincipalId;
+
+        string? currentAvatarUrl = null;
+        AvatarSource? currentAvatarSource = null;
         try
         {
-            await _avatarStorage.DeleteByUrlAsync(currentAvatarUrl, ct);
+            var existingAlter = await _alterRepository.GetAsync(principal, alterId, ct);
+            currentAvatarUrl = existingAlter?.AvatarUrl;
+            currentAvatarSource = existingAlter?.AvatarSource;
         }
         catch
         {
-            // Alter metadata update succeeded; tolerate storage cleanup failures.
+        }
+
+        var payload = new UpdateAlterCommand(
+            AlterId: alterId,
+            Name: null,
+            Description: null,
+            AvatarUrl: url,
+            AvatarSource: AvatarSource.External,
+            Color: null,
+            Pronouns: null,
+            SecurityLevel: null,
+            Fields: null,
+            ProxyName: null,
+            Alias: null,
+            Untracked: null,
+            Archived: null,
+            Pinned: null,
+            UpdatedAt: DateTimeOffset.UtcNow
+        );
+
+        var envelope = new CommandEnvelope<UpdateAlterCommand>(
+            OperationIds.AlterAvatarUpload,
+            Guid.NewGuid(),
+            PrincipalId: principal,
+            IdempotencyKey: GetIdempotencyKey(req.IdempotencyKey),
+            OccurredAt: DateTimeOffset.UtcNow,
+            Payload: payload
+        );
+
+        var result = CommandNoContent(await _updateHandler.HandleAsync(envelope, ct));
+        if (!result.IsT0)
+        {
+            return result;
+        }
+
+        if (currentAvatarSource == AvatarSource.Local)
+        {
+            try
+            {
+                await _avatarStorage.DeleteByUrlAsync(currentAvatarUrl, ct);
+            }
+            catch
+            {
+            }
         }
 
         return result;
@@ -295,12 +387,14 @@ public sealed class AltersController : InterfoldControllerBase
 
         var existingAlter = await _alterRepository.GetAsync(principal, alterId, ct);
         var currentAvatarUrl = existingAlter?.AvatarUrl;
+        var currentAvatarSource = existingAlter?.AvatarSource;
 
         var payload = new UpdateAlterCommand(
             AlterId: alterId,
             Name: null,
             Description: null,
             AvatarUrl: null,
+            AvatarSource: null,
             Color: null,
             Pronouns: null,
             SecurityLevel: null,
@@ -324,7 +418,7 @@ public sealed class AltersController : InterfoldControllerBase
         );
 
         var execution = await _updateHandler.HandleAsync(envelope, ct);
-        if (execution.Accepted)
+        if (execution.Accepted && currentAvatarSource == AvatarSource.Local)
         {
             try
             {

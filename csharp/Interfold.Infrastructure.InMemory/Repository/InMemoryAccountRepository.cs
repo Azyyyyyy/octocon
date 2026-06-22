@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text;
+using Interfold.Contracts.Enums;
 using Interfold.Contracts.Models.Read;
 using Interfold.Domain.Abstractions;
 using Interfold.Domain.Abstractions.Repository;
@@ -12,6 +13,7 @@ public sealed class InMemoryAccountRepository : IAccountRepository
     private readonly ConcurrentDictionary<string, string> _usernameBySystem = new();
     private readonly ConcurrentDictionary<string, string> _descriptionBySystem = new();
     private readonly ConcurrentDictionary<string, string> _avatarBySystem = new();
+    private readonly ConcurrentDictionary<string, AvatarSource> _avatarSourceBySystem = new();
     private readonly ConcurrentDictionary<string, string> _linkTokenBySystem = new();
     private readonly ConcurrentDictionary<string, string> _systemByLinkToken = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, string> _discordBySystem = new();
@@ -44,10 +46,11 @@ public sealed class InMemoryAccountRepository : IAccountRepository
         return Task.FromResult(true);
     }
 
-    public Task<bool> UpdateAvatarAsync(string systemId, string avatarUrl, CancellationToken cancellationToken = default)
+    public Task<bool> UpdateAvatarAsync(string systemId, string avatarUrl, AvatarSource source, CancellationToken cancellationToken = default)
     {
         var systemKey = GetSystemKey(systemId);
         _avatarBySystem[systemKey] = avatarUrl;
+        _avatarSourceBySystem[systemKey] = source;
         return Task.FromResult(true);
     }
 
@@ -55,6 +58,7 @@ public sealed class InMemoryAccountRepository : IAccountRepository
     {
         var systemKey = GetSystemKey(systemId);
         _avatarBySystem.TryRemove(systemKey, out _);
+        _avatarSourceBySystem.TryRemove(systemKey, out _);
         return Task.FromResult(true);
     }
 
@@ -216,6 +220,7 @@ public sealed class InMemoryAccountRepository : IAccountRepository
         _usernameBySystem.TryRemove(systemKey, out _);
         _descriptionBySystem.TryRemove(systemKey, out _);
         _avatarBySystem.TryRemove(systemKey, out _);
+        _avatarSourceBySystem.TryRemove(systemKey, out _);
         _linkTokenBySystem.TryRemove(systemKey, out _);
 
         if (_discordBySystem.TryRemove(systemKey, out var discordId) && !string.IsNullOrWhiteSpace(discordId))
@@ -242,6 +247,7 @@ public sealed class InMemoryAccountRepository : IAccountRepository
         var username = _usernameBySystem.TryGetValue(systemKey, out var u) ? u : null;
         var description = _descriptionBySystem.TryGetValue(systemKey, out var d) ? d : null;
         var avatarUrl = _avatarBySystem.TryGetValue(systemKey, out var a) ? a : null;
+        AvatarSource? avatarSource = _avatarSourceBySystem.TryGetValue(systemKey, out var s) ? s : null;
         var discordId = _discordBySystem.TryGetValue(systemKey, out var discord) ? discord : null;
         var email = _emailBySystem.TryGetValue(systemKey, out var e) ? e : null;
         var appleId = _appleBySystem.TryGetValue(systemKey, out var apple) ? apple : null;
@@ -252,7 +258,7 @@ public sealed class InMemoryAccountRepository : IAccountRepository
         }
 
         return Task.FromResult<AccountPublicProfileReadModel?>(
-            new AccountPublicProfileReadModel(systemId, username, description, avatarUrl, discordId, email, appleId));
+            new AccountPublicProfileReadModel(systemId, username, description, avatarUrl, avatarSource, discordId, email, appleId));
     }
 
     private string GetSystemKey(string systemId)

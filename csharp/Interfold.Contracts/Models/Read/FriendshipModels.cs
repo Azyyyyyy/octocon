@@ -1,9 +1,12 @@
+using Interfold.Contracts.Enums;
+
 namespace Interfold.Contracts.Models.Read;
 
 public sealed record FriendProfileReadModel(
     string Id,
     string? Username,
     string? AvatarUrl,
+    AvatarSource? AvatarSource,
     string? Description,
     string? DiscordId
 );
@@ -15,6 +18,7 @@ public sealed record FriendFrontingAlterReadModel(
     string? Description,
     IReadOnlyList<object> Fields,
     string? AvatarUrl,
+    AvatarSource? AvatarSource,
     IReadOnlyList<string> ExtraImages,
     string? Color
 );

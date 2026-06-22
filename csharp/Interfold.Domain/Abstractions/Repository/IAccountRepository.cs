@@ -1,3 +1,4 @@
+using Interfold.Contracts.Enums;
 using Interfold.Contracts.Models.Read;
 
 namespace Interfold.Domain.Abstractions.Repository;
@@ -8,7 +9,7 @@ public interface IAccountRepository
 
     Task<bool> UpdateDescriptionAsync(string systemId, string description, CancellationToken cancellationToken = default);
 
-    Task<bool> UpdateAvatarAsync(string systemId, string avatarUrl, CancellationToken cancellationToken = default);
+    Task<bool> UpdateAvatarAsync(string systemId, string avatarUrl, AvatarSource source, CancellationToken cancellationToken = default);
 
     Task<bool> ClearAvatarAsync(string systemId, CancellationToken cancellationToken = default);
 

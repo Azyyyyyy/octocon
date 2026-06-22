@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using Interfold.Contracts.Enums;
 using Interfold.Contracts.Models;
 using Interfold.Contracts.Models.Commands;
 using Interfold.Contracts.Models.Read;
@@ -14,6 +15,7 @@ public sealed class InMemoryAlterRepository : IAlterRepository
         public required int AlterId { get; init; }
         public string? Alias { get; set; }
         public string? AvatarUrl { get; set; }
+        public AvatarSource? AvatarSource { get; set; }
         public string? Description { get; set; }
         public string? Color { get; set; }
         public string? Pronouns { get; set; }
@@ -122,10 +124,14 @@ public sealed class InMemoryAlterRepository : IAlterRepository
         if (command.ClearAvatar)
         {
             existing.AvatarUrl = null;
+            existing.AvatarSource = null;
         }
         else if (command.AvatarUrl is not null)
         {
+            // avatar_url and avatar_source must move together; the domain handler
+            // rejects the half-set case so we treat AvatarSource as required here.
             existing.AvatarUrl = command.AvatarUrl;
+            existing.AvatarSource = command.AvatarSource ?? AvatarSource.Local;
         }
 
         if (command.Fields is not null)
@@ -190,6 +196,7 @@ public sealed class InMemoryAlterRepository : IAlterRepository
                 x.Name,
                 x.Description,
                 x.AvatarUrl,
+                x.AvatarSource,
                 x.Color,
                 x.Pronouns,
                 x.VisibilityLevel,
@@ -225,6 +232,7 @@ public sealed class InMemoryAlterRepository : IAlterRepository
                 x.AlterId,
                 x.Name,
                 x.AvatarUrl,
+                x.AvatarSource,
                 x.Color,
                 x.Pronouns,
                 x.Description,
@@ -249,6 +257,7 @@ public sealed class InMemoryAlterRepository : IAlterRepository
             alter.Name,
             alter.Description,
             alter.AvatarUrl,
+            alter.AvatarSource,
             alter.Color,
             alter.Pronouns,
             alter.VisibilityLevel,
@@ -283,6 +292,7 @@ public sealed class InMemoryAlterRepository : IAlterRepository
             alter.AlterId,
             alter.Name,
             alter.AvatarUrl,
+            alter.AvatarSource,
             alter.Color,
             alter.Pronouns,
             alter.Description,

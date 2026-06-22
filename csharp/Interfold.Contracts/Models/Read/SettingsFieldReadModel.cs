@@ -34,6 +34,11 @@ public sealed record SettingsImportRequest(
     string? IdempotencyKey = null
 ) : BaseRequest(IdempotencyKey);
 
+public sealed record AvatarUrlUploadRequest(
+    string Url,
+    string? IdempotencyKey = null
+) : BaseRequest(IdempotencyKey);
+
 public sealed record SettingsCreateFieldRequest(
     string Name,
     string? Type,

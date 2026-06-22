@@ -4,10 +4,12 @@ using Microsoft.Net.Http.Headers;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using Interfold.Api.Helpers;
 using Interfold.Api.Models;
 using Interfold.Api.Services;
 using Interfold.Contracts;
 using Interfold.Contracts.Configuration;
+using Interfold.Contracts.Enums;
 using Interfold.Contracts.Models.Commands;
 using Interfold.Contracts.Models.Read;
 using Interfold.Contracts.Operations;
@@ -285,10 +287,12 @@ public sealed class SettingsController : InterfoldControllerBase
         }
 
         string? currentAvatarUrl = null;
+        AvatarSource? currentAvatarSource = null;
         try
         {
             var currentProfile = await _accountRepository.GetPublicProfileAsync(principal, ct);
             currentAvatarUrl = currentProfile?.AvatarUrl;
+            currentAvatarSource = currentProfile?.AvatarSource;
         }
         catch
         {
@@ -300,7 +304,7 @@ public sealed class SettingsController : InterfoldControllerBase
             PrincipalId: principal,
             IdempotencyKey: GetIdempotencyKey(upload.IdempotencyKey),
             OccurredAt: DateTimeOffset.UtcNow,
-            Payload: new UploadAvatarCommand(avatarUrl)
+            Payload: new UploadAvatarCommand(avatarUrl, AvatarSource.Local)
         );
 
         var result = CommandNoContent(await _uploadAvatarHandler.HandleAsync(envelope, ct));
@@ -310,13 +314,77 @@ public sealed class SettingsController : InterfoldControllerBase
             return result;
         }
 
+        // Only the local storage owns the previous bytes; an external URL was never ours
+        // to delete and must be passed through untouched.
+        if (currentAvatarSource == AvatarSource.Local)
+        {
+            try
+            {
+                await _avatarStorage.DeleteByUrlAsync(currentAvatarUrl, ct);
+            }
+            catch
+            {
+                // Avatar metadata was updated successfully; tolerate storage cleanup failures.
+            }
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Sibling action that consumes <c>application/json</c> on the same route + verb.
+    /// ASP.NET Core's <see cref="ConsumesAttribute"/> is an <c>IActionConstraint</c>, so it
+    /// dispatches purely on Content-Type and leaves the multipart action above untouched.
+    /// </summary>
+    [HttpPut("avatar")]
+    [Consumes("application/json")]
+    public async Task<Response> UploadAvatarByUrl([FromBody] AvatarUrlUploadRequest req, CancellationToken ct)
+    {
+        if (req is null)
+            return new ErrorResponse("Avatar URL payload required.", "avatar_url_invalid", System.Net.HttpStatusCode.BadRequest);
+
+        if (!AvatarUrlValidator.TryNormalize(req.Url, out var url, out var err))
+            return new ErrorResponse("Invalid avatar URL.", err, System.Net.HttpStatusCode.BadRequest);
+
+        var principal = PrincipalId;
+
+        string? currentAvatarUrl = null;
+        AvatarSource? currentAvatarSource = null;
         try
         {
-            await _avatarStorage.DeleteByUrlAsync(currentAvatarUrl, ct);
+            var currentProfile = await _accountRepository.GetPublicProfileAsync(principal, ct);
+            currentAvatarUrl = currentProfile?.AvatarUrl;
+            currentAvatarSource = currentProfile?.AvatarSource;
         }
         catch
         {
-            // Avatar metadata was updated successfully; tolerate storage cleanup failures.
+        }
+
+        var envelope = new CommandEnvelope<UploadAvatarCommand>(
+            OperationIds.SettingsAvatarUpload,
+            Guid.NewGuid(),
+            PrincipalId: principal,
+            IdempotencyKey: GetIdempotencyKey(req.IdempotencyKey),
+            OccurredAt: DateTimeOffset.UtcNow,
+            Payload: new UploadAvatarCommand(url, AvatarSource.External)
+        );
+
+        var result = CommandNoContent(await _uploadAvatarHandler.HandleAsync(envelope, ct));
+
+        if (!result.IsT0)
+        {
+            return result;
+        }
+
+        if (currentAvatarSource == AvatarSource.Local)
+        {
+            try
+            {
+                await _avatarStorage.DeleteByUrlAsync(currentAvatarUrl, ct);
+            }
+            catch
+            {
+            }
         }
 
         return result;
@@ -328,6 +396,7 @@ public sealed class SettingsController : InterfoldControllerBase
         var principal = PrincipalId;
         var currentProfile = await _accountRepository.GetPublicProfileAsync(principal, ct);
         var currentAvatarUrl = currentProfile?.AvatarUrl;
+        var currentAvatarSource = currentProfile?.AvatarSource;
 
         var envelope = new CommandEnvelope<DeleteAvatarCommand>(
             OperationIds.SettingsAvatarDelete,
@@ -339,7 +408,7 @@ public sealed class SettingsController : InterfoldControllerBase
         );
 
         var execution = await _deleteAvatarHandler.HandleAsync(envelope, ct);
-        if (execution.Accepted)
+        if (execution.Accepted && currentAvatarSource == AvatarSource.Local)
         {
             try
             {

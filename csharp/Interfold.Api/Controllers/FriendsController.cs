@@ -57,9 +57,9 @@ public sealed class FriendsController : InterfoldControllerBase
     {
         return friendship with
         {
-            Friend = friendship.Friend with { AvatarUrl = QualifyUrl(friendship.Friend.AvatarUrl) },
+            Friend = friendship.Friend with { AvatarUrl = QualifyAvatar(friendship.Friend.AvatarUrl, friendship.Friend.AvatarSource) },
             Fronting = friendship.Fronting
-                .Select(f => f with { Alter = f.Alter with { AvatarUrl = QualifyUrl(f.Alter.AvatarUrl) } })
+                .Select(f => f with { Alter = f.Alter with { AvatarUrl = QualifyAvatar(f.Alter.AvatarUrl, f.Alter.AvatarSource) } })
                 .ToArray()
         };
     }

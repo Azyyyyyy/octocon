@@ -1,4 +1,5 @@
 ﻿using System.Text.Json;
+using Interfold.Contracts.Enums;
 using Interfold.Contracts.Models;
 using Interfold.Contracts.Models.Read;
 
@@ -43,6 +44,7 @@ public sealed record SocketSelfReadModel(
     string? Username,
     string? Description,
     string? AvatarUrl,
+    AvatarSource? AvatarSource,
     string? DiscordId,
     string? GoogleId,
     string? AppleId,

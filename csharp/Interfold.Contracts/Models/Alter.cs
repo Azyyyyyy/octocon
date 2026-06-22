@@ -1,4 +1,5 @@
 ﻿using System.Text.Json.Serialization;
+using Interfold.Contracts.Enums;
 
 namespace Interfold.Contracts.Models;
 
@@ -9,6 +10,7 @@ public class BareAlter {
         int id,
         string name,
         string? avatarUrl,
+        AvatarSource? avatarSource,
         string? color,
         string? pronouns,
         string? description,
@@ -17,6 +19,7 @@ public class BareAlter {
         Id = id;
         Name = name;
         AvatarUrl = avatarUrl;
+        AvatarSource = avatarSource;
         Color = color;
         Pronouns = pronouns;
         Fields = fields;
@@ -25,6 +28,7 @@ public class BareAlter {
 
     public int Id { get; set; }
     public string? AvatarUrl { get; set; }
+    public AvatarSource? AvatarSource { get; set; }
     public string? Color { get; set; }
     public string Name { get; set; }
     public string? Pronouns { get; set; }
@@ -39,6 +43,7 @@ public sealed class AlterReadModel : BareAlter {
         string name,
         string? description,
         string? avatarUrl,
+        AvatarSource? avatarSource,
         string? color,
         string? pronouns,
         VisibilityLevel securityLevel,
@@ -47,7 +52,7 @@ public sealed class AlterReadModel : BareAlter {
         string? alias,
         bool? untracked,
         bool? archived,
-        bool? pinned) : base(id, name, avatarUrl, color, pronouns, description, fields)
+        bool? pinned) : base(id, name, avatarUrl, avatarSource, color, pronouns, description, fields)
     {
         Alias = alias;
         SecurityLevel = securityLevel;

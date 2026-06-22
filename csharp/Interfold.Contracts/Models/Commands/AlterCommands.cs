@@ -1,3 +1,5 @@
+using Interfold.Contracts.Enums;
+
 namespace Interfold.Contracts.Models.Commands;
 
 public sealed record CreateAlterCommand(string Name, DateTimeOffset CreatedAt);
@@ -7,6 +9,7 @@ public sealed record UpdateAlterCommand(
     string? Name,
     string? Description,
     string? AvatarUrl,
+    AvatarSource? AvatarSource,
     string? Color,
     string? Pronouns,
     string? SecurityLevel,

@@ -40,6 +40,14 @@ public sealed class UpdateAlterCommandHandler : ICommandHandler<UpdateAlterComma
             return RejectInvariant(command, "alter:update:no_fields");
         }
 
+        // avatar_url and avatar_source must move together. We accept both-set or both-null
+        // (the ClearAvatar branch handles "set null"); a half-set request is rejected so we
+        // never silently fall back to a guessed source on the repo side.
+        if ((command.Payload.AvatarUrl is not null) != (command.Payload.AvatarSource is not null))
+        {
+            return RejectInvariant(command, "alter:avatar_source_required");
+        }
+
         //We have to ignore UpdatedAt in the payload when calculating the hash, since it is generated upon the endpoint being called.
         var payloadJson = CommandSerialization.Serialize(command.Payload with { UpdatedAt = default });
         var payloadHash = CommandSerialization.Hash(payloadJson);
@@ -115,6 +123,7 @@ public sealed class UpdateAlterCommandHandler : ICommandHandler<UpdateAlterComma
         payload.Name is not null ||
         payload.Description is not null ||
         payload.AvatarUrl is not null ||
+        payload.AvatarSource is not null ||
         payload.ClearAvatar ||
         payload.Color is not null ||
         payload.Pronouns is not null ||

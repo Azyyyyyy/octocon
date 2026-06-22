@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using Cassandra;
 using Interfold.Contracts.Configuration;
+using Interfold.Contracts.Enums;
 using Interfold.Contracts.Models;
 using Interfold.Contracts.Models.Commands;
 using Interfold.Contracts.Models.Read;
@@ -111,16 +112,27 @@ public sealed class ScyllaAlterRepository : IAlterRepository
             if (command.ClearAvatar)
             {
                 batch.Add(new SimpleStatement(
-                    $"UPDATE {keyspace}.alters SET avatar_url = ?, updated_at = ? WHERE user_id = ? AND id = ?",
+                    $"UPDATE {keyspace}.alters SET avatar_url = ?, avatar_source = ?, updated_at = ? WHERE user_id = ? AND id = ?",
+                    null,
                     null,
                     updatedAt,
                     normalizedSystemId,
                     (short)command.AlterId
                 ));
             }
-            else
+            else if (command.AvatarUrl is not null)
             {
-                UpdateIfNotNull(batch, keyspace, command, "avatar_url", command.AvatarUrl, normalizedSystemId, updatedAt);
+                // avatar_url + avatar_source must move together; the domain handler
+                // rejects the half-set case so we can write both unconditionally here.
+                var sourceShort = (short)(command.AvatarSource ?? Interfold.Contracts.Enums.AvatarSource.Local);
+                batch.Add(new SimpleStatement(
+                    $"UPDATE {keyspace}.alters SET avatar_url = ?, avatar_source = ?, updated_at = ? WHERE user_id = ? AND id = ?",
+                    command.AvatarUrl,
+                    sourceShort,
+                    updatedAt,
+                    normalizedSystemId,
+                    (short)command.AlterId
+                ));
             }
             UpdateIfNotNull(batch, keyspace, command, "color", command.Color, normalizedSystemId, updatedAt);
             UpdateIfNotNull(batch, keyspace, command, "pronouns", command.Pronouns, normalizedSystemId, updatedAt);
@@ -398,7 +410,7 @@ public sealed class ScyllaAlterRepository : IAlterRepository
             EnsureAlterFieldUdtMapping(session, keyspace);
 
             var query = new SimpleStatement(
-                $"SELECT id, name, alias, fields, security_level, color, pronouns, avatar_url, pinned, archived, untracked, description, proxy_name FROM {keyspace}.alters WHERE user_id = ?",
+                $"SELECT id, name, alias, fields, security_level, color, pronouns, avatar_url, avatar_source, pinned, archived, untracked, description, proxy_name FROM {keyspace}.alters WHERE user_id = ?",
                 normalizedSystemId
             );
 
@@ -409,6 +421,7 @@ public sealed class ScyllaAlterRepository : IAlterRepository
                     row.GetValue<string>("name"),
                     row.GetValue<string?>("description"),
                     row.GetValue<string?>("avatar_url"),
+                    ResolveAvatarSource(row.GetValue<short?>("avatar_source")),
                     row.GetValue<string?>("color"),
                     row.GetValue<string?>("pronouns"),
                     ResolveVisibilityLevel(row.GetValue<short?>("security_level")),
@@ -439,7 +452,7 @@ public sealed class ScyllaAlterRepository : IAlterRepository
             var definitions = await ResolveVisibleDefinitionsAsync(systemId, friendshipLevel, cancellationToken);
 
             var query = new SimpleStatement(
-                $"SELECT id, name, avatar_url, color, description, pronouns, pinned, security_level, fields FROM {keyspace}.alters WHERE user_id = ?",
+                $"SELECT id, name, avatar_url, avatar_source, color, description, pronouns, pinned, security_level, fields FROM {keyspace}.alters WHERE user_id = ?",
                 normalizedSystemId
             );
 
@@ -450,6 +463,7 @@ public sealed class ScyllaAlterRepository : IAlterRepository
                     row.GetValue<short>("id"),
                     row.GetValue<string>("name"),
                     row.GetValue<string?>("avatar_url"),
+                    ResolveAvatarSource(row.GetValue<short?>("avatar_source")),
                     row.GetValue<string?>("color"),
                     row.GetValue<string?>("pronouns"),
                     row.GetValue<string?>("description"),
@@ -471,7 +485,7 @@ public sealed class ScyllaAlterRepository : IAlterRepository
             EnsureAlterFieldUdtMapping(session, keyspace);
 
             var query = new SimpleStatement(
-                $"SELECT id, name, alias, fields, security_level, color, pronouns, avatar_url, pinned, archived, untracked, description, proxy_name FROM {keyspace}.alters WHERE user_id = ? AND id = ? LIMIT 1",
+                $"SELECT id, name, alias, fields, security_level, color, pronouns, avatar_url, avatar_source, pinned, archived, untracked, description, proxy_name FROM {keyspace}.alters WHERE user_id = ? AND id = ? LIMIT 1",
                 normalizedSystemId,
                 (short)alterId
             );
@@ -484,6 +498,7 @@ public sealed class ScyllaAlterRepository : IAlterRepository
                     row.GetValue<string>("name"),
                     row.GetValue<string?>("description"),
                     row.GetValue<string?>("avatar_url"),
+                    ResolveAvatarSource(row.GetValue<short?>("avatar_source")),
                     row.GetValue<string?>("color"),
                     row.GetValue<string?>("pronouns"),
                     ResolveVisibilityLevel(row.GetValue<short?>("security_level")),
@@ -513,7 +528,7 @@ public sealed class ScyllaAlterRepository : IAlterRepository
             var definitions = await ResolveVisibleDefinitionsAsync(systemId, friendshipLevel, cancellationToken);
 
             var query = new SimpleStatement(
-                $"SELECT id, name, avatar_url, description, color, pronouns, pinned, security_level, fields FROM {keyspace}.alters WHERE user_id = ? AND id = ? LIMIT 1",
+                $"SELECT id, name, avatar_url, avatar_source, description, color, pronouns, pinned, security_level, fields FROM {keyspace}.alters WHERE user_id = ? AND id = ? LIMIT 1",
                 normalizedSystemId,
                 (short)alterId
             );
@@ -534,6 +549,7 @@ public sealed class ScyllaAlterRepository : IAlterRepository
                 row.GetValue<short>("id"),
                 row.GetValue<string>("name"),
                 row.GetValue<string?>("avatar_url"),
+                ResolveAvatarSource(row.GetValue<short?>("avatar_source")),
                 row.GetValue<string?>("color"),
                 row.GetValue<string?>("pronouns"),
                 row.GetValue<string?>("description"),
@@ -599,6 +615,19 @@ public sealed class ScyllaAlterRepository : IAlterRepository
             _ => VisibilityLevel.Public
         };
     }
+
+    /// <summary>
+    /// Maps the persisted <c>avatar_source</c> smallint into the <see cref="AvatarSource"/> enum.
+    /// Returns <see langword="null"/> when the column is null (no avatar set), so the boundary
+    /// can omit <c>avatar_source</c> from the response payload.
+    /// </summary>
+    private static AvatarSource? ResolveAvatarSource(short? value)
+        => value switch
+        {
+            (short)Interfold.Contracts.Enums.AvatarSource.External => Interfold.Contracts.Enums.AvatarSource.External,
+            (short)Interfold.Contracts.Enums.AvatarSource.Local    => Interfold.Contracts.Enums.AvatarSource.Local,
+            _ => null
+        };
 
     private static bool CanView(string? friendshipLevel, VisibilityLevel visibilityLevel)
     {

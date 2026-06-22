@@ -19,6 +19,15 @@ internal sealed class SpSystemContent
 {
     [JsonPropertyName("desc")]
     public string? Desc { get; set; }
+
+    [JsonPropertyName("avatarUuid")]
+    public string? AvatarUuid { get; set; }
+
+    [JsonPropertyName("avatarUrl")]
+    public string? AvatarUrl { get; set; }
+
+    [JsonPropertyName("uid")]
+    public string? Uid { get; set; }
 }
 
 // --- /customFields/{id} ---

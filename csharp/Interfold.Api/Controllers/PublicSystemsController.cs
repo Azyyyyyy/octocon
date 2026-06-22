@@ -41,7 +41,8 @@ public sealed class PublicSystemsController : InterfoldControllerBase
             data = new
             {
                 id = profile.SystemId,
-                avatar_url = QualifyUrl(profile.AvatarUrl),
+                avatar_url = QualifyAvatar(profile.AvatarUrl, profile.AvatarSource),
+                avatar_source = profile.AvatarSource,
                 username = profile.Username,
                 description = profile.Description
             }
@@ -58,7 +59,7 @@ public sealed class PublicSystemsController : InterfoldControllerBase
         }
 
         var alters = await _alters.ListGuardedAsync(systemId, PrincipalId, ct);
-        foreach (var a in alters) a.AvatarUrl = QualifyUrl(a.AvatarUrl);
+        foreach (var a in alters) a.AvatarUrl = QualifyAvatar(a.AvatarUrl, a.AvatarSource);
         return Ok(new { data = alters });
     }
 
@@ -72,7 +73,10 @@ public sealed class PublicSystemsController : InterfoldControllerBase
         }
 
         var alter = await _alters.GetGuardedAsync(systemId, alterId, PrincipalId, ct);
-        alter?.AvatarUrl = QualifyUrl(alter.AvatarUrl);
+        if (alter is not null)
+        {
+            alter.AvatarUrl = QualifyAvatar(alter.AvatarUrl, alter.AvatarSource);
+        }
 
         return alter is null
             ? NotFound(new { error = "Alter not found.", code = "alter_not_found" })
@@ -144,16 +148,16 @@ public sealed class PublicSystemsController : InterfoldControllerBase
         await Task.WhenAll(altersTask, tagsTask, friendshipTask);
 
         var batchAlters = altersTask.Result;
-        foreach (var a in batchAlters) a.AvatarUrl = QualifyUrl(a.AvatarUrl);
+        foreach (var a in batchAlters) a.AvatarUrl = QualifyAvatar(a.AvatarUrl, a.AvatarSource);
 
         var friendship = friendshipTask.Result;
         if (friendship is not null)
         {
             friendship = friendship with
             {
-                Friend = friendship.Friend with { AvatarUrl = QualifyUrl(friendship.Friend.AvatarUrl) },
+                Friend = friendship.Friend with { AvatarUrl = QualifyAvatar(friendship.Friend.AvatarUrl, friendship.Friend.AvatarSource) },
                 Fronting = friendship.Fronting
-                    .Select(f => f with { Alter = f.Alter with { AvatarUrl = QualifyUrl(f.Alter.AvatarUrl) } })
+                    .Select(f => f with { Alter = f.Alter with { AvatarUrl = QualifyAvatar(f.Alter.AvatarUrl, f.Alter.AvatarSource) } })
                     .ToList()
             };
         }

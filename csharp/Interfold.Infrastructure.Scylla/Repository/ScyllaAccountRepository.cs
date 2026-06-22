@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using Cassandra;
 using System.Security.Cryptography;
 using Interfold.Contracts.Configuration;
+using Interfold.Contracts.Enums;
 using Interfold.Contracts.Models.Read;
 using Interfold.Domain.Abstractions.Repository;
 using Interfold.Infrastructure.Persistence;
@@ -98,7 +99,7 @@ public sealed class ScyllaAccountRepository : IAccountRepository
         }, _options, cancellationToken);
     }
 
-    public async Task<bool> UpdateAvatarAsync(string systemId, string avatarUrl, CancellationToken cancellationToken = default)
+    public async Task<bool> UpdateAvatarAsync(string systemId, string avatarUrl, AvatarSource source, CancellationToken cancellationToken = default)
     {
         return await DatabaseTransientRetry.ExecuteScyllaAsync(async () =>
         {
@@ -107,8 +108,9 @@ public sealed class ScyllaAccountRepository : IAccountRepository
             var keyspace = _keyspaceResolver.ResolveRegionalKeyspace(systemId);
 
             var statement = new SimpleStatement(
-                $"UPDATE {keyspace}.users SET avatar_url = ?, updated_at = toTimestamp(now()) WHERE id = ?",
+                $"UPDATE {keyspace}.users SET avatar_url = ?, avatar_source = ?, updated_at = toTimestamp(now()) WHERE id = ?",
                 avatarUrl,
+                (short)source,
                 normalizedSystemId
             );
 
@@ -125,8 +127,10 @@ public sealed class ScyllaAccountRepository : IAccountRepository
             var normalizedSystemId = _keyspaceResolver.NormalizeSystemId(systemId);
             var keyspace = _keyspaceResolver.ResolveRegionalKeyspace(systemId);
 
+            // Null both columns together so observers can never see a half-cleared state.
             var statement = new SimpleStatement(
-                $"UPDATE {keyspace}.users SET avatar_url = ?, updated_at = toTimestamp(now()) WHERE id = ?",
+                $"UPDATE {keyspace}.users SET avatar_url = ?, avatar_source = ?, updated_at = toTimestamp(now()) WHERE id = ?",
+                null,
                 null,
                 normalizedSystemId
             );
@@ -315,7 +319,7 @@ public sealed class ScyllaAccountRepository : IAccountRepository
             var keyspace = _keyspaceResolver.ResolveRegionalKeyspace(systemId);
 
             var profileQuery = new SimpleStatement(
-                $"SELECT username, avatar_url, description, discord_id, email, apple_id FROM {keyspace}.users WHERE id = ? LIMIT 1",
+                $"SELECT username, avatar_url, avatar_source, description, discord_id, email, apple_id FROM {keyspace}.users WHERE id = ? LIMIT 1",
                 normalizedSystemId
             );
 
@@ -330,11 +334,20 @@ public sealed class ScyllaAccountRepository : IAccountRepository
                 profile.GetValue<string?>("username"),
                 profile.GetValue<string?>("description"),
                 profile.GetValue<string?>("avatar_url"),
+                ResolveAvatarSource(profile.GetValue<short?>("avatar_source")),
                 profile.GetValue<string?>("discord_id"),
                 profile.GetValue<string?>("email"),
                 profile.GetValue<string?>("apple_id"));
         }, _options, cancellationToken);
     }
+
+    private static AvatarSource? ResolveAvatarSource(short? value)
+        => value switch
+        {
+            (short)AvatarSource.External => AvatarSource.External,
+            (short)AvatarSource.Local    => AvatarSource.Local,
+            _ => null
+        };
 
     private async Task<string?> TryFindSystemIdByRegistryColumnAsync(string columnName, string value, CancellationToken cancellationToken)
     {

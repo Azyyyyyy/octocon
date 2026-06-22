@@ -47,6 +47,8 @@ CREATE TYPE IF NOT EXISTS nam.server_settings_data (
 
 -- =====================
 -- USERS TABLE
+-- avatar_source: 0 = Local (self-hosted via IAvatarStorage), 1 = External (passthrough URL).
+-- Null when avatar_url is null.
 -- =====================
 CREATE TABLE IF NOT EXISTS {{KEYSPACE}}.users (
     id text,
@@ -57,6 +59,7 @@ CREATE TABLE IF NOT EXISTS {{KEYSPACE}}.users (
     username text,
     description text,
     avatar_url text,
+    avatar_source smallint,
     lifetime_alter_count int,
     primary_front int,
     last_proxy_id smallint,
@@ -100,6 +103,8 @@ CREATE TABLE IF NOT EXISTS {{KEYSPACE}}.users_by_google_id (
 
 -- =====================
 -- ALTERS TABLE
+-- avatar_source: 0 = Local (self-hosted via IAvatarStorage), 1 = External (passthrough URL).
+-- Null when avatar_url is null.
 -- =====================
 CREATE TABLE IF NOT EXISTS {{KEYSPACE}}.alters (
     user_id text,
@@ -109,6 +114,7 @@ CREATE TABLE IF NOT EXISTS {{KEYSPACE}}.alters (
     pronouns text,
     description text,
     avatar_url text,
+    avatar_source smallint,
     security_level smallint,
     extra_images list<text>,
     color text,

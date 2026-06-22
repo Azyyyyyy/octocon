@@ -1,5 +1,6 @@
 using Cassandra;
 using Interfold.Contracts.Configuration;
+using Interfold.Contracts.Enums;
 using Interfold.Contracts.Models;
 using Interfold.Contracts.Models.Read;
 using Interfold.Domain.Abstractions.Repository;
@@ -223,7 +224,7 @@ public sealed class ScyllaFrontingRepository : IFrontingRepository
             ));
             
             var altersTask = session.ExecuteAsync(new SimpleStatement(
-                $"SELECT id, name, avatar_url, description, color, fields, pronouns, pinned FROM {keyspace}.alters WHERE user_id = ?",
+                $"SELECT id, name, avatar_url, avatar_source, description, color, fields, pronouns, pinned FROM {keyspace}.alters WHERE user_id = ?",
                 normalizedSystemId));
 
             await Task.WhenAll(primaryTask, activeTask, altersTask);
@@ -242,6 +243,7 @@ public sealed class ScyllaFrontingRepository : IFrontingRepository
                     row.GetValue<short>("id"),
                     row.GetValue<string>("name"),
                     row.GetValue<string?>("avatar_url"),
+                    ResolveAvatarSource(row.GetValue<short?>("avatar_source")),
                     row.GetValue<string?>("color"),
                     row.GetValue<string?>("pronouns"),
                     row.GetValue<string?>("description"),
@@ -263,7 +265,7 @@ public sealed class ScyllaFrontingRepository : IFrontingRepository
 
                     if (!alterById.TryGetValue(alterId, out var alter))
                     {
-                        alter = new BareAlter(alterId, $"Alter {alterId}", null, null, null, null, null!);
+                        alter = new BareAlter(alterId, $"Alter {alterId}", null, null, null, null, null, null!);
                     }
 
                     return new FrontActiveReadModel(alter, front, primaryAlterId == alterId);
@@ -390,7 +392,7 @@ public sealed class ScyllaFrontingRepository : IFrontingRepository
                 normalizedSystemId, alterId));
 
             var alterTask = session.ExecuteAsync(new SimpleStatement(
-                $"SELECT id, name, avatar_url, description, color, fields, pronouns, pinned FROM {keyspace}.alters WHERE user_id = ? AND id = ? LIMIT 1",
+                $"SELECT id, name, avatar_url, avatar_source, description, color, fields, pronouns, pinned FROM {keyspace}.alters WHERE user_id = ? AND id = ? LIMIT 1",
                 normalizedSystemId, alterId));
 
             var primaryTask = session.ExecuteAsync(new SimpleStatement(
@@ -409,7 +411,7 @@ public sealed class ScyllaFrontingRepository : IFrontingRepository
             BareAlter alter;
             if (alterRow is null)
             {
-                alter = new BareAlter(alterId, $"Alter {alterId}", null, null, null, null, null!);
+                alter = new BareAlter(alterId, $"Alter {alterId}", null, null, null, null, null, null!);
             }
             else
             {
@@ -417,6 +419,7 @@ public sealed class ScyllaFrontingRepository : IFrontingRepository
                     alterRow.GetValue<short>("id"),
                     alterRow.GetValue<string>("name"),
                     alterRow.GetValue<string?>("avatar_url"),
+                    ResolveAvatarSource(alterRow.GetValue<short?>("avatar_source")),
                     alterRow.GetValue<string?>("color"),
                     alterRow.GetValue<string?>("pronouns"),
                     alterRow.GetValue<string?>("description"),
@@ -717,6 +720,14 @@ public sealed class ScyllaFrontingRepository : IFrontingRepository
             _ => VisibilityLevel.Public
         };
     }
+
+    private static AvatarSource? ResolveAvatarSource(short? value)
+        => value switch
+        {
+            (short)AvatarSource.External => AvatarSource.External,
+            (short)AvatarSource.Local    => AvatarSource.Local,
+            _ => null
+        };
 
     private static bool CanView(string? friendshipLevel, VisibilityLevel visibilityLevel)
     {

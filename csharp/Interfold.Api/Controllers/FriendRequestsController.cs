@@ -39,13 +39,13 @@ public sealed class FriendRequestsController : InterfoldControllerBase
         var incoming = requests.Incoming
             .Select(x => x with
             {
-                System = x.System with { AvatarUrl = QualifyUrl(x.System.AvatarUrl) }
+                System = x.System with { AvatarUrl = QualifyAvatar(x.System.AvatarUrl, x.System.AvatarSource) }
             })
             .ToArray();
         var outgoing = requests.Outgoing
             .Select(x => x with
             {
-                System = x.System with { AvatarUrl = QualifyUrl(x.System.AvatarUrl) }
+                System = x.System with { AvatarUrl = QualifyAvatar(x.System.AvatarUrl, x.System.AvatarSource) }
             })
             .ToArray();
 

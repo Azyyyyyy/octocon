@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Text;
 using Interfold.Api.Services.SimplyPlural;
 using Interfold.Contracts.Configuration;
+using Interfold.Contracts.Enums;
 using Interfold.Contracts.Models.Commands;
 using Interfold.Domain;
 using Interfold.Domain.Abstractions;
@@ -130,6 +131,15 @@ public sealed class SimplyPluralImportService : ISimplyPluralImportService
             await _accountRepository.UpdateDescriptionAsync(systemId, truncated, cancellationToken);
         }
 
+        // 8b. Decide what to do with the system avatar. SP CDN avatars are queued for
+        // rehost (since SP is shutting down); a non-CDN URL is written through synchronously
+        // with avatar_source=External so the avatar is visible immediately.
+        var systemAvatarRehost = await ImportSystemAvatarAsync(systemId, systemData.Content, cancellationToken);
+        if (systemAvatarRehost is not null)
+        {
+            avatarDownloads.Add(systemAvatarRehost);
+        }
+
         // 9. Download and attach avatars in background
         if (WaitForAvatars == true)
         {
@@ -242,11 +252,42 @@ public sealed class SimplyPluralImportService : ISimplyPluralImportService
 
             var securityLevel = MapSecurityLevel(content.Private, content.PreventTrusted);
 
+            // Resolve the SP avatar URL up-front so we can decide whether the immediate
+            // UpdateAlterCommand carries a passthrough URL or stays empty (rehost case).
+            //
+            // Branches:
+            //   * avatarUuid + uid  → constructed SP CDN URL → rehost (SP is shutting down).
+            //   * avatarUrl on SP CDN → rehost as above.
+            //   * avatarUrl elsewhere → passthrough with avatar_source=External.
+            //   * none of the above → no avatar set.
+            var avatarUuid = content.AvatarUuid;
+            var rawAvatarUrl = content.AvatarUrl;
+            var uid = content.Uid;
+            string? rehostUrl = null;
+            string? passthroughUrl = null;
+
+            if (!string.IsNullOrWhiteSpace(avatarUuid) && !string.IsNullOrWhiteSpace(uid))
+            {
+                rehostUrl = $"{SpCdnBase}/avatars/{uid}/{avatarUuid}";
+            }
+            else if (!string.IsNullOrWhiteSpace(rawAvatarUrl) && Uri.IsWellFormedUriString(rawAvatarUrl, UriKind.Absolute))
+            {
+                if (IsSpCdnUrl(rawAvatarUrl))
+                {
+                    rehostUrl = rawAvatarUrl;
+                }
+                else
+                {
+                    passthroughUrl = rawAvatarUrl;
+                }
+            }
+
             var updateCommand = new UpdateAlterCommand(
                 AlterId: alterId.Value,
                 Name: null, // already set via CreateAsync
                 Description: desc,
-                AvatarUrl: null,
+                AvatarUrl: passthroughUrl,
+                AvatarSource: passthroughUrl is null ? null : AvatarSource.External,
                 Color: color,
                 Pronouns: pronouns,
                 SecurityLevel: securityLevel,
@@ -261,18 +302,9 @@ public sealed class SimplyPluralImportService : ISimplyPluralImportService
 
             await _alterRepository.UpdateAsync(systemId, updateCommand, ct);
 
-            // Check for avatar
-            var avatarUuid = content.AvatarUuid;
-            var avatarUrl = content.AvatarUrl;
-            var uid = content.Uid;
-            if (!string.IsNullOrWhiteSpace(avatarUuid) && !string.IsNullOrWhiteSpace(uid))
+            if (rehostUrl is not null)
             {
-                avatarUrl = $"{SpCdnBase}/avatars/{uid}/{avatarUuid}";
-            }
-
-            if (!string.IsNullOrWhiteSpace(avatarUrl) && Uri.IsWellFormedUriString(avatarUrl, UriKind.Absolute))
-            {
-                avatarDownloads.Add(new AvatarDownload(avatarUrl, systemId, alterId.Value));
+                avatarDownloads.Add(new AvatarDownload(rehostUrl, systemId, AvatarKind.Alter, alterId.Value));
             }
         }
 
@@ -660,31 +692,87 @@ public sealed class SimplyPluralImportService : ISimplyPluralImportService
 
                 await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
                 //TODO: We should ideally be coverting it to webp for consistency of other images
-                var avatarUrl = await _avatarStorage.SaveAlterAvatarAsync(download.SystemId, download.AlterId, stream, cancellationToken);
 
-                await _alterRepository.UpdateAsync(systemId, new UpdateAlterCommand(
-                    AlterId: download.AlterId,
-                    Name: null,
-                    Description: null,
-                    AvatarUrl: avatarUrl,
-                    Color: null,
-                    Pronouns: null,
-                    SecurityLevel: null,
-                    Fields: null,
-                    ProxyName: null,
-                    Alias: null,
-                    Untracked: null,
-                    Archived: null,
-                    Pinned: null,
-                    UpdatedAt: DateTimeOffset.UtcNow
-                ), cancellationToken);
+                if (download.Kind == AvatarKind.System)
+                {
+                    var localUrl = await _avatarStorage.SaveSystemAvatarAsync(download.SystemId, stream, cancellationToken);
+                    await _accountRepository.UpdateAvatarAsync(download.SystemId, localUrl, AvatarSource.Local, cancellationToken);
+                }
+                else
+                {
+                    var localUrl = await _avatarStorage.SaveAlterAvatarAsync(download.SystemId, download.AlterId!.Value, stream, cancellationToken);
+
+                    await _alterRepository.UpdateAsync(systemId, new UpdateAlterCommand(
+                        AlterId: download.AlterId!.Value,
+                        Name: null,
+                        Description: null,
+                        AvatarUrl: localUrl,
+                        AvatarSource: AvatarSource.Local,
+                        Color: null,
+                        Pronouns: null,
+                        SecurityLevel: null,
+                        Fields: null,
+                        ProxyName: null,
+                        Alias: null,
+                        Untracked: null,
+                        Archived: null,
+                        Pinned: null,
+                        UpdatedAt: DateTimeOffset.UtcNow
+                    ), cancellationToken);
+                }
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Failed to download avatar for alter {AlterId} in system {SystemId}", download.AlterId, download.SystemId);
+                _logger.LogWarning(ex, "Failed to download avatar (kind={Kind}, alter={AlterId}) in system {SystemId}",
+                    download.Kind, download.AlterId, download.SystemId);
             }
         }
     }
+
+    /// <summary>
+    /// Decides whether the SP-side system avatar should be rehosted (queued in the returned
+    /// <see cref="AvatarDownload"/>) or passed through directly via
+    /// <see cref="IAccountRepository.UpdateAvatarAsync"/>. Returns <see langword="null"/>
+    /// when no rehost is required (because there's no avatar, or because the URL was a
+    /// passthrough we already wrote synchronously).
+    /// </summary>
+    private async Task<AvatarDownload?> ImportSystemAvatarAsync(
+        string systemId,
+        SpSystemContent content,
+        CancellationToken cancellationToken)
+    {
+        var avatarUuid = content.AvatarUuid;
+        var rawAvatarUrl = content.AvatarUrl;
+        var uid = content.Uid;
+
+        if (!string.IsNullOrWhiteSpace(avatarUuid) && !string.IsNullOrWhiteSpace(uid))
+        {
+            // Always rehost the canonical SP CDN URL because SP is shutting down.
+            return new AvatarDownload($"{SpCdnBase}/avatars/{uid}/{avatarUuid}", systemId, AvatarKind.System, null);
+        }
+
+        if (string.IsNullOrWhiteSpace(rawAvatarUrl) || !Uri.IsWellFormedUriString(rawAvatarUrl, UriKind.Absolute))
+        {
+            return null;
+        }
+
+        if (IsSpCdnUrl(rawAvatarUrl))
+        {
+            return new AvatarDownload(rawAvatarUrl, systemId, AvatarKind.System, null);
+        }
+
+        // Non-SP URL → store as passthrough; nothing to download.
+        await _accountRepository.UpdateAvatarAsync(systemId, rawAvatarUrl, AvatarSource.External, cancellationToken);
+        return null;
+    }
+
+    /// <summary>
+    /// True when <paramref name="url"/> is an absolute URL hosted on the Simply Plural CDN.
+    /// Used to decide between rehost (SP CDN, will go away soon) and passthrough (everything else).
+    /// </summary>
+    private static bool IsSpCdnUrl(string? url)
+        => !string.IsNullOrWhiteSpace(url)
+           && url.StartsWith(SpCdnBase, StringComparison.OrdinalIgnoreCase);
 
 
     private static async Task<T?> FetchAsync<T>(HttpClient httpClient, string url, CancellationToken ct)
@@ -755,5 +843,15 @@ public sealed class SimplyPluralImportService : ISimplyPluralImportService
         return null;
     }
 
-    private sealed record AvatarDownload(string Url, string SystemId, int AlterId);
+    /// <summary>
+    /// Pending rehost of a Simply Plural CDN avatar. <see cref="AlterId"/> is required for
+    /// <see cref="AvatarKind.Alter"/> entries and unused for <see cref="AvatarKind.System"/>.
+    /// </summary>
+    private sealed record AvatarDownload(string Url, string SystemId, AvatarKind Kind, int? AlterId);
+
+    private enum AvatarKind
+    {
+        System,
+        Alter,
+    }
 }

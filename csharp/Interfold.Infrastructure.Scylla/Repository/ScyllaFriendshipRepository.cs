@@ -1,5 +1,6 @@
 using Cassandra;
 using Interfold.Contracts.Configuration;
+using Interfold.Contracts.Enums;
 using Interfold.Contracts.Models.Read;
 using Interfold.Domain.Abstractions.Repository;
 using Interfold.Infrastructure.Persistence;
@@ -599,11 +600,11 @@ public sealed class ScyllaFriendshipRepository : IFriendshipRepository
         var region = await ResolveUserRegionAsync(session, friendSystemId);
         if (string.IsNullOrWhiteSpace(region))
         {
-            return new FriendProfileReadModel(friendSystemId, null, null, null, null);
+            return new FriendProfileReadModel(friendSystemId, null, null, null, null, null);
         }
 
         var profileQuery = new SimpleStatement(
-            $"SELECT username, avatar_url, description, discord_id FROM {region}.users WHERE id = ? LIMIT 1",
+            $"SELECT username, avatar_url, avatar_source, description, discord_id FROM {region}.users WHERE id = ? LIMIT 1",
             friendSystemId);
 
         var profileRow = (await session.ExecuteAsync(profileQuery)).FirstOrDefault();
@@ -612,6 +613,7 @@ public sealed class ScyllaFriendshipRepository : IFriendshipRepository
             friendSystemId,
             profileRow?.GetValue<string?>("username"),
             profileRow?.GetValue<string?>("avatar_url"),
+            ResolveAvatarSource(profileRow?.GetValue<short?>("avatar_source")),
             profileRow?.GetValue<string?>("description"),
             profileRow?.GetValue<string?>("discord_id"));
     }
@@ -636,7 +638,7 @@ public sealed class ScyllaFriendshipRepository : IFriendshipRepository
             $"SELECT primary_front FROM {regionalKeyspace}.users WHERE id = ? LIMIT 1",
             friendSystemId));
         var altersTask = session.ExecuteAsync(new SimpleStatement(
-            $"SELECT id, name, avatar_url, pronouns, color, description, extra_images, security_level FROM {regionalKeyspace}.alters WHERE user_id = ?",
+            $"SELECT id, name, avatar_url, avatar_source, pronouns, color, description, extra_images, security_level FROM {regionalKeyspace}.alters WHERE user_id = ?",
             friendSystemId));
 
         await Task.WhenAll(levelTask, activeTask, primaryTask, altersTask);
@@ -655,6 +657,7 @@ public sealed class ScyllaFriendshipRepository : IFriendshipRepository
                 row => (
                     Name: row.GetValue<string?>("name"),
                     AvatarUrl: row.GetValue<string?>("avatar_url"),
+                    AvatarSource: ResolveAvatarSource(row.GetValue<short?>("avatar_source")),
                     Pronouns: row.GetValue<string?>("pronouns"),
                     Color: row.GetValue<string?>("color"),
                     Description: row.GetValue<string?>("description"),
@@ -676,6 +679,7 @@ public sealed class ScyllaFriendshipRepository : IFriendshipRepository
                         alter.Description,
                         [],
                         alter.AvatarUrl,
+                        alter.AvatarSource,
                         alter.ExtraImages,
                         alter.Color),
                     new FriendFrontingFrontReadModel(alterId, row.GetValue<string?>("comment")),
@@ -685,6 +689,14 @@ public sealed class ScyllaFriendshipRepository : IFriendshipRepository
             .OrderBy(x => x!.Alter.Id)
             .ToList()!;
     }
+
+    private static AvatarSource? ResolveAvatarSource(short? value)
+        => value switch
+        {
+            (short)AvatarSource.External => AvatarSource.External,
+            (short)AvatarSource.Local    => AvatarSource.Local,
+            _ => null
+        };
 
     private static bool CanViewAlter(string? friendshipLevel, short? securityLevel)
     {

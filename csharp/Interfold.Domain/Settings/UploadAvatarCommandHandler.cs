@@ -41,7 +41,7 @@ public sealed class UploadAvatarCommandHandler : ICommandHandler<UploadAvatarCom
             "avatar_uploaded",
             "settings:avatar:upload",
             _idempotencyStore,
-            ct => _accountRepository.UpdateAvatarAsync(command.PrincipalId, command.Payload.AvatarUrl, ct),
+            ct => _accountRepository.UpdateAvatarAsync(command.PrincipalId, command.Payload.AvatarUrl, command.Payload.Source, ct),
             cancellationToken);
 
         if (result is { Accepted: true, Result.Replay: false })

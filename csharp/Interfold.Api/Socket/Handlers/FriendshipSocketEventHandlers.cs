@@ -1,5 +1,6 @@
 using Interfold.Api.Helpers;
 using Interfold.Contracts;
+using Interfold.Contracts.Enums;
 using Interfold.Contracts.Events;
 using Interfold.Contracts.Models.Read;
 using Interfold.Domain.Abstractions.Repository;
@@ -18,7 +19,7 @@ public static class FriendshipSocketEventHandlers
         var friendship = await GetFriendshipWithRetryAsync(friendshipRepository, evt.TargetSystemId, evt.SystemId, context.CancellationToken);
         var qualified = friendship is null
             ? new FriendshipReadModel(
-                new FriendProfileReadModel(evt.SystemId, string.Empty, string.Empty, string.Empty, string.Empty),
+                new FriendProfileReadModel(evt.SystemId, string.Empty, null, null, string.Empty, string.Empty),
                 new FriendshipModel("friend", DateTimeOffset.UtcNow),
                 [])
             : QualifyFriendship(friendship, context);
@@ -86,10 +87,10 @@ public static class FriendshipSocketEventHandlers
         var payload = matched is null
             ? new FriendRequestSocketPayload(
                 new FriendshipRequestModel(DateTimeOffset.UtcNow),
-                new FriendProfileReadModel(otherSystemId, string.Empty, string.Empty, string.Empty, string.Empty))
+                new FriendProfileReadModel(otherSystemId, string.Empty, null, null, string.Empty, string.Empty))
             : new FriendRequestSocketPayload(
                 matched.Request,
-                matched.System with { AvatarUrl = AvatarUrlQualifier.Qualify(matched.System.AvatarUrl, context.RequestOrigin) });
+                matched.System with { AvatarUrl = AvatarUrlQualifier.QualifyAvatar(matched.System.AvatarUrl, matched.System.AvatarSource, context.RequestOrigin) });
 
         await context.SendAsync(topic, joinRef, asArray, eventName, payload);
     }
@@ -185,12 +186,26 @@ public static class FriendshipSocketEventHandlers
 
     private static FriendshipReadModel QualifyFriendship(FriendshipReadModel friendship, SocketPushContext context)
     {
-        var qualifyUrl = (string? url) => AvatarUrlQualifier.Qualify(url, context.RequestOrigin);
         return friendship with
         {
-            Friend = friendship.Friend with { AvatarUrl = qualifyUrl(friendship.Friend.AvatarUrl) },
+            Friend = friendship.Friend with
+            {
+                AvatarUrl = AvatarUrlQualifier.QualifyAvatar(
+                    friendship.Friend.AvatarUrl,
+                    friendship.Friend.AvatarSource,
+                    context.RequestOrigin)
+            },
             Fronting = friendship.Fronting
-                .Select(f => f with { Alter = f.Alter with { AvatarUrl = qualifyUrl(f.Alter.AvatarUrl) } })
+                .Select(f => f with
+                {
+                    Alter = f.Alter with
+                    {
+                        AvatarUrl = AvatarUrlQualifier.QualifyAvatar(
+                            f.Alter.AvatarUrl,
+                            f.Alter.AvatarSource,
+                            context.RequestOrigin)
+                    }
+                })
                 .ToArray()
         };
     }
