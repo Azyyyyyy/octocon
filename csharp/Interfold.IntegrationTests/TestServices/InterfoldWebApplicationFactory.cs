@@ -1,10 +1,8 @@
 ﻿using Interfold.Api.Services;
 using Interfold.Api.Socket;
-using Interfold.Contracts.Secrets;
 using Interfold.Domain.Abstractions;
 using Interfold.Infrastructure;
 using Interfold.Infrastructure.Coordination;
-using Interfold.Infrastructure.InMemory;
 using Interfold.Infrastructure.Postgres;
 using Interfold.Infrastructure.Scylla;
 using Microsoft.AspNetCore.Hosting;
@@ -49,11 +47,21 @@ public class InterfoldWebApplicationFactory : WebApplicationFactory<Program>
         _persistenceType = persistenceType;
         DisplayName = displayName ?? persistenceType;
         _configProvider.Set("OCTOCON_PERSISTENCE", persistenceType);
-        // JWT key material and the encryption pepper are not env-bound; SecretsBootstrapService
-        // patches them from internal.secrets at startup. Each test fixture seeds the same
-        // PEMs + pepper into the store (see TestDbCredentials + BuildSeededInMemorySecretsStore
-        // below for the in-memory variant) so signing in CreateToken below matches
-        // verification, and SecretsBootstrapService's pepper-required check doesn't trip.
+
+        // JWT key material and the encryption pepper are not env-bound for the API; SecretsBootstrapService
+        // patches them from internal.secrets at startup. For DB-backed runs the SharedDbFixture seeds those
+        // secrets into the live store. For in-memory runs there is no real store, so we drive the production
+        // env-var seed path (registered in InMemoryServiceCollectionExtensions) by pushing the same PEMs +
+        // pepper into the factory's configuration provider — IConfiguration is the single source of truth
+        // for `OCTOCON_INMEMORY_SECRETS_SEED__*`, so the in-process tests exercise exactly the same wiring
+        // an external runner (e.g. the Kotlin Testcontainers harness) uses against the published image.
+        if (string.Equals(persistenceType, "inmemory", StringComparison.OrdinalIgnoreCase))
+        {
+            _configProvider.Set("OCTOCON_INMEMORY_SECRETS_SEED__ENCRYPTION_PEPPER",           "TEST");
+            _configProvider.Set("OCTOCON_INMEMORY_SECRETS_SEED__AUTH_JWT_ES256_PRIVATE_PEM",  TestDbCredentials.JwtEs256PrivateKeyPem);
+            _configProvider.Set("OCTOCON_INMEMORY_SECRETS_SEED__AUTH_DEEP_LINK_SECRET",       TestDbCredentials.DeepLinkSecret);
+            _configProvider.Set("OCTOCON_INMEMORY_SECRETS_SEED__AUTH_JWT_RSA256_PRIVATE_PEM", TestDbCredentials.JwtRsa256PrivateKeyPem);
+        }
     }
 
     public override string ToString() => DisplayName;
@@ -148,31 +156,27 @@ public class InterfoldWebApplicationFactory : WebApplicationFactory<Program>
             x.Replace(ServiceDescriptor.Singleton<IClusterEventBus>(EventBus));
             x.Replace(ServiceDescriptor.Singleton(EventBus));
 
-            if (string.Equals(_persistenceType, "inmemory", StringComparison.OrdinalIgnoreCase))
+            // DB-backed runs share a single host-wide bootstrap performed by
+            // SharedDbFixture.WaitForResourcesAsync (seeding internal.secrets and applying
+            // every CQL/SQL migration). Strip the migration hosted services from the per-
+            // factory host so the heavy DDL doesn't replay on every WebApplicationFactory
+            // build — those rebuilds add tens of seconds of cold start otherwise.
+            //
+            // SecretsBootstrapService stays registered on purpose: it's the production
+            // path that reads internal.secrets and patches IOptionsMonitor<*Configuration>
+            // (notably the JWT verification keys IssuingKeyPem / JwtEs256PublicKeyPem and
+            // the encryption pepper). Re-running it per factory is cheap (a single
+            // SELECT round-trip against the already-seeded msg-db) and exercises the same
+            // hosted-service ordering production relies on, so any regression in that
+            // service surfaces in tests instead of staging.
+            //
+            // In-memory persistence does NOT participate in this strip: there are no
+            // migration hosted services to remove, and the secrets-store seed flows through
+            // the production env-var path (set in this factory's constructor via
+            // OCTOCON_INMEMORY_SECRETS_SEED__*) — the same wiring an external container
+            // runner uses, so tests exercise the published code path end-to-end.
+            if (!string.Equals(_persistenceType, "inmemory", StringComparison.OrdinalIgnoreCase))
             {
-                // In-memory persistence has no real Postgres-backed secrets store to read
-                // from, so SecretsBootstrapService would patch nothing and JWT verification
-                // would fail. Replace the default InMemorySecretsStore with a pre-seeded one
-                // carrying the same PEMs the CreateToken helpers use to sign — the
-                // SecretsBootstrapService registered by Program.cs will then push them into
-                // IOptionsMonitor<AuthenticationConfiguration> as production does.
-                x.Replace(ServiceDescriptor.Singleton<ISecretsStore>(_ => BuildSeededInMemorySecretsStore()));
-            }
-            else
-            {
-                // DB-backed runs share a single host-wide bootstrap performed by
-                // SharedDbFixture.WaitForResourcesAsync (seeding internal.secrets and applying
-                // every CQL/SQL migration). Strip the migration hosted services from the per-
-                // factory host so the heavy DDL doesn't replay on every WebApplicationFactory
-                // build — those rebuilds add tens of seconds of cold start otherwise.
-                //
-                // SecretsBootstrapService stays registered on purpose: it's the production
-                // path that reads internal.secrets and patches IOptionsMonitor<*Configuration>
-                // (notably the JWT verification keys IssuingKeyPem / JwtEs256PublicKeyPem and
-                // the encryption pepper). Re-running it per factory is cheap (a single
-                // SELECT round-trip against the already-seeded msg-db) and exercises the same
-                // hosted-service ordering production relies on, so any regression in that
-                // service surfaces in tests instead of staging.
                 RemoveHostedService<PostgresMigrationService>(x);
                 RemoveHostedService<ScyllaMigrationService>(x);
             }
@@ -201,16 +205,6 @@ public class InterfoldWebApplicationFactory : WebApplicationFactory<Program>
                 services.RemoveAt(i);
             }
         }
-    }
-
-    private static InMemorySecretsStore BuildSeededInMemorySecretsStore()
-    {
-        var store = new InMemorySecretsStore();
-        store.Seed("auth:jwt_rsa256_private_pem", TestDbCredentials.JwtRsa256PrivateKeyPem);
-        store.Seed("auth:jwt_es256_private_pem", TestDbCredentials.JwtEs256PrivateKeyPem);
-        store.Seed("auth:deep_link_secret", TestDbCredentials.DeepLinkSecret);
-        store.Seed("encryption:pepper", "TEST");
-        return store;
     }
 
     private HttpClient TrackClient(HttpClient client)

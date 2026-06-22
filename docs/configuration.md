@@ -461,10 +461,16 @@ Tests centralise the test-only material in
 `[TestDbCredentials](../csharp/Interfold.IntegrationTests/TestServices/TestDbCredentials.cs)`
 — a single source of lazy-generated in-process keypairs and deterministic passwords. The
 real DB fixtures seed those values into `internal.secrets` via `PostgresSeedOptions`; the
-in-memory `WebApplicationFactory` instead replaces `ISecretsStore` with a pre-seeded
-`InMemorySecretsStore` (see
-`[InterfoldWebApplicationFactory.BuildSeededInMemorySecretsStore](../csharp/Interfold.IntegrationTests/TestServices/InterfoldWebApplicationFactory.cs)`).
-Either way, signing in `CreateToken` and verification on the server side use the same PEMs.
+in-memory `WebApplicationFactory` instead drives the production env-var seed path by
+pushing the same PEMs + pepper into the factory's configuration provider as
+`OCTOCON_INMEMORY_SECRETS_SEED__*` keys (see the constructor of
+`[InterfoldWebApplicationFactory](../csharp/Interfold.IntegrationTests/TestServices/InterfoldWebApplicationFactory.cs)`).
+The in-memory `ISecretsStore` registration in
+`[InMemoryServiceCollectionExtensions](../csharp/Interfold.Infrastructure.InMemory/InMemoryServiceCollectionExtensions.cs)`
+reads those values via `IConfiguration` and seeds the store, so in-process tests and the
+published container image (e.g. driven by the Kotlin Testcontainers harness) exercise
+exactly the same wiring. Either way, signing in `CreateToken` and verification on the
+server side use the same PEMs.
 
 ## Common gotchas
 
