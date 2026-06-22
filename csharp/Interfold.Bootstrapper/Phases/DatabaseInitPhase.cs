@@ -179,17 +179,24 @@ internal static class DatabaseInitPhase
         // The postgres / timescale entrypoint flow on a fresh data volume is:
         //   1. initdb  ->  2. start in init mode (Unix socket only)  ->  3. run init.d/
         //   ->  4. stop (timescaledb-tune.sh signals SIGTERM)  ->  5. start in normal mode.
-        // A SELECT 1 over the Unix socket succeeds during step 3 — so on its own, the SELECT
-        // probe can let us proceed during init mode and the bootstrap then gets SIGTERMed in
-        // step 4 with "the database system is shutting down".
         //
-        // To distinguish init mode from normal mode we also scan the container logs for the
-        // normal-mode banner ("database system is ready to accept connections") and require
-        // that it appears AFTER the most recent shutdown message (if any). On a re-run with
-        // a populated volume there's no shutdown at all and the very first banner is normal.
+        // The trap to avoid: a `psql SELECT 1` over the Unix socket succeeds during step 3
+        // because the temp server is fully accepting socket connections. If we let the
+        // bootstrap proceed in step 3 then the temp server gets SIGTERMed in step 4 and
+        // anything we ran is still in flight when callers later probe with "the database
+        // system is shutting down" (DbInitFaultRecoveryTests caught exactly this regression).
         //
-        // We probe as the disposable bootstrap superuser via psql. Local-socket trust auth
-        // is the postgres image default so the password isn't load-bearing here.
+        // The temp server in step 2 only binds the Unix socket — `listen_addresses` is empty
+        // until the normal-mode start in step 5 brings up TCP. So a TCP probe is the only
+        // signal that distinguishes "init in progress" from "normal mode is up": pg_isready
+        // explicitly opens a TCP connection without authenticating, returning exit 0 only
+        // when the listener is actually accepting connections (and non-zero with code 1/2
+        // during the shutdown / restart window between steps 3 and 5). The probe runs inside
+        // the container via `compose exec` so we don't have to thread the host-side mapped
+        // port through here.
+        //
+        // We still require 3 consecutive 0-exits with a 2s delay so a single transient
+        // success during the brief TCP-listen handoff inside step 5 can't sneak through.
         //
         // 10 minutes is generous on purpose: on slow Docker-in-Docker hosts the temp-server
         // shutdown + checkpoint after timescaledb-tune can take several minutes (we already
@@ -205,16 +212,15 @@ internal static class DatabaseInitPhase
             attempt++;
             var probe = await ProcessRunner.RunAsync("docker",
                 ["compose", "-f", composeFile, "exec", "-T", PostgresService,
-                 "psql", "-U", PostgresInitUser, "-d", "postgres", "-tAc", "SELECT 1"],
+                 "pg_isready", "-h", "127.0.0.1", "-p", "5432", "-U", PostgresInitUser],
                 ct: ct).ConfigureAwait(false);
-            if (probe.ExitCode == 0 && probe.StdOut.Trim() == "1"
-                && await IsPostgresInNormalModeAsync(composeFile, ct).ConfigureAwait(false))
+            if (probe.ExitCode == 0)
             {
                 consecutiveSuccesses++;
                 if (consecutiveSuccesses >= RequiredSuccesses)
                 {
                     logger.Info(
-                        $"    postgres ready after {attempt} probe(s) ({RequiredSuccesses} consecutive SELECTs, normal mode confirmed)");
+                        $"    postgres ready after {attempt} probe(s) ({RequiredSuccesses} consecutive TCP pg_isready, normal mode confirmed)");
                     return;
                 }
             }
@@ -225,24 +231,6 @@ internal static class DatabaseInitPhase
             await Task.Delay(TimeSpan.FromSeconds(2), ct).ConfigureAwait(false);
         }
         throw new TimeoutException($"{PostgresService} did not become ready within 10 minutes.");
-    }
-
-    private static async Task<bool> IsPostgresInNormalModeAsync(string composeFile, CancellationToken ct)
-    {
-        // 400 lines is plenty — the init-mode preamble is ~50 lines and timescaledb-tune
-        // output is ~80 more; staying under 1KB of stdout keeps this probe cheap.
-        var logs = await ProcessRunner.RunAsync("docker",
-            ["compose", "-f", composeFile, "logs", "--tail", "400", "--no-color", PostgresService],
-            ct: ct).ConfigureAwait(false);
-        if (logs.ExitCode != 0) return false;
-
-        var stdout = logs.StdOut;
-        var lastReady = stdout.LastIndexOf("database system is ready to accept connections", StringComparison.Ordinal);
-        if (lastReady < 0) return false;
-        var lastShutdownReq = stdout.LastIndexOf("received fast shutdown request", StringComparison.Ordinal);
-        var lastShutdownDone = stdout.LastIndexOf("database system is shut down", StringComparison.Ordinal);
-        var lastShutdown = Math.Max(lastShutdownReq, lastShutdownDone);
-        return lastShutdown < lastReady;
     }
 
     private static async Task WaitForScyllaAsync(

@@ -47,9 +47,11 @@ public class WebHttpsTests(UbuntuDinDFixture dinD)
 
         // Every bind-mount-source line in the post-processed .env should resolve to an absolute
         // path. We don't assert the exact key names because Aspire derives them from the service
-        // resource graph (e.g. `OCTOCON_WEB_BINDMOUNTS__0`) and renames are within their right.
+        // resource graph (currently `OCTOCON_WEB_BINDMOUNT_0`, `OCTOCON_WEB_BINDMOUNT_1`, ...);
+        // we match the stable `OCTOCON_WEB_BINDMOUNT` prefix so a future Aspire upgrade that
+        // tweaks the suffix shape (e.g. back to `OCTOCON_WEB_BINDMOUNTS__0`) still passes.
         var webBindMounts = env
-            .Where(kv => kv.Key.Contains("OCTOCON_WEB_BINDMOUNTS", StringComparison.OrdinalIgnoreCase))
+            .Where(kv => kv.Key.StartsWith("OCTOCON_WEB_BINDMOUNT", StringComparison.OrdinalIgnoreCase))
             .ToList();
         await Assert.That(webBindMounts.Count).IsGreaterThanOrEqualTo(2)
             .Because("expected at least two octocon-web bind mounts (certs + nginx template) " +
