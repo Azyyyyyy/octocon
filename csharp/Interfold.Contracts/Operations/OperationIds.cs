@@ -19,6 +19,7 @@ public static class OperationIds
     public const string SettingsAuthUnlinkApple = "cmd.settings.auth.unlink_apple";
     public const string SettingsAccountDelete = "cmd.settings.account.delete";
     public const string SettingsAltersWipe = "cmd.settings.alters.wipe";
+    public const string SettingsTagsWipe = "cmd.settings.tags.wipe";
     public const string SettingsFieldCreate = "cmd.settings.field.create";
     public const string SettingsFieldUpdate = "cmd.settings.field.update";
     public const string SettingsFieldDelete = "cmd.settings.field.delete";

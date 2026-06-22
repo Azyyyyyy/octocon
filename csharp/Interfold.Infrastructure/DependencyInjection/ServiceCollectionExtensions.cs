@@ -118,6 +118,7 @@ public static partial class ServiceCollectionExtensions
             .AddSingleton<UnlinkAppleCommandHandler>()
             .AddSingleton<DeleteAccountCommandHandler>()
             .AddSingleton<WipeAltersCommandHandler>()
+            .AddSingleton<WipeTagsCommandHandler>()
             .AddSingleton<CreateFieldCommandHandler>()
             .AddSingleton<UpdateFieldCommandHandler>()
             .AddSingleton<DeleteFieldCommandHandler>()

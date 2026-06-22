@@ -45,6 +45,7 @@ public sealed class SettingsController : InterfoldControllerBase
     private readonly UnlinkAppleCommandHandler _unlinkAppleHandler;
     private readonly DeleteAccountCommandHandler _deleteAccountHandler;
     private readonly WipeAltersCommandHandler _wipeAltersHandler;
+    private readonly WipeTagsCommandHandler _wipeTagsHandler;
     private readonly CreateFieldCommandHandler _createFieldHandler;
     private readonly UpdateFieldCommandHandler _updateFieldHandler;
     private readonly DeleteFieldCommandHandler _deleteFieldHandler;
@@ -70,6 +71,7 @@ public sealed class SettingsController : InterfoldControllerBase
         UnlinkAppleCommandHandler unlinkAppleHandler,
         DeleteAccountCommandHandler deleteAccountHandler,
         WipeAltersCommandHandler wipeAltersHandler,
+        WipeTagsCommandHandler wipeTagsHandler,
         CreateFieldCommandHandler createFieldHandler,
         UpdateFieldCommandHandler updateFieldHandler,
         DeleteFieldCommandHandler deleteFieldHandler,
@@ -95,6 +97,7 @@ public sealed class SettingsController : InterfoldControllerBase
         _unlinkAppleHandler = unlinkAppleHandler;
         _deleteAccountHandler = deleteAccountHandler;
         _wipeAltersHandler = wipeAltersHandler;
+        _wipeTagsHandler = wipeTagsHandler;
         _createFieldHandler = createFieldHandler;
         _updateFieldHandler = updateFieldHandler;
         _deleteFieldHandler = deleteFieldHandler;
@@ -461,6 +464,21 @@ public sealed class SettingsController : InterfoldControllerBase
         );
 
         return CommandNoContent(await _wipeAltersHandler.HandleAsync(envelope, ct));
+    }
+
+    [HttpPost("wipe-tags")]
+    public async Task<Response> WipeTags([FromBody] BaseRequest? req, CancellationToken ct)
+    {
+        var envelope = new CommandEnvelope<WipeTagsCommand>(
+            OperationIds.SettingsTagsWipe,
+            Guid.NewGuid(),
+            PrincipalId: PrincipalId,
+            IdempotencyKey: GetIdempotencyKey(req?.IdempotencyKey),
+            OccurredAt: DateTimeOffset.UtcNow,
+            Payload: new WipeTagsCommand()
+        );
+
+        return CommandNoContent(await _wipeTagsHandler.HandleAsync(envelope, ct));
     }
 
     [HttpPost("fields")]

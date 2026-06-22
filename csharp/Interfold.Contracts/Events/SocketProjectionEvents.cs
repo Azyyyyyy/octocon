@@ -61,3 +61,15 @@ public sealed record FriendRequestRemovedFromEvent(string TargetSystemId, string
 public sealed record FriendRequestRemovedToEvent(string TargetSystemId, string ToSystemId) : ITargetedClusterEvent;
 
 public sealed record SettingsAccountLinkedEvent(string TargetSystemId, string ProviderKey, string Identity) : ITargetedClusterEvent;
+
+public sealed record SettingsGoogleAccountUnlinkedSignalEvent(string TargetSystemId) : ITargetedClusterEvent;
+
+public sealed record SettingsTagsWipedSignalEvent(string TargetSystemId) : ITargetedClusterEvent;
+
+public sealed record SimplyPluralImportCompletedEvent(string TargetSystemId, int AlterCount) : ITargetedClusterEvent;
+
+public sealed record SimplyPluralImportFailedEvent(string TargetSystemId) : ITargetedClusterEvent;
+
+public sealed record PluralKitImportCompletedEvent(string TargetSystemId, int AlterCount) : ITargetedClusterEvent;
+
+public sealed record PluralKitImportFailedEvent(string TargetSystemId) : ITargetedClusterEvent;

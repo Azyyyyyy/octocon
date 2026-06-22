@@ -33,18 +33,47 @@ public sealed class ImportPkCommandHandler : ICommandHandler<ImportPkCommand, Se
         CommandEnvelope<ImportPkCommand> command,
         CancellationToken cancellationToken)
     {
-        //TODO: Implement        
-        var result = await SettingsCommandHelper.ExecuteAsync(
-            command,
-            "pk_imported",
-            "settings:import:pk",
-            _idempotencyStore,
-            _ => Task.FromResult(true),
-            cancellationToken);
+        // The PK importer itself is still a TODO (mirrors Octocon.Workers.PluralKitImportWorker
+        // in the legacy stack). The socket lifecycle wiring lives here so the broadcast
+        // contract — pk_import_complete carrying alter_count, pk_import_failed signal — is
+        // ready as soon as the apply delegate starts performing real work. Capture the
+        // imported count out of the apply scope the same way ImportSpCommandHandler does.
+        int importedAlterCount = 0;
+        bool importApplied = false;
+
+        CommandExecutionResult<SettingsCommandResult> result;
+        try
+        {
+            result = await SettingsCommandHelper.ExecuteAsync(
+                command,
+                "pk_imported",
+                "settings:import:pk",
+                _idempotencyStore,
+                _ =>
+                {
+                    importApplied = true;
+                    return Task.FromResult(true);
+                },
+                cancellationToken);
+        }
+        catch
+        {
+            await _eventBus.PublishAsync(new PluralKitImportFailedEvent(command.PrincipalId), cancellationToken);
+            throw;
+        }
 
         if (result is { Accepted: true, Result.Replay: false })
         {
             await _eventBus.PublishAsync(new SettingsProfileUpdatedEvent(command.PrincipalId, false), cancellationToken);
+            await _eventBus.PublishAsync(
+                new PluralKitImportCompletedEvent(command.PrincipalId, importedAlterCount),
+                cancellationToken);
+        }
+        else if (importApplied && result is { Accepted: false })
+        {
+            // Only fires once the real PK importer is wired up and starts returning false
+            // for graceful failures; replay short-circuits before this branch and is a no-op.
+            await _eventBus.PublishAsync(new PluralKitImportFailedEvent(command.PrincipalId), cancellationToken);
         }
 
         return result;

@@ -64,7 +64,13 @@ public static class SocketEventPumpRunner
             SubscribeAsync<GlobalJournalEntryDeletedEvent>(eventBus, context, evt => JournalSocketEventHandlers.HandleAsync(evt, context)),
             SubscribeAsync<AlterJournalEntryCreatedEvent>(eventBus, context, evt => JournalSocketEventHandlers.HandleAsync(evt, context, journalRepository)),
             SubscribeAsync<AlterJournalEntryUpdatedEvent>(eventBus, context, evt => JournalSocketEventHandlers.HandleAsync(evt, context, journalRepository)),
-            SubscribeAsync<AlterJournalEntryDeletedEvent>(eventBus, context, evt => JournalSocketEventHandlers.HandleAsync(evt, context)));
+            SubscribeAsync<AlterJournalEntryDeletedEvent>(eventBus, context, evt => JournalSocketEventHandlers.HandleAsync(evt, context)),
+            SubscribeAsync<SettingsGoogleAccountUnlinkedSignalEvent>(eventBus, context, evt => SettingsSocketEventHandlers.HandleAsync(evt, context)),
+            SubscribeAsync<SettingsTagsWipedSignalEvent>(eventBus, context, evt => SettingsSocketEventHandlers.HandleAsync(evt, context)),
+            SubscribeAsync<SimplyPluralImportCompletedEvent>(eventBus, context, evt => ImportSocketEventHandlers.HandleAsync(evt, context)),
+            SubscribeAsync<SimplyPluralImportFailedEvent>(eventBus, context, evt => ImportSocketEventHandlers.HandleAsync(evt, context)),
+            SubscribeAsync<PluralKitImportCompletedEvent>(eventBus, context, evt => ImportSocketEventHandlers.HandleAsync(evt, context)),
+            SubscribeAsync<PluralKitImportFailedEvent>(eventBus, context, evt => ImportSocketEventHandlers.HandleAsync(evt, context)));
     }
 
     private static async Task SubscribeAsync<TEvent>(

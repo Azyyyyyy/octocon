@@ -24,10 +24,13 @@ public static class SocketEventNames
         public const string Deleted = "poll_deleted";
     }
 
-    //pk_import_complete
-    //pk_import_failed
-    //sp_import_complete
-    //sp_import_failed
+    public static class Imports
+    {
+        public const string SpComplete = "sp_import_complete";
+        public const string SpFailed = "sp_import_failed";
+        public const string PkComplete = "pk_import_complete";
+        public const string PkFailed = "pk_import_failed";
+    }
 
     public static class Fronting
     {
@@ -75,12 +78,13 @@ public static class SocketEventNames
         public const string SelfUpdated = "self_updated";
         public const string AccountDeleted = "account_deleted";
         public const string AltersWiped = "alters_wiped";
+        public const string TagsWiped = "tags_wiped";
         public const string EncryptedDataWiped = "encrypted_data_wiped";
         public const string DiscordAccountUnlinked = "discord_account_unlinked";
         public const string AppleAccountUnlinked = "apple_account_unlinked";
+        public const string GoogleAccountUnlinked = "google_account_unlinked";
         public const string DiscordAccountLinked = "discord_account_linked";
         public const string GoogleAccountLinked = "google_account_linked";
         public const string AppleAccountLinked = "apple_account_linked";
-        //google_account_unlinked has not been added
     }
 }

@@ -97,3 +97,5 @@ public sealed record FriendRequestSocketPayload(FriendshipRequestModel Request, 
 public sealed record FriendIdSocketPayload(string FriendId) : ISocketPayload;
 
 public sealed record SystemIdSocketPayload(string SystemId) : ISocketPayload;
+
+public sealed record ImportCompletedSocketPayload(int AlterCount) : ISocketPayload;

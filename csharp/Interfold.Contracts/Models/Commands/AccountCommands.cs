@@ -11,3 +11,5 @@ public sealed record UnlinkAppleCommand();
 public sealed record DeleteAccountCommand();
 
 public sealed record WipeAltersCommand();
+
+public sealed record WipeTagsCommand();

@@ -72,6 +72,12 @@ public static class SettingsSocketEventHandlers
     public static Task HandleAsync(SettingsAppleAccountUnlinkedSignalEvent evt, SocketPushContext context)
         => HandleSignalAsync(evt.TargetSystemId, SocketEventNames.Settings.AppleAccountUnlinked, context);
 
+    public static Task HandleAsync(SettingsGoogleAccountUnlinkedSignalEvent evt, SocketPushContext context)
+        => HandleSignalAsync(evt.TargetSystemId, SocketEventNames.Settings.GoogleAccountUnlinked, context);
+
+    public static Task HandleAsync(SettingsTagsWipedSignalEvent evt, SocketPushContext context)
+        => HandleSignalAsync(evt.TargetSystemId, SocketEventNames.Settings.TagsWiped, context);
+
     private static async Task HandleSignalAsync(string systemId, string eventName, SocketPushContext context)
     {
         if (!context.TryGetSystemTopic(systemId, out var topic, out var joinRef, out var asArray))

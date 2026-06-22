@@ -82,8 +82,8 @@ public class WebHttpsTests(UbuntuDinDFixture dinD)
             .Because("octocon-web must receive the NGINX_SSL_CERT_FILE env var (consumed by the template)");
         await Assert.That(compose).Contains("NGINX_SSL_KEY_FILE")
             .Because("octocon-web must receive the NGINX_SSL_KEY_FILE env var (consumed by the template)");
-        await Assert.That(compose).Contains($":{scratch.Ports.WebHttps}")
-            .Because($"compose must publish the allocated webHttps host port ({scratch.Ports.WebHttps})");
+        await Assert.That(compose).Contains($"\"{scratch.Ports.WebHttps}:443\"")
+            .Because($"compose must publish the allocated webHttps host port ({scratch.Ports.WebHttps}) onto the container's :443 listener");
 
         // Negative invariant: the default (HTTP-only) variant of the web service emits a curl
         // healthcheck on http://localhost:80. When webHttps=true we expect the HTTPS variant of

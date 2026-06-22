@@ -1,6 +1,7 @@
 using System.Net.WebSockets;
 using System.Text.Json;
 using Interfold.Contracts;
+using Interfold.Contracts.Events;
 using Interfold.IntegrationTests.TestServices;
 using Microsoft.AspNetCore.TestHost;
 
@@ -888,6 +889,157 @@ public class WebSocketTests(IWebFactoryFixture fixture) : BaseEndpointTest
         await wsB.CloseAsync(WebSocketCloseStatus.NormalClosure, "test done", token);
     }
     
+    [Test]
+    public async Task Api_UserSocketEndpoint_PushesTagsWiped_AfterWipeTagsEndpoint(CancellationToken token)
+    {
+        var systemId = UniqueId("sys-tags-wiped");
+        var wsClient = fixture.Factory.Server.CreateWebSocketClient();
+        string socketToken = await CreateRandomToken(fixture.Factory, systemId);
+        var topic = $"system:{systemId}";
+        var uri = new Uri(WebSocketBasePath(fixture.Factory.Server), $"api/socket/websocket?token={socketToken}");
+        using var ws = await wsClient.ConnectAsync(uri, token);
+
+        await JoinTopicAsync(ws, topic, socketToken, token);
+
+        // Seed a tag so the wipe path actually iterates the repository — exercises the cascade
+        // path Octocon.Accounts.wipe_tags/1 used to cover in the legacy worker.
+        var createTagFrame = new PhxFrame<PhxEndpointPayload>
+        {
+            Topic = topic,
+            Event = "endpoint",
+            Payload = new PhxEndpointPayload { Method = "POST", Path = "/api/systems/me/tags", Body = new { name = "WipeMe" } },
+            Ref = "2",
+            JoinRef = "1"
+        }.ToBytes();
+
+        _ = await SendEndpointAndCaptureAsync(ws, createTagFrame, SocketEventNames.Tags.Created, token);
+
+        var wipeFrame = new PhxFrame<PhxEndpointPayload>
+        {
+            Topic = topic,
+            Event = "endpoint",
+            Payload = new PhxEndpointPayload { Method = "POST", Path = "/api/settings/wipe-tags", Body = new object() },
+            Ref = "3",
+            JoinRef = "1"
+        }.ToBytes();
+
+        var (wipeAck, wipePush) = await SendEndpointAndCaptureAsync(ws, wipeFrame, SocketEventNames.Settings.TagsWiped, token);
+
+        using (Assert.Multiple())
+        {
+            await Assert.That(wipeAck).IsNotNull().Because("Expected endpoint ack for wipe-tags call.");
+            await Assert.That(wipePush).IsNotNull().Because("Expected tags_wiped push after POST /api/settings/wipe-tags.");
+        }
+
+        if (wipePush is not null)
+        {
+            await Assert.That(wipePush.Event).IsEqualTo(SocketEventNames.Settings.TagsWiped)
+                .Because("Expected event name on wipe push to be tags_wiped.");
+        }
+
+        await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "test done", token);
+    }
+
+    [Test]
+    public async Task Api_UserSocketEndpoint_PushesGoogleAccountUnlinked_AfterUnlinkEmailEndpoint(CancellationToken token)
+    {
+        var systemId = UniqueId("sys-google-unlink");
+        var wsClient = fixture.Factory.Server.CreateWebSocketClient();
+        string socketToken = await CreateRandomToken(fixture.Factory, systemId);
+        var topic = $"system:{systemId}";
+        var uri = new Uri(WebSocketBasePath(fixture.Factory.Server), $"api/socket/websocket?token={socketToken}");
+        using var ws = await wsClient.ConnectAsync(uri, token);
+
+        await JoinTopicAsync(ws, topic, socketToken, token);
+
+        var unlinkFrame = new PhxFrame<PhxEndpointPayload>
+        {
+            Topic = topic,
+            Event = "endpoint",
+            Payload = new PhxEndpointPayload { Method = "POST", Path = "/api/settings/unlink_email", Body = new object() },
+            Ref = "2",
+            JoinRef = "1"
+        }.ToBytes();
+
+        var (ack, push) = await SendEndpointAndCaptureAsync(ws, unlinkFrame, SocketEventNames.Settings.GoogleAccountUnlinked, token);
+
+        using (Assert.Multiple())
+        {
+            await Assert.That(ack).IsNotNull().Because("Expected endpoint ack for unlink_email call.");
+            await Assert.That(push).IsNotNull().Because("Expected google_account_unlinked push after POST /api/settings/unlink_email (legacy contract for the email auth path).");
+        }
+
+        if (push is not null)
+        {
+            await Assert.That(push.Event).IsEqualTo(SocketEventNames.Settings.GoogleAccountUnlinked)
+                .Because("Expected event name on unlink push to be google_account_unlinked.");
+        }
+
+        await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "test done", token);
+    }
+
+    [Test]
+    public async Task Api_UserSocketEndpoint_PushesSpImportLifecycleEvents_OnEventBusPublish(CancellationToken token)
+    {
+        // The Simply Plural import service hits the live Apparyllis API, so we drive the socket
+        // pump from the bus instead. Both lifecycle events are wired through SocketEventPumpRunner;
+        // this test covers the projection contract (event name + alter_count payload) without
+        // depending on outbound HTTP. The matching publish-from-handler paths are exercised by
+        // ImportSpCommandHandler unit tests where the import service is stubbed.
+        var systemId = UniqueId("sys-sp-import");
+        var wsClient = fixture.Factory.Server.CreateWebSocketClient();
+        string socketToken = await CreateRandomToken(fixture.Factory, systemId);
+        var topic = $"system:{systemId}";
+        var uri = new Uri(WebSocketBasePath(fixture.Factory.Server), $"api/socket/websocket?token={socketToken}");
+        using var ws = await wsClient.ConnectAsync(uri, token);
+
+        await JoinTopicAsync(ws, topic, socketToken, token);
+
+        await fixture.Factory.EventBus.PublishAsync(new SimplyPluralImportCompletedEvent(systemId, 7), token);
+
+        var completeFrame = await ReceivedPhxFrame.ReceiveEventFrameAsync(ws, token, SocketEventNames.Imports.SpComplete, maxFrames: 4);
+        await Assert.That(completeFrame).IsNotNull().Because("Expected sp_import_complete push after bus publish.");
+        await Assert.That(completeFrame!.RawPayload?.GetProperty("alter_count").GetInt32() ?? -1)
+            .IsEqualTo(7).Because("Expected alter_count=7 in sp_import_complete payload (legacy contract is snake_case).");
+
+        await fixture.Factory.EventBus.PublishAsync(new SimplyPluralImportFailedEvent(systemId), token);
+
+        var failedFrame = await ReceivedPhxFrame.ReceiveEventFrameAsync(ws, token, SocketEventNames.Imports.SpFailed, maxFrames: 4);
+        await Assert.That(failedFrame).IsNotNull().Because("Expected sp_import_failed push after bus publish.");
+
+        await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "test done", token);
+    }
+
+    [Test]
+    public async Task Api_UserSocketEndpoint_PushesPkImportLifecycleEvents_OnEventBusPublish(CancellationToken token)
+    {
+        // PluralKit import is a TODO in the new stack, so the lifecycle wiring is verified the
+        // same way as SP: drive the bus directly and assert the projection. The handler-side
+        // publish path will start firing the same events for free once the importer lands.
+        var systemId = UniqueId("sys-pk-import");
+        var wsClient = fixture.Factory.Server.CreateWebSocketClient();
+        string socketToken = await CreateRandomToken(fixture.Factory, systemId);
+        var topic = $"system:{systemId}";
+        var uri = new Uri(WebSocketBasePath(fixture.Factory.Server), $"api/socket/websocket?token={socketToken}");
+        using var ws = await wsClient.ConnectAsync(uri, token);
+
+        await JoinTopicAsync(ws, topic, socketToken, token);
+
+        await fixture.Factory.EventBus.PublishAsync(new PluralKitImportCompletedEvent(systemId, 3), token);
+
+        var completeFrame = await ReceivedPhxFrame.ReceiveEventFrameAsync(ws, token, SocketEventNames.Imports.PkComplete, maxFrames: 4);
+        await Assert.That(completeFrame).IsNotNull().Because("Expected pk_import_complete push after bus publish.");
+        await Assert.That(completeFrame!.RawPayload?.GetProperty("alter_count").GetInt32() ?? -1)
+            .IsEqualTo(3).Because("Expected alter_count=3 in pk_import_complete payload (legacy contract is snake_case).");
+
+        await fixture.Factory.EventBus.PublishAsync(new PluralKitImportFailedEvent(systemId), token);
+
+        var failedFrame = await ReceivedPhxFrame.ReceiveEventFrameAsync(ws, token, SocketEventNames.Imports.PkFailed, maxFrames: 4);
+        await Assert.That(failedFrame).IsNotNull().Because("Expected pk_import_failed push after bus publish.");
+
+        await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "test done", token);
+    }
+
     internal static async Task JoinTopicAsync(WebSocket ws, string topic, string socketToken, CancellationToken timeoutToken)
     {
         var joinFrame = new PhxFrame<PhxJoinPayload>
