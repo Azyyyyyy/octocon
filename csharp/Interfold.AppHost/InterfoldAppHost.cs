@@ -239,6 +239,59 @@ public static class InterfoldAppHost
         // configuration before the HTTPS endpoint binds, so the AppHost no longer needs a
         // parameter for it.
 
+        // Public OAuth client IDs - paired with the per-provider client secrets that live in
+        // internal.secrets. Sourced from BootstrapConfig.OAuth.*ClientId via the
+        // Parameters:*-oauth-client-id IConfiguration override the bootstrapper sets in
+        // PublishPhase. Declared as non-secret with `publishValueAsDefault: true` and an
+        // empty default so:
+        //   - the dev `aspire run` workflow does NOT fail when the operator hasn't set any
+        //     OAuth credentials (the project path reads the matching OCTOCON_*_OAUTH_CLIENT_ID
+        //     directly from launchSettings.json / user-secrets and overrides whatever Aspire
+        //     pushed in via ConfigureApiSelfHostEnv, since that helper only attaches them to
+        //     the container path further down);
+        //   - the bootstrapper publish path surfaces them as plain `.env` entries that the
+        //     `BuildEnvReplacements` step fills with the operator-supplied values.
+        // The scheme is only registered when the matching client ID is non-empty (see
+        // OAuthChallengeServiceCollectionExtensions); leaving the ID blank for a provider
+        // disables that provider, which is the intended "I'm not using this one" behaviour.
+        var googleOAuthClientId = builder.AddParameter("google-oauth-client-id", "", publishValueAsDefault: true);
+        var discordOAuthClientId = builder.AddParameter("discord-oauth-client-id", "", publishValueAsDefault: true);
+        var appleOAuthClientId = builder.AddParameter("apple-oauth-client-id", "", publishValueAsDefault: true);
+
+        // --- API runtime parameters (non-secret, set by the bootstrapper) ---
+        // These five plain-text values used to be operator env vars on `docker compose up` (or
+        // missing entirely — OCTOCON_JWT_AUDIENCE was documented but never bound). The bootstrapper
+        // now manages them end-to-end: ConfigPhase prompts for each value (with derived defaults
+        // sourced from BootstrapConfig.Deployment) and ConfigureApiSelfHostEnv below pipes them
+        // onto the API container as OCTOCON_* env vars. Empty defaults are intentional — Validate
+        // refuses to emit a bootstrap without them, and a non-empty operator-supplied value always
+        // wins over the bootstrapper's derived default.
+        var scyllaKeyspace = builder.AddParameter("scylla-keyspace", "nam", publishValueAsDefault: true);
+        var oauthCallbackBaseUrl = builder.AddParameter("oauth-callback-base-url", "", publishValueAsDefault: true);
+        var jwtAuthority = builder.AddParameter("jwt-authority", "", publishValueAsDefault: true);
+        var jwtAudience = builder.AddParameter("jwt-audience", "octocon", publishValueAsDefault: true);
+        var corsAllowedOrigins = builder.AddParameter("cors-allowed-origins", "", publishValueAsDefault: true);
+
+        // --- Operator tuning parameters (non-secret, set by the bootstrapper) ---
+        // Mirror the optional knobs on PersistenceConfiguration / ClusterConfiguration /
+        // StorageConfiguration / ObservabilityConfiguration / SocketConfiguration. Every
+        // parameter declares the API's compile-time fallback as the default so leaving
+        // BootstrapConfig at its defaults reproduces today's "env var unset" behaviour
+        // 1:1; the bootstrapper writes the operator-supplied value through PublishPhase
+        // when they deviate. The two nullable / disabled-by-default fields (avatar paths,
+        // OTLP endpoint, socket threshold) declare an empty default — ApplyStorage /
+        // ApplyObservability normalise empty → null so the API's not-configured paths
+        // still trigger.
+        var nodeGroup = builder.AddParameter("node-group", "auxiliary", publishValueAsDefault: true);
+        var avatarStorageRoot = builder.AddParameter("avatar-storage-root", "", publishValueAsDefault: true);
+        var avatarPublicBase = builder.AddParameter("avatar-public-base", "", publishValueAsDefault: true);
+        var otlpEndpoint = builder.AddParameter("otlp-endpoint", "", publishValueAsDefault: true);
+        var socketBatchBytesThreshold = builder.AddParameter("socket-batch-bytes-threshold", "", publishValueAsDefault: true);
+        var dbRetryAttempts = builder.AddParameter("db-retry-attempts", "3", publishValueAsDefault: true);
+        var dbRetryInitialDelayMs = builder.AddParameter("db-retry-initial-delay-ms", "100", publishValueAsDefault: true);
+        var dbRetryMaxDelayMs = builder.AddParameter("db-retry-max-delay-ms", "1500", publishValueAsDefault: true);
+        var hydrationMaxConcurrency = builder.AddParameter("hydration-max-concurrency", "8", publishValueAsDefault: true);
+
         // --- Reject well-known default passwords at startup (dev mode only; compose relies on shell guard) ---
         // Each backend's check is gated on the matching `include-*` toggle so a caller that
         // explicitly opted out of standing up that backend (e.g. integration tests like
@@ -552,7 +605,7 @@ public static class InterfoldAppHost
 
         // --- Interfold API (from source for dev, or pre-built container image for self-hosting) ---
         // The self-hosting bootstrapper sets `Parameters:api-image` to a published image ref
-        // (e.g. ghcr.io/interfold/api:1.2.3) so the published compose references the image
+        // (e.g. ghcr.io/azyyyyyy/interfold-api:1.2.3) so the published compose references the image
         // directly instead of trying to build the API csproj from the bootstrapper's deployment
         // directory (where the project file does not exist).
         if (includeApi)
@@ -598,7 +651,53 @@ public static class InterfoldAppHost
                    // The matching Password used to live in this env block too; it has moved to
                    // internal.secrets:certs:leaf_pfx_password and Program.cs loads it directly
                    // via a one-shot Npgsql query before Kestrel binds.
-                   .WithEnvironment("ASPNETCORE_Kestrel__Certificates__Default__Path", "/certs/leaf.pfx");
+                   .WithEnvironment("ASPNETCORE_Kestrel__Certificates__Default__Path", "/certs/leaf.pfx")
+                   // OAuth client IDs are public per-provider identifiers that get rendered into
+                   // each scheme's authorize-redirect URL. Attached on the container path only so
+                   // the dev `aspire run` workflow keeps reading them from launchSettings.json /
+                   // user-secrets (the project path inherits from that, not from these
+                   // parameters). Per-provider empty values are explicitly allowed - leaving a
+                   // provider's ID empty causes the API's scheme registrar to skip that
+                   // provider entirely.
+                   .WithEnvironment("OCTOCON_GOOGLE_OAUTH_CLIENT_ID", googleOAuthClientId)
+                   .WithEnvironment("OCTOCON_DISCORD_OAUTH_CLIENT_ID", discordOAuthClientId)
+                   .WithEnvironment("OCTOCON_APPLE_OAUTH_CLIENT_ID", appleOAuthClientId)
+                   // API runtime config sourced from BootstrapConfig (see ConfigPhase.PromptForConfig
+                   // and BootstrapConfig.ApiRuntime). Attached only to the container path so the
+                   // dev `aspire run` workflow keeps reading these from launchSettings.json /
+                   // user-secrets like every other API env var.
+                   //   * OCTOCON_SCYLLA_KEYSPACE — gotcha #1 in docs/configuration.md; without
+                   //     this set the API defaults to 'nam' which is wrong for any non-NAM
+                   //     regional stack.
+                   //   * OCTOCON_AUTH_CALLBACK_BASE_URL — base URL the OAuth callbacks redirect
+                   //     to. Without this, the OAuth handshake completes with a 400.
+                   //   * OCTOCON_JWT_AUTHORITY / OCTOCON_JWT_AUDIENCE — JWT iss/aud claims;
+                   //     bootstrapper-managed so the operator's canonical API URL flows through.
+                   //   * OCTOCON_CORS_ALLOWED_ORIGINS — comma-separated allow-list. Empty falls
+                   //     back to "allow any origin" in Program.cs, which is a production
+                   //     foot-gun; the bootstrapper derives a default from Domains.
+                   .WithEnvironment("OCTOCON_SCYLLA_KEYSPACE", scyllaKeyspace)
+                   .WithEnvironment("OCTOCON_AUTH_CALLBACK_BASE_URL", oauthCallbackBaseUrl)
+                   .WithEnvironment("OCTOCON_JWT_AUTHORITY", jwtAuthority)
+                   .WithEnvironment("OCTOCON_JWT_AUDIENCE", jwtAudience)
+                   .WithEnvironment("OCTOCON_CORS_ALLOWED_ORIGINS", corsAllowedOrigins)
+                   // Operator tuning vars sourced from BootstrapConfig's persistence /
+                   // cluster / storage / observability / socket sections. Each carries
+                   // the API's compile-time default so a fresh bootstrap with no operator
+                   // input still produces identical container behaviour to a pre-rollout
+                   // stack that never set these vars. The three "disabled when empty"
+                   // fields (avatars, OTLP, socket threshold) round-trip through
+                   // ApplyStorage / ApplyObservability / TryParseInt, which normalise
+                   // empty → null so the API's not-configured branches still fire.
+                   .WithEnvironment("OCTOCON_NODE_GROUP", nodeGroup)
+                   .WithEnvironment("OCTOCON_AVATAR_STORAGE_ROOT", avatarStorageRoot)
+                   .WithEnvironment("OCTOCON_AVATAR_PUBLIC_BASE", avatarPublicBase)
+                   .WithEnvironment("OCTOCON_OTLP_ENDPOINT", otlpEndpoint)
+                   .WithEnvironment("OCTOCON_SOCKET_BATCH_BYTES_THRESHOLD", socketBatchBytesThreshold)
+                   .WithEnvironment("OCTOCON_DB_RETRY_ATTEMPTS", dbRetryAttempts)
+                   .WithEnvironment("OCTOCON_DB_RETRY_INITIAL_DELAY_MS", dbRetryInitialDelayMs)
+                   .WithEnvironment("OCTOCON_DB_RETRY_MAX_DELAY_MS", dbRetryMaxDelayMs)
+                   .WithEnvironment("OCTOCON_HYDRATION_MAX_CONCURRENCY", hydrationMaxConcurrency);
             }
 
             var apiImageRef = builder.Configuration["Parameters:api-image"];

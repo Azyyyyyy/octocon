@@ -2,11 +2,13 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using Interfold.Bootstrapper.Cli;
 using Interfold.Bootstrapper.Configuration;
+using Spectre.Console;
 
 namespace Interfold.Bootstrapper.Phases;
 
 /// <summary>
-/// Phase 2 — loads <c>interfold.bootstrap.json</c> from disk or builds it via interactive prompts,
+/// Phase 2 — loads <c>interfold.bootstrap.json</c> from disk or builds it via an interactive
+/// Spectre.Console walkthrough (sectioned prompts → review-before-commit table → edit loop),
 /// then validates and persists the resulting <see cref="BootstrapConfig"/>.
 /// </summary>
 internal static class ConfigPhase
@@ -36,7 +38,10 @@ internal static class ConfigPhase
         else if (!Console.IsInputRedirected)
         {
             logger.Info($"    no config at {configPath}; entering interactive setup");
-            config = PromptForConfig(Console.In, Console.Out);
+            // Real TTY path: mask the OAuth secret prompts so onlookers can't shoulder-surf
+            // values being typed. The test path passes maskSecrets:false to avoid Spectre's
+            // ReadKey-driven secret path (which complicates TestConsole input pushing).
+            config = PromptForConfig(AnsiConsole.Console, maskSecrets: true);
             await PersistAsync(config, configPath, ct).ConfigureAwait(false);
         }
         else
@@ -61,52 +66,541 @@ internal static class ConfigPhase
     }
 
     /// <summary>
-    /// Interactive setup prompt. Reads from <paramref name="reader"/> and writes prompts to
-    /// <paramref name="writer"/> so unit tests can drive the flow with <see cref="StringReader"/>
-    /// / <see cref="StringWriter"/>. Production callers pass <see cref="Console.In"/> and
-    /// <see cref="Console.Out"/>; the IO seam exists only to make the prompt logic testable.
+    /// Spectre.Console-driven navigable form for <see cref="BootstrapConfig"/>. Every field is
+    /// pre-populated with the schema's property-initialiser default and rendered as a single
+    /// menu row showing the current value next to its label; the operator arrow-keys up/down
+    /// between rows and presses Enter to edit any field (which re-prompts via the field's
+    /// dedicated <see cref="TextPrompt{T}"/> / <see cref="ConfirmationPrompt"/> with inline
+    /// validation). Choosing the trailing <c>Confirm and save</c> entry returns the config to
+    /// <see cref="RunAsync"/> for validation and persistence. There is no separate "walkthrough"
+    /// phase — first-time operators just Enter every row top-to-bottom; experienced operators
+    /// jump straight to the rows they care about and skip the rest.
     /// </summary>
-    internal static BootstrapConfig PromptForConfig(TextReader reader, TextWriter writer)
+    /// <param name="console">
+    /// Injected <see cref="IAnsiConsole"/>. Production passes <see cref="AnsiConsole.Console"/>;
+    /// unit tests pass a <c>Spectre.Console.Testing.TestConsole</c> seeded with
+    /// <c>Input.PushKey(ConsoleKey.DownArrow|Enter)</c> + <c>Input.PushTextWithEnter</c> for
+    /// per-field edits, then asserts on the captured <c>Output</c>.
+    /// </param>
+    /// <param name="maskSecrets">
+    /// When true, the three OAuth client-secret prompts use Spectre's <c>Secret()</c> mode so
+    /// keystrokes are masked in a real TTY. Defaults to false because Spectre's secret-mode
+    /// path is <see cref="Console.ReadKey"/>-driven, which interacts awkwardly with the
+    /// <c>TestConsole</c> input queue; the test seam is therefore unmasked. Production callers
+    /// in <see cref="RunAsync"/> opt in explicitly.
+    /// </param>
+    internal static BootstrapConfig PromptForConfig(IAnsiConsole console, bool maskSecrets = false)
     {
-        var config = new BootstrapConfig();
+        var c = new BootstrapConfig();
 
-        writer.Write("Output directory [./deploy]: ");
-        var output = reader.ReadLine();
-        if (!string.IsNullOrWhiteSpace(output))
+        // Local helpers — each closes over `console` (and, for the OAuth wrapper, `maskSecrets`)
+        // so the per-field Edit delegates further down can be one-liners. Kept as locals rather
+        // than private statics so the captured `console` reference reads naturally; the prompt
+        // construction is cheap (no IO until .Show is dispatched by `Prompt`).
+        string PromptStr(string label, string fallback) => console.Prompt(
+            new TextPrompt<string>($"{label}:")
+                .DefaultValue(fallback)
+                .AllowEmpty());
+
+        int PromptInt(string label, int fallback, int min, int max) => console.Prompt(
+            new TextPrompt<int>($"{label}:")
+                .DefaultValue(fallback)
+                .ValidationErrorMessage($"[red]must be an integer in [[{min}..{max}]][/]")
+                .Validate(n => n >= min && n <= max));
+
+        bool PromptBool(string label, bool fallback) => console.Prompt(
+            new ConfirmationPrompt($"{label}?") { DefaultValue = fallback });
+
+        string PromptOAuth(string label, string fallback)
         {
-            config.Deployment.OutputDir = output.Trim();
+            var p = new TextPrompt<string>($"{label} (blank to skip):")
+                .DefaultValue(fallback)
+                .AllowEmpty();
+            // Apply Secret() conditionally so the test path stays on the plain TextReader-style
+            // seam. The production path masks with '*'; null mask would be "secret, but echo
+            // nothing" which is correct-but-confusing UX (operator can't see they typed anything).
+            if (maskSecrets) p.Secret('*');
+            return console.Prompt(p);
         }
 
-        writer.Write("Public domain(s), comma separated (e.g. api.example.com): ");
-        var domainInput = reader.ReadLine();
-        if (!string.IsNullOrWhiteSpace(domainInput))
+        // Nullable-int companion to PromptInt: blank input becomes null (the field's
+        // "use the API's compile-time default" signal); a non-blank value still has to
+        // be a parseable int in range. The TextPrompt<string> seam keeps the parse logic
+        // here rather than relying on Spectre's TextPrompt<int?> (which doesn't exist).
+        int? PromptNullableInt(string label, int? fallback, int min, int max)
         {
-            config.Deployment.Domains = domainInput
-                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            var fallbackText = fallback?.ToString() ?? string.Empty;
+            var raw = console.Prompt(
+                new TextPrompt<string>($"{label} (blank for default):")
+                    .DefaultValue(fallbackText)
+                    .AllowEmpty()
+                    .Validate(s =>
+                    {
+                        if (string.IsNullOrWhiteSpace(s)) return ValidationResult.Success();
+                        if (!int.TryParse(s, out var parsed))
+                        {
+                            return ValidationResult.Error("[red]must be a whole number or blank[/]");
+                        }
+                        return parsed >= min && parsed <= max
+                            ? ValidationResult.Success()
+                            : ValidationResult.Error($"[red]must be in [[{min}..{max}]] or blank[/]");
+                    }));
+            return string.IsNullOrWhiteSpace(raw) ? null : int.Parse(raw);
+        }
+
+        // Field table: every entry is (Label, Show, Edit). Edit runs the per-field Spectre prompt
+        // and writes its result back onto `c`. The same table powers both the initial sequential
+        // walkthrough and the review-loop's "edit field N" branch — there is one canonical place
+        // each field's prompt is defined.
+        var fields = new List<(string Label, Func<string> Show, Action Edit)>
+        {
+            // --- Deployment ---
+            ("Output directory",                () => c.Deployment.OutputDir,
+                                                () => c.Deployment.OutputDir = PromptStr("Output directory", c.Deployment.OutputDir)),
+            ("Public domain(s)",                () => string.Join(",", c.Deployment.Domains),
+                                                () => c.Deployment.Domains = PromptDomains(console, c.Deployment.Domains)),
+            ("Root CA subject",                 () => c.Deployment.RootCaName,
+                                                () => c.Deployment.RootCaName = PromptStr("Root CA subject", c.Deployment.RootCaName)),
+            ("Leaf cert validity (years)",      () => c.Deployment.CertYears.ToString(),
+                                                () => c.Deployment.CertYears = PromptInt("Leaf cert validity (years)", c.Deployment.CertYears, 1, 30)),
+            ("Install root CA in trust store",  () => c.Deployment.TrustStoreInstall.ToString(),
+                                                () => c.Deployment.TrustStoreInstall = PromptBool("Install root CA into system trust store", c.Deployment.TrustStoreInstall)),
+            ("Terminate HTTPS at octocon-web",  () => c.Deployment.WebHttps.ToString(),
+                                                () => c.Deployment.WebHttps = PromptBool("Terminate HTTPS at octocon-web", c.Deployment.WebHttps)),
+
+            // --- Ports ---
+            ("API HTTP port",                   () => c.Ports.ApiHttp.ToString(),
+                                                () => c.Ports.ApiHttp = PromptInt("API HTTP port", c.Ports.ApiHttp, 1, 65535)),
+            ("API HTTPS port",                  () => c.Ports.ApiHttps.ToString(),
+                                                () => c.Ports.ApiHttps = PromptInt("API HTTPS port", c.Ports.ApiHttps, 1, 65535)),
+            ("Web HTTP port",                   () => c.Ports.WebHttp.ToString(),
+                                                () => c.Ports.WebHttp = PromptInt("Web HTTP port", c.Ports.WebHttp, 1, 65535)),
+            ("Web HTTPS port",                  () => c.Ports.WebHttps.ToString(),
+                                                () => c.Ports.WebHttps = PromptInt("Web HTTPS port", c.Ports.WebHttps, 1, 65535)),
+            ("Postgres host port",              () => c.Ports.Postgres.ToString(),
+                                                () => c.Ports.Postgres = PromptInt("Postgres host port", c.Ports.Postgres, 1, 65535)),
+            ("Scylla/Cassandra host port",      () => c.Ports.Scylla.ToString(),
+                                                () => c.Ports.Scylla = PromptInt("Scylla/Cassandra host port", c.Ports.Scylla, 1, 65535)),
+
+            // --- Database ---
+            ("Database mode",                   () => c.DatabaseMode,
+                                                () => c.DatabaseMode = console.Prompt(
+                                                    new TextPrompt<string>("Database mode:")
+                                                        .DefaultValue(c.DatabaseMode)
+                                                        .AddChoices(new[] { "single", "multi", "cassandra" }))),
+            ("Postgres application DB name",    () => c.PostgresDatabase,
+                                                () => c.PostgresDatabase = PromptStr("Postgres application DB name", c.PostgresDatabase)),
+            ("Cluster name",                    () => c.ClusterName,
+                                                () => c.ClusterName = PromptStr("Cluster name (Scylla/Cassandra)", c.ClusterName)),
+            // Scylla keyspace == per-instance region identity. Constrained to the seven valid
+            // values via AddChoices so the operator can't typo themselves into a runtime
+            // "wrong region" failure; Validate enforces the same list non-interactively.
+            ("Scylla keyspace (region)",        () => c.ScyllaKeyspace,
+                                                () => c.ScyllaKeyspace = console.Prompt(
+                                                    new TextPrompt<string>("Scylla keyspace (region):")
+                                                        .DefaultValue(c.ScyllaKeyspace)
+                                                        .AddChoices(ValidScyllaKeyspaces))),
+
+            // --- API ---
+            // Show callbacks for the three derivable rows call ResolveDerivedDefaults via a
+            // local snapshot so the menu paints the computed default next to its label even
+            // before the operator presses Enter. Editing then offers that same derived value
+            // as the prompt's default — operators get a one-keypress accept-the-default flow.
+            ("OAuth callback base URL",         () => DerivedShow(c, ar => ar.CallbackBaseUrl),
+                                                () => c.ApiRuntime.CallbackBaseUrl = PromptStr(
+                                                    "OAuth callback base URL",
+                                                    DerivedShow(c, ar => ar.CallbackBaseUrl))),
+            ("JWT authority (iss claim)",       () => DerivedShow(c, ar => ar.JwtAuthority),
+                                                () => c.ApiRuntime.JwtAuthority = PromptStr(
+                                                    "JWT authority (iss claim)",
+                                                    DerivedShow(c, ar => ar.JwtAuthority))),
+            ("JWT audience (aud claim)",        () => c.ApiRuntime.JwtAudience,
+                                                () => c.ApiRuntime.JwtAudience = PromptStr(
+                                                    "JWT audience (aud claim)", c.ApiRuntime.JwtAudience)),
+            ("CORS allowed origins",            () => string.Join(",", DerivedCorsShow(c)),
+                                                () => c.ApiRuntime.CorsAllowedOrigins = PromptCorsAllowedOrigins(
+                                                    console, DerivedCorsShow(c))),
+            ("Pre-built Interfold API image",   () => c.ApiImage,
+                                                () => c.ApiImage = PromptStr("Pre-built Interfold API image reference", c.ApiImage)),
+
+            // --- Cluster & telemetry ---
+            // NodeGroup uses AddChoices to enforce the three valid values upfront. Non-Fly
+            // self-hosters usually want "primary"; the default stays "auxiliary" to match
+            // the API's compile-time fallback so a brand-new bootstrap doesn't silently
+            // change behaviour for stacks that didn't have a value before.
+            ("Cluster node group",              () => c.Cluster.NodeGroup,
+                                                () => c.Cluster.NodeGroup = console.Prompt(
+                                                    new TextPrompt<string>("Cluster node group:")
+                                                        .DefaultValue(c.Cluster.NodeGroup)
+                                                        .AddChoices(ValidNodeGroups))),
+            // OTLP endpoint is optional — blank disables OTLP entirely. ShowOrEmpty makes the
+            // unset state visible in the menu (same UX as the OAuth client IDs).
+            ("OTLP endpoint",                   () => ShowOrEmpty(c.Observability.OtlpEndpoint),
+                                                () => c.Observability.OtlpEndpoint = PromptStr(
+                                                    "OTLP endpoint (blank to disable)",
+                                                    c.Observability.OtlpEndpoint)),
+
+            // --- Storage ---
+            // Both rows are optional and disabled when blank — ShowOrEmpty surfaces the unset
+            // state. Operators that opt in are responsible for the corresponding compose bind
+            // mount; the bootstrapper does not create the directory or wire the mount.
+            ("Avatar storage root (container path)", () => ShowOrEmpty(c.Storage.AvatarStorageRoot),
+                                                () => c.Storage.AvatarStorageRoot = PromptStr(
+                                                    "Avatar storage root (blank to disable)",
+                                                    c.Storage.AvatarStorageRoot)),
+            ("Avatar public base URL",          () => ShowOrEmpty(c.Storage.AvatarPublicBase),
+                                                () => c.Storage.AvatarPublicBase = PromptStr(
+                                                    "Avatar public base URL (blank to disable)",
+                                                    c.Storage.AvatarPublicBase)),
+
+            // --- Performance tuning ---
+            // BatchBytesThreshold is nullable — PromptNullableInt treats blank as null (the
+            // "use the API's compile-time default" signal). Show callback renders "<default>"
+            // when null so the unset state is visible.
+            ("Socket batch flush threshold (bytes)",
+                                                () => c.Socket.BatchBytesThreshold?.ToString() ?? "<default>",
+                                                () => c.Socket.BatchBytesThreshold = PromptNullableInt(
+                                                    "Socket batch flush threshold (bytes)",
+                                                    c.Socket.BatchBytesThreshold, 1, 16 * 1024 * 1024)),
+            ("DB retry attempts",               () => c.Persistence.DbRetryAttempts.ToString(),
+                                                () => c.Persistence.DbRetryAttempts = PromptInt(
+                                                    "DB retry attempts", c.Persistence.DbRetryAttempts, 1, 100)),
+            ("DB retry initial delay (ms)",     () => c.Persistence.DbRetryInitialDelayMs.ToString(),
+                                                () => c.Persistence.DbRetryInitialDelayMs = PromptInt(
+                                                    "DB retry initial delay (ms)",
+                                                    c.Persistence.DbRetryInitialDelayMs, 1, 60_000)),
+            ("DB retry max delay (ms)",         () => c.Persistence.DbRetryMaxDelayMs.ToString(),
+                                                () => c.Persistence.DbRetryMaxDelayMs = PromptInt(
+                                                    "DB retry max delay (ms)",
+                                                    c.Persistence.DbRetryMaxDelayMs, 1, 600_000)),
+            ("Hydration max concurrency",       () => c.Persistence.HydrationMaxConcurrency.ToString(),
+                                                () => c.Persistence.HydrationMaxConcurrency = PromptInt(
+                                                    "Hydration max concurrency",
+                                                    c.Persistence.HydrationMaxConcurrency, 1, 1024)),
+
+            // --- OAuth credentials ---
+            // Rows are paired per provider (ID then secret) so the operator can fill both halves
+            // of a single provider's credentials in sequence before moving on. Client IDs are
+            // public values (rendered into each provider's authorize redirect URL), so they go
+            // through plain PromptStr — no masking on the prompt and the value renders verbatim
+            // on the menu row when set. When the ID is empty, ShowOrEmpty paints the same
+            // `<empty>` marker the secret rows use, so the operator can tell at a glance that
+            // the row exists and is unset (vs. just a blank cell, which reads as "no row").
+            // Client secrets keep their masked PromptOAuth path and the Mask() <set>/<empty>
+            // display rule.
+            ("Google OAuth client ID",          () => ShowOrEmpty(c.OAuth.GoogleClientId),
+                                                () => c.OAuth.GoogleClientId = PromptStr("Google OAuth client ID", c.OAuth.GoogleClientId)),
+            ("Google OAuth client secret",      () => Mask(c.OAuth.GoogleClientSecret),
+                                                () => c.OAuth.GoogleClientSecret = PromptOAuth("Google OAuth client secret", c.OAuth.GoogleClientSecret)),
+            ("Discord OAuth client ID",         () => ShowOrEmpty(c.OAuth.DiscordClientId),
+                                                () => c.OAuth.DiscordClientId = PromptStr("Discord OAuth client ID", c.OAuth.DiscordClientId)),
+            ("Discord OAuth client secret",     () => Mask(c.OAuth.DiscordClientSecret),
+                                                () => c.OAuth.DiscordClientSecret = PromptOAuth("Discord OAuth client secret", c.OAuth.DiscordClientSecret)),
+            ("Apple OAuth client ID",           () => ShowOrEmpty(c.OAuth.AppleClientId),
+                                                () => c.OAuth.AppleClientId = PromptStr("Apple OAuth client ID", c.OAuth.AppleClientId)),
+            ("Apple OAuth client secret",       () => Mask(c.OAuth.AppleClientSecret),
+                                                () => c.OAuth.AppleClientSecret = PromptOAuth("Apple OAuth client secret", c.OAuth.AppleClientSecret)),
+        };
+
+        // Section boundaries for the menu's grouped layout. Each row is (0-based index of the
+        // first field in the section, header label). Kept as a sibling table rather than baked
+        // into `fields` so the field list stays a flat sequence — every menu row's value is a
+        // direct index into `fields`, with section headers rendered above each group as inert
+        // children of an AddChoiceGroup call (selection skips them automatically).
+        var sections = new (int FirstFieldIndex, string Header)[]
+        {
+            (0,  "Deployment"),
+            (6,  "Ports"),
+            // Database now owns 4 rows (mode, postgresDb, clusterName, scyllaKeyspace).
+            (12, "Database"),
+            // API section absorbs the old single-row "API image" section plus the four
+            // ApiRuntime fields. Layout: callback URL, JWT authority, JWT audience, CORS,
+            // then the API image reference at the bottom (matches the JSON file's tail-end
+            // position for apiImage and keeps the auth/security-shaped rows together).
+            (16, "API"),
+            // Cluster (1: NodeGroup) + Observability (1: OTLP) — both are "where this
+            // instance fits in the wider system" and individually too small to warrant
+            // their own section header.
+            (21, "Cluster & telemetry"),
+            (23, "Storage"),
+            // Socket (1) + Persistence tuning (4) merged into a single tuning section
+            // — heterogeneous fields but all "knobs the operator probably leaves alone".
+            (25, "Performance tuning"),
+            (30, "OAuth credentials"),
+        };
+
+        // Sentinels: -1 = "Confirm and save" (commits the form and returns). The 0..fields.Count-1
+        // range is the selectable field-index value the form returns when the operator picks a row;
+        // -(2 + sectionIdx) is the inert group-header value that AddChoiceGroup needs (unique per
+        // section so the choice set has no duplicates). The converter renders all three classes —
+        // confirm, field row, header — into their user-facing label.
+        const int ConfirmSentinel = -1;
+        int SectionHeaderSentinel(int sectionIdx) => -(2 + sectionIdx);
+        int SectionLength(int sectionIdx) =>
+            (sectionIdx + 1 < sections.Length ? sections[sectionIdx + 1].FirstFieldIndex : fields.Count)
+            - sections[sectionIdx].FirstFieldIndex;
+
+        // Navigable form loop. Re-runs the prompt after every edit so the menu re-renders with
+        // the freshly-typed value visible next to its field label; the form exits only when the
+        // operator selects "Confirm and save".
+        while (true)
+        {
+            var prompt = new SelectionPrompt<int>()
+                .Title(
+                    "[bold]Configure interfold.bootstrap.json[/]\n" +
+                    "[grey]Use arrow keys to navigate, Enter to edit, choose [green]Confirm and save[/] when done.[/]")
+                // Default Spectre page size is 10; the form has 36 fields + 8 headers + 1 confirm
+                // = 45 rows. Sizing the page to fit them all means no scrolling on a 48+ row
+                // terminal; smaller TTYs still paginate cleanly with the MoreChoicesText hint
+                // below. Operators on a 24-row TTY will scroll but every row is reachable.
+                .PageSize(46)
+                .MoreChoicesText("[grey](move up/down to reveal more)[/]")
+                // Markup.Escape on the value because some fields legitimately contain markup-like
+                // characters (e.g. ApiImage's `ghcr.io/...:latest` is safe but a future operator
+                // value with `[` would otherwise blow up Spectre's markup parser).
+                .UseConverter(i =>
+                {
+                    if (i == ConfirmSentinel) return "[green]Confirm and save[/]";
+                    if (i < 0)
+                    {
+                        var sectionIdx = -(i + 2);
+                        return $"[bold]--- {sections[sectionIdx].Header} ---[/]";
+                    }
+                    var label = fields[i].Label.PadRight(40);
+                    var value = Markup.Escape(fields[i].Show());
+                    return $"{label} [grey]{value}[/]";
+                });
+
+            // AddChoiceGroup renders the group key (here: the inert header sentinel) as a
+            // non-selectable label above its children, so arrow-key navigation moves only
+            // between the selectable field rows under each header.
+            for (var s = 0; s < sections.Length; s++)
+            {
+                var firstIdx = sections[s].FirstFieldIndex;
+                var sectionFieldIdx = Enumerable.Range(firstIdx, SectionLength(s)).ToArray();
+                prompt.AddChoiceGroup(SectionHeaderSentinel(s), sectionFieldIdx);
+            }
+            prompt.AddChoices(ConfirmSentinel);
+
+            var selected = console.Prompt(prompt);
+            if (selected == ConfirmSentinel) break;
+            fields[selected].Edit();
+        }
+
+        return c;
+    }
+
+    /// <summary>
+    /// Domains-only prompt. Most other fields are single-value; this one parses a comma-
+    /// separated string into a list and validates inline that at least one non-empty entry
+    /// survives. Lives outside <see cref="PromptForConfig"/>'s local helpers because the
+    /// parse-into-list shape doesn't generalise to a one-liner. The CORS allow-list uses the
+    /// same shape — see <see cref="PromptCorsAllowedOrigins"/>.
+    /// </summary>
+    private static List<string> PromptDomains(IAnsiConsole console, List<string> fallback)
+    {
+        var fallbackText = string.Join(",", fallback);
+        var raw = console.Prompt(
+            new TextPrompt<string>("Public domain(s), comma separated:")
+                .DefaultValue(fallbackText)
+                .AllowEmpty()
+                .Validate(s =>
+                {
+                    if (string.IsNullOrWhiteSpace(s)) return ValidationResult.Success();
+                    var parts = s.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                    return parts.Length == 0
+                        ? ValidationResult.Error("[red]at least one domain required[/]")
+                        : ValidationResult.Success();
+                }));
+
+        if (string.IsNullOrWhiteSpace(raw)) return fallback;
+        return raw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
+    }
+
+    /// <summary>
+    /// CORS allow-list prompt. Twin of <see cref="PromptDomains"/> for the
+    /// <see cref="ApiRuntimeSection.CorsAllowedOrigins"/> field — same comma-separated parse
+    /// shape, but every entry is validated inline as an absolute http(s) URI to match the
+    /// non-interactive <see cref="Validate"/> rule. Pre-fills the prompt with the derived
+    /// fallback (one entry per <see cref="DeploymentSection.Domains"/>) so the operator gets a
+    /// sensible Enter-to-accept default even on first run.
+    /// </summary>
+    private static List<string> PromptCorsAllowedOrigins(IAnsiConsole console, List<string> fallback)
+    {
+        var fallbackText = string.Join(",", fallback);
+        var raw = console.Prompt(
+            new TextPrompt<string>("CORS allowed origins, comma separated:")
+                .DefaultValue(fallbackText)
+                .AllowEmpty()
+                .Validate(s =>
+                {
+                    if (string.IsNullOrWhiteSpace(s)) return ValidationResult.Success();
+                    var parts = s.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                    if (parts.Length == 0)
+                    {
+                        return ValidationResult.Error("[red]at least one origin required[/]");
+                    }
+                    foreach (var part in parts)
+                    {
+                        if (!Uri.TryCreate(part, UriKind.Absolute, out var uri)
+                            || (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
+                        {
+                            return ValidationResult.Error($"[red]'{part}' is not a valid http(s) origin[/]");
+                        }
+                    }
+                    return ValidationResult.Success();
+                }));
+
+        if (string.IsNullOrWhiteSpace(raw)) return fallback;
+        return raw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
+    }
+
+    /// <summary>
+    /// Show-callback helper for the two derivable <see cref="ApiRuntimeSection"/> single-value
+    /// fields (<see cref="ApiRuntimeSection.CallbackBaseUrl"/> / <see cref="ApiRuntimeSection.JwtAuthority"/>).
+    /// Runs <see cref="ResolveDerivedDefaults"/> on a working copy of the
+    /// <see cref="ApiRuntimeSection"/> so the menu row paints the derived value when the stored
+    /// field is empty, but the operator's stored value still wins when it's non-empty. Reads
+    /// the field via a selector so the same plumbing serves both rows.
+    /// </summary>
+    private static string DerivedShow(BootstrapConfig c, Func<ApiRuntimeSection, string> selector)
+    {
+        var snapshot = CloneForDerivation(c);
+        ResolveDerivedDefaults(snapshot);
+        return selector(snapshot.ApiRuntime);
+    }
+
+    /// <summary>
+    /// CORS-row sibling of <see cref="DerivedShow"/>. The single-value derivation helper isn't
+    /// reusable for the list-shaped CORS field, so it gets its own one-liner. The returned
+    /// list is what both the menu row's display string and the Edit prompt's fallback consume.
+    /// </summary>
+    private static List<string> DerivedCorsShow(BootstrapConfig c)
+    {
+        var snapshot = CloneForDerivation(c);
+        ResolveDerivedDefaults(snapshot);
+        return snapshot.ApiRuntime.CorsAllowedOrigins;
+    }
+
+    /// <summary>
+    /// Builds a transient <see cref="BootstrapConfig"/> with just the fields
+    /// <see cref="ResolveDerivedDefaults"/> consumes (deployment) and writes to (apiRuntime).
+    /// The snapshot is throwaway: <see cref="DerivedShow"/> / <see cref="DerivedCorsShow"/>
+    /// use it to compute derived values without mutating the live config the menu shares with
+    /// the Edit callbacks. Cheap — only allocates one config + one section instance per redraw.
+    /// </summary>
+    private static BootstrapConfig CloneForDerivation(BootstrapConfig c)
+    {
+        return new BootstrapConfig
+        {
+            Deployment = new DeploymentSection
+            {
+                Domains = c.Deployment.Domains,
+                WebHttps = c.Deployment.WebHttps,
+            },
+            ApiRuntime = new ApiRuntimeSection
+            {
+                CallbackBaseUrl = c.ApiRuntime.CallbackBaseUrl,
+                JwtAuthority = c.ApiRuntime.JwtAuthority,
+                JwtAudience = c.ApiRuntime.JwtAudience,
+                CorsAllowedOrigins = [.. c.ApiRuntime.CorsAllowedOrigins],
+            },
+        };
+    }
+
+    /// <summary>
+    /// Display rule for the OAuth-secret menu rows: present-or-not without echoing the raw
+    /// value. The selection form re-renders every iteration of the navigable loop (including
+    /// right after an OAuth secret edit), so this is the single guard against leaking the
+    /// typed secret back onto the menu — supplements the per-field <c>Secret('*')</c> masking
+    /// that protects the prompt-input echo itself in a real TTY.
+    /// </summary>
+    private static string Mask(string secret) =>
+        string.IsNullOrEmpty(secret) ? "<empty>" : "<set>";
+
+    /// <summary>
+    /// Display rule for the OAuth-client-ID menu rows (and any other plain-text row whose
+    /// value can legitimately be blank). Renders the value verbatim when set, falling back to
+    /// the same <c>&lt;empty&gt;</c> marker the secret rows use when unset — so the operator
+    /// can tell at a glance that the row exists and is unset (vs. a blank cell, which reads
+    /// as "no row at all"). Unlike <see cref="Mask"/>, the actual value is shown when
+    /// non-empty: client IDs are public per-provider identifiers and end up in the OAuth
+    /// redirect URL anyway, so there's no value in hiding them.
+    /// </summary>
+    private static string ShowOrEmpty(string value) =>
+        string.IsNullOrEmpty(value) ? "<empty>" : value;
+
+    /// <summary>
+    /// The seven regional keyspace identifiers the API recognises. Must stay aligned with the
+    /// region list in <c>InterfoldAppHost.Configure</c> (the multi-mode Scylla node loop) and
+    /// the matching list in <see cref="PublishPhase.BuildEnvReplacements"/>. Order matches the
+    /// canonical order used elsewhere in the codebase for stable diffs.
+    /// </summary>
+    internal static readonly string[] ValidScyllaKeyspaces =
+        ["nam", "eur", "sam", "sas", "eas", "ocn", "gdpr"];
+
+    /// <summary>
+    /// The three node roles <see cref="Interfold.Contracts.Configuration.ClusterConfiguration"/>
+    /// recognises. The API's <c>ApplyCluster</c> lower-cases incoming values then assigns them
+    /// to <c>NodeGroup</c>; downstream code branches on these exact tokens, so the validator
+    /// rejects anything outside the set upfront rather than letting a typo silently degrade to
+    /// the <c>auxiliary</c> default at runtime.
+    /// </summary>
+    internal static readonly string[] ValidNodeGroups = ["primary", "auxiliary", "sidecar"];
+
+    /// <summary>
+    /// Fills any empty <see cref="ApiRuntimeSection"/> field that has a derivable default from
+    /// <see cref="DeploymentSection"/>: <see cref="ApiRuntimeSection.CallbackBaseUrl"/> and
+    /// <see cref="ApiRuntimeSection.JwtAuthority"/> both default to <c>{scheme}://{Domains[0]}</c>
+    /// (where <c>scheme</c> follows <see cref="DeploymentSection.WebHttps"/>), and
+    /// <see cref="ApiRuntimeSection.CorsAllowedOrigins"/> defaults to one entry per domain.
+    /// Stored non-empty values always win — this method only fills blanks. Idempotent: calling
+    /// it twice has no effect after the first.
+    /// <para>
+    /// Called by <see cref="Validate"/> before its invariant checks so non-interactive
+    /// JSON-loaded configs go through the same derivation path as freshly-prompted ones (the
+    /// interactive form's Show callbacks call this so the menu rows display the derived
+    /// default next to their labels even before the operator presses Enter).
+    /// </para>
+    /// <para>
+    /// Returns nothing — mutates the passed-in config in place. Internal so the unit tests can
+    /// drive derivation directly and so <see cref="PromptForConfig"/>'s Show callbacks can call
+    /// it on every redraw.
+    /// </para>
+    /// </summary>
+    internal static void ResolveDerivedDefaults(BootstrapConfig config)
+    {
+        if (config.Deployment.Domains.Count == 0)
+        {
+            return;
+        }
+
+        var primary = config.Deployment.Domains[0];
+        if (string.IsNullOrWhiteSpace(primary))
+        {
+            return;
+        }
+
+        var scheme = config.Deployment.WebHttps ? "https" : "http";
+        var derivedBaseUrl = $"{scheme}://{primary}";
+
+        if (string.IsNullOrWhiteSpace(config.ApiRuntime.CallbackBaseUrl))
+        {
+            config.ApiRuntime.CallbackBaseUrl = derivedBaseUrl;
+        }
+
+        if (string.IsNullOrWhiteSpace(config.ApiRuntime.JwtAuthority))
+        {
+            config.ApiRuntime.JwtAuthority = derivedBaseUrl;
+        }
+
+        if (config.ApiRuntime.CorsAllowedOrigins.Count == 0)
+        {
+            config.ApiRuntime.CorsAllowedOrigins = config.Deployment.Domains
+                .Where(d => !string.IsNullOrWhiteSpace(d))
+                .Select(d => $"{scheme}://{d}")
                 .ToList();
         }
-
-        writer.Write("Root CA subject [Interfold Root CA]: ");
-        var rootCa = reader.ReadLine();
-        if (!string.IsNullOrWhiteSpace(rootCa))
-        {
-            config.Deployment.RootCaName = rootCa.Trim();
-        }
-
-        writer.Write("Database mode (single|multi|cassandra) [single]: ");
-        var mode = reader.ReadLine();
-        if (!string.IsNullOrWhiteSpace(mode))
-        {
-            config.DatabaseMode = mode.Trim();
-        }
-
-        writer.Write("Google OAuth client secret (blank to skip): ");
-        config.OAuth.GoogleClientSecret = reader.ReadLine()?.Trim() ?? string.Empty;
-
-        writer.Write("Discord OAuth client secret (blank to skip): ");
-        config.OAuth.DiscordClientSecret = reader.ReadLine()?.Trim() ?? string.Empty;
-
-        return config;
     }
 
     /// <summary>
@@ -210,6 +704,149 @@ internal static class ConfigPhase
                 $"config.clusterName='{config.ClusterName}' contains characters that would break " +
                 "Cassandra's cassandra.yaml rewrite or Scylla's CLI argument parsing. " +
                 "Allowed: 1..64 chars matching [A-Za-z0-9 ._-].");
+        }
+
+        // Scylla keyspace controls both the API's default keyspace and its region identity
+        // for new-account routing. Constrained to the seven regional values the rest of the
+        // codebase recognises (see ValidScyllaKeyspaces above) — anything outside that list
+        // would produce a runtime "wrong region" failure rather than an upfront error.
+        if (!ValidScyllaKeyspaces.Contains(config.ScyllaKeyspace, StringComparer.Ordinal))
+        {
+            throw new InvalidOperationException(
+                $"config.scyllaKeyspace='{config.ScyllaKeyspace}' is invalid. " +
+                $"Expected one of: {string.Join(", ", ValidScyllaKeyspaces)}.");
+        }
+
+        // Materialise the derivable ApiRuntime defaults so the per-field validators below
+        // see the post-derivation values (a non-interactive caller passing a JSON file with
+        // empty apiRuntime.callbackBaseUrl etc. should get the same end result as the
+        // interactive form).
+        ResolveDerivedDefaults(config);
+
+        ValidateAbsoluteHttpUri(config.ApiRuntime.CallbackBaseUrl, "config.apiRuntime.callbackBaseUrl");
+        ValidateAbsoluteHttpUri(config.ApiRuntime.JwtAuthority, "config.apiRuntime.jwtAuthority");
+
+        if (string.IsNullOrWhiteSpace(config.ApiRuntime.JwtAudience))
+        {
+            throw new InvalidOperationException(
+                "config.apiRuntime.jwtAudience must be a non-empty token-audience identifier (default: 'octocon').");
+        }
+
+        // CORS allow-list: every entry must be a parseable origin (scheme + host[:port], no path).
+        // ASP.NET Core's WithOrigins() does an exact string match against the request's Origin
+        // header, so anything that doesn't round-trip through Uri.TryCreate with the HTTP/HTTPS
+        // scheme would never match and is therefore a bootstrapper-time error.
+        if (config.ApiRuntime.CorsAllowedOrigins.Count == 0)
+        {
+            throw new InvalidOperationException(
+                "config.apiRuntime.corsAllowedOrigins must contain at least one origin after derivation. " +
+                "Add at least one entry to deployment.domains so derivation can produce a default, " +
+                "or populate corsAllowedOrigins explicitly.");
+        }
+        foreach (var origin in config.ApiRuntime.CorsAllowedOrigins)
+        {
+            ValidateAbsoluteHttpUri(origin, "config.apiRuntime.corsAllowedOrigins entry");
+        }
+
+        // Cluster: NodeGroup is constrained to the three values the API's ApplyCluster pipeline
+        // recognises. Lower-case comparison so an operator-typed "Primary" still passes.
+        if (string.IsNullOrWhiteSpace(config.Cluster.NodeGroup) ||
+            !ValidNodeGroups.Contains(config.Cluster.NodeGroup.ToLowerInvariant(), StringComparer.Ordinal))
+        {
+            throw new InvalidOperationException(
+                $"config.cluster.nodeGroup='{config.Cluster.NodeGroup}' is invalid. " +
+                $"Expected one of: {string.Join(", ", ValidNodeGroups)}.");
+        }
+
+        // Storage: both fields are optional, but when supplied must be well-formed. AvatarPublicBase
+        // is a URL the API stitches into responses; AvatarStorageRoot is a container-side absolute
+        // path (we don't try to verify the path exists — it lives inside the API container, not on
+        // the bootstrapper host).
+        ValidateOptionalAbsoluteHttpUri(config.Storage.AvatarPublicBase, "config.storage.avatarPublicBase");
+        if (!string.IsNullOrEmpty(config.Storage.AvatarStorageRoot)
+            && !Path.IsPathRooted(config.Storage.AvatarStorageRoot))
+        {
+            throw new InvalidOperationException(
+                $"config.storage.avatarStorageRoot='{config.Storage.AvatarStorageRoot}' must be an " +
+                "absolute path inside the API container (e.g. '/var/lib/interfold/avatars').");
+        }
+
+        // Observability: OTLP endpoint is optional but, when set, must be a valid http(s) URI —
+        // the OpenTelemetry SDK accepts gRPC over HTTP/2 via the http:// scheme.
+        ValidateOptionalAbsoluteHttpUri(config.Observability.OtlpEndpoint, "config.observability.otlpEndpoint");
+
+        // Socket: nullable threshold; when supplied, must be a positive byte count up to 16 MiB.
+        // Anything larger would defeat the purpose of batching (the message would always exceed
+        // the cap before a flush check).
+        if (config.Socket.BatchBytesThreshold is { } socketThreshold)
+        {
+            ValidateIntRange(socketThreshold, 1, 16 * 1024 * 1024, "config.socket.batchBytesThreshold");
+        }
+
+        // Persistence tuning: each int has its own sane range. The max-vs-initial cross-check
+        // catches the easy swap mistake where an operator inverts the two values.
+        ValidateIntRange(config.Persistence.DbRetryAttempts, 1, 100, "config.persistence.dbRetryAttempts");
+        ValidateIntRange(config.Persistence.DbRetryInitialDelayMs, 1, 60_000,
+            "config.persistence.dbRetryInitialDelayMs");
+        ValidateIntRange(config.Persistence.DbRetryMaxDelayMs, 1, 600_000,
+            "config.persistence.dbRetryMaxDelayMs");
+        if (config.Persistence.DbRetryMaxDelayMs < config.Persistence.DbRetryInitialDelayMs)
+        {
+            throw new InvalidOperationException(
+                $"config.persistence.dbRetryMaxDelayMs ({config.Persistence.DbRetryMaxDelayMs}) " +
+                $"must be >= dbRetryInitialDelayMs ({config.Persistence.DbRetryInitialDelayMs}).");
+        }
+        ValidateIntRange(config.Persistence.HydrationMaxConcurrency, 1, 1024,
+            "config.persistence.hydrationMaxConcurrency");
+    }
+
+    /// <summary>
+    /// Shared validator for the three URL-shaped <see cref="ApiRuntimeSection"/> fields.
+    /// Accepts absolute HTTP/HTTPS URIs; rejects anything else with the field name in the
+    /// error so the operator can tell which row needs fixing. Internal so the unit tests can
+    /// drive validation failures directly without re-deriving values.
+    /// </summary>
+    private static void ValidateAbsoluteHttpUri(string value, string fieldLabel)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            throw new InvalidOperationException($"{fieldLabel} must be a non-empty http(s) URL.");
+        }
+        if (!Uri.TryCreate(value, UriKind.Absolute, out var uri)
+            || (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
+        {
+            throw new InvalidOperationException(
+                $"{fieldLabel}='{value}' is not a valid absolute http(s) URL.");
+        }
+    }
+
+    /// <summary>
+    /// Sibling of <see cref="ValidateAbsoluteHttpUri"/> for fields whose blank-state is also
+    /// valid (e.g. <see cref="StorageSection.AvatarPublicBase"/>,
+    /// <see cref="ObservabilitySection.OtlpEndpoint"/>). Empty/whitespace passes through; a
+    /// non-empty value still has to parse as an absolute http(s) URI.
+    /// </summary>
+    private static void ValidateOptionalAbsoluteHttpUri(string value, string fieldLabel)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return;
+        }
+        ValidateAbsoluteHttpUri(value, fieldLabel);
+    }
+
+    /// <summary>
+    /// Shared range check for the tuning ints under
+    /// <see cref="PersistenceTuningSection"/> / <see cref="SocketSection"/>. Reports the field
+    /// label and observed value so the operator-facing error matches the JSON key path that
+    /// caused it.
+    /// </summary>
+    private static void ValidateIntRange(int value, int min, int max, string fieldLabel)
+    {
+        if (value < min || value > max)
+        {
+            throw new InvalidOperationException(
+                $"{fieldLabel}={value} is outside the allowed [{min}..{max}] range.");
         }
     }
 

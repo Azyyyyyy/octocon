@@ -52,6 +52,14 @@
     <PackageReference Include="Aspire.Hosting.Docker" Version="13.4.2" />
     <!-- CLI surface: System.CommandLine 2.x beta is the .NET 10 default for command-line apps. -->
     <PackageReference Include="System.CommandLine" Version="3.0.0-preview.5.26302.115" />
+    <!--
+      Interactive setup surface only. We deliberately do NOT pull in Spectre.Console.Cli — the
+      bootstrapper's command/option parsing stays on System.CommandLine (above). Spectre.Console
+      is here purely for ConfigPhase.PromptForConfig: TextPrompt / ConfirmationPrompt with inline
+      validation, Rule-based section headers, and a Table-driven review-before-commit loop. The
+      unit-test project pairs this with Spectre.Console.Testing for the in-memory IAnsiConsole.
+    -->
+    <PackageReference Include="Spectre.Console" Version="0.55.2" />
   </ItemGroup>
 
   <ItemGroup>

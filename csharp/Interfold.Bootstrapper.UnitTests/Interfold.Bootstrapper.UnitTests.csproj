@@ -27,6 +27,13 @@
   <ItemGroup>
     <!-- Same TUnit pin as the integration project so the two test projects stay in sync. -->
     <PackageReference Include="TUnit" Version="1.50.0" />
+    <!--
+      In-memory IAnsiConsole (Spectre.Console.Testing.TestConsole) for ConfigInteractivePromptTests.
+      The bootstrapper depends on Spectre.Console for the interactive prompt surface; this companion
+      package gives us the input-queue / captured-output seam without standing up a real TTY. Pinned
+      to the same version as the runtime package to keep the prompt API binary-compatible.
+    -->
+    <PackageReference Include="Spectre.Console.Testing" Version="0.55.2" />
   </ItemGroup>
 
   <ItemGroup>

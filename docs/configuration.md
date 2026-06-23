@@ -82,7 +82,7 @@ Shape lives on `[BootstrapConfig](../csharp/Interfold.Bootstrapper/Configuration
     "webHttps": 8081
   },
   "scyllaMode": "single",            // "single" | "multi" | "cassandra"
-  "apiImage":   "ghcr.io/interfold/api:latest",
+  "apiImage":   "ghcr.io/azyyyyyy/interfold-api:latest",
   "postgresDatabase": "interfold",   // Postgres application DB name; any safe identifier
                                      // matching ^[A-Za-z_][A-Za-z0-9_]{0,62}$. Becomes the
                                      // Database= field on OCTOCON_POSTGRES_CONNECTION and
@@ -92,18 +92,109 @@ Shape lives on `[BootstrapConfig](../csharp/Interfold.Bootstrapper/Configuration
                                      // --cluster-name CLI flag (Scylla). Pure metadata,
                                      // visible via `SELECT cluster_name FROM system.local`.
                                      // Allowed: 1..64 chars matching [A-Za-z0-9 ._-].
+  "scyllaKeyspace": "nam",           // Per-instance region identity. One of:
+                                     // nam | eur | sam | sas | eas | ocn | gdpr.
+                                     // Lands on OCTOCON_SCYLLA_KEYSPACE on the API container;
+                                     // also picks which regional keyspace this stack's API
+                                     // serves (`single`/`cassandra` modes only create one,
+                                     // so this and the migration target must agree).
+  "apiRuntime": {
+    // Three of the four are derivable from `deployment` and may be left blank — the
+    // bootstrapper fills them at validate-time with values computed from `domains` +
+    // `webHttps`. The interactive form pre-fills the prompt with the same derived value.
+    "callbackBaseUrl":    "",        // empty -> {scheme}://{domains[0]}; lands on
+                                     // OCTOCON_AUTH_CALLBACK_BASE_URL.
+    "jwtAuthority":       "",        // empty -> {scheme}://{domains[0]}; JWT `iss` claim.
+    "jwtAudience":        "octocon", // JWT `aud` claim; no derivation, just a default.
+    "corsAllowedOrigins": []         // empty -> one entry per `domains` (each with scheme
+                                     // from `webHttps`); joined with ',' for
+                                     // OCTOCON_CORS_ALLOWED_ORIGINS. An empty list at the
+                                     // API would fall back to "allow any origin", which
+                                     // the bootstrapper actively prevents in production.
+  },
+  "persistence": {
+    // DB-retry strategy + per-request fan-out cap. All four have non-null defaults that
+    // match the API's compile-time fallbacks — leaving them at the defaults reproduces
+    // pre-bootstrapper behaviour 1:1. ConfigPhase.Validate enforces ranges and the
+    // `max >= initial` cross-check.
+    "dbRetryAttempts":         3,    // 1..100;     OCTOCON_DB_RETRY_ATTEMPTS
+    "dbRetryInitialDelayMs":   100,  // 1..60000;   OCTOCON_DB_RETRY_INITIAL_DELAY_MS
+    "dbRetryMaxDelayMs":       1500, // 1..600000;  must be >= dbRetryInitialDelayMs
+    "hydrationMaxConcurrency": 8     // 1..1024;    OCTOCON_HYDRATION_MAX_CONCURRENCY
+  },
+  "cluster": {
+    // Node role used by the API for orchestration-aware decisions. Lower-cased on the
+    // API side; the bootstrapper validator enforces the three canonical values upfront.
+    "nodeGroup": "auxiliary"         // primary | auxiliary | sidecar; OCTOCON_NODE_GROUP
+                                     // Fly.io stacks override via FLY_PROCESS_GROUP at
+                                     // runtime, which wins over OCTOCON_NODE_GROUP.
+  },
+  "storage": {
+    // Both fields are optional — leaving either empty disables the API's avatar surface
+    // entirely (the binder normalises empty -> null, and the avatar service's
+    // not-configured check kicks in). When opting in, set both AND add the matching
+    // compose bind mount in a compose override; the bootstrapper does not create the
+    // directory or wire the mount.
+    "avatarStorageRoot": "",         // absolute container path; OCTOCON_AVATAR_STORAGE_ROOT
+    "avatarPublicBase":  ""          // public http(s) URL prefix; OCTOCON_AVATAR_PUBLIC_BASE
+  },
+  "observability": {
+    // OTLP gRPC endpoint the API exports traces and metrics to. Empty means the OTLP
+    // exporter is not registered (in-process telemetry still works). When set, must
+    // parse as an absolute http(s) URI.
+    "otlpEndpoint": ""               // e.g. "http://localhost:4317"; OCTOCON_OTLP_ENDPOINT
+  },
+  "socket": {
+    // Nullable int — `null` (the default) means "use the API's compile-time default".
+    // The JSON stores literal null rather than 0 so a re-bootstrap of a hand-edited
+    // file doesn't accidentally set the threshold to "flush every empty payload".
+    "batchBytesThreshold": null      // 1..16777216 when set; OCTOCON_SOCKET_BATCH_BYTES_THRESHOLD
+  },
   "oauth": {
-    "googleClientSecret":  "...",    // empty -> row skipped
-    "discordClientSecret": "",       // empty -> row skipped
-    "appleClientSecret":   ""        // empty -> row skipped
+    // Per-provider OAuth credentials. Rows are paired (id then secret); each provider
+    // needs BOTH halves to register its ASP.NET Core challenge scheme. Leaving a
+    // provider's `*ClientId` empty disables that provider entirely (the scheme is
+    // skipped at startup) regardless of whether a secret is set.
+    "googleClientId":      "1234.apps.googleusercontent.com",  // empty -> provider disabled
+    "googleClientSecret":  "...",                              // empty -> row skipped
+    "discordClientId":     "",                                 // empty -> provider disabled
+    "discordClientSecret": "",                                 // empty -> row skipped
+    "appleClientId":       "",                                 // empty -> provider disabled
+    "appleClientSecret":   ""                                  // empty -> row skipped
   }
 }
 ```
 
-OAuth **client IDs** are deliberately not part of this file. They are public values that
-appear in OAuth redirect URLs, so the operator sets them via `OCTOCON_*_OAUTH_CLIENT_ID`
-env vars at API runtime. The matching client *secrets* live in `internal.secrets` and the
-bootstrapper seeds them from the `oauth` section above.
+OAuth **client IDs** are public values that end up in each provider's authorize-redirect URL.
+The bootstrapper carries them through as plain Aspire parameters (no masking, no
+`internal.secrets` round trip) — `PublishPhase.BuildEnvReplacements` writes them straight
+into `deploy/.env` as `GOOGLE_OAUTH_CLIENT_ID` / `DISCORD_OAUTH_CLIENT_ID` /
+`APPLE_OAUTH_CLIENT_ID`, which the API container picks up as `OCTOCON_*_OAUTH_CLIENT_ID`
+via `InterfoldAppHost.ConfigureApiSelfHostEnv`. The matching client **secrets** live in
+`internal.secrets` (seeded by `DatabaseInitPhase`) and are patched onto
+`AuthenticationConfiguration` by `SecretsBootstrapService` at API startup — they never
+appear in `.env`.
+
+First-time operators don't need to hand-author this file — running `interfold-bootstrap` on
+a real TTY without an existing `interfold.bootstrap.json` drops into a Spectre.Console
+navigable form: every field on `BootstrapConfig` is shown as a menu row with its current
+value next to its label, grouped under eight section headers (Deployment / Ports /
+Database / API / Cluster & telemetry / Storage / Performance tuning / OAuth credentials).
+The operator arrow-keys between rows and presses Enter to edit any field (inline validation
+re-prompts on bad input, OAuth client secrets are masked in both the editor echo and the
+menu row; client IDs are shown verbatim because they're public), then chooses `Confirm and
+save` to write the JSON. The four derivable `apiRuntime` rows pre-fill their menu display
+and prompt default with the value `ConfigPhase.ResolveDerivedDefaults` computes from
+`deployment` — operators can press Enter to accept or type to override, and either way the
+bootstrapper persists the resolved value. The four "disabled when blank" rows (avatar
+storage root + public base, OTLP endpoint, socket batch flush threshold) render an
+`<empty>` / `<default>` marker in the menu when unset, so the unset-vs-set distinction is
+visible at a glance; leaving them blank reproduces the pre-bootstrapper "env var unset"
+behaviour 1:1. There is no separate walkthrough phase: experienced operators jump straight
+to the rows they care about and Confirm; first-time operators just Enter every row
+top-to-bottom. The bootstrapper writes the resulting JSON to the path above on
+confirmation; `--non-interactive` and `--config <path>` still bypass the form for
+unattended runs.
 
 ## Layer 3 — Environment variables
 
@@ -129,12 +220,12 @@ publish phase. Variables marked **(operator)** must be supplied by hand.
 | ----------------------------------- | ------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
 | `OCTOCON_PERSISTENCE`               | `scylla-postgres`                                 | `scylla-postgres` or `inmemory`. (bootstrapper-managed)                                                |
 | `OCTOCON_POSTGRES_CONNECTION`       | localhost fallback                                | Built from `Parameters:postgres-*` (including `Parameters:postgres-db`, default `interfold`, sourced from `BootstrapConfig.postgresDatabase`). (bootstrapper-managed) |
-| `OCTOCON_SCYLLA_KEYSPACE`           | `nam`                                             | Per-instance region identity. **Single source.** No store fallback. (operator)                         |
+| `OCTOCON_SCYLLA_KEYSPACE`           | `nam`                                             | Per-instance region identity. **Single source.** No store fallback. Sourced from `BootstrapConfig.scyllaKeyspace` via Aspire parameter `scylla-keyspace`; restricted to the seven canonical regional values (`nam`/`eur`/`sam`/`sas`/`eas`/`ocn`/`gdpr`). (bootstrapper-managed) |
 | `OCTOCON_SINGLE_SCYLLA_INSTANCE`    | `true` (`single`/`cassandra`) / `false` (`multi`) | Whether the migration service creates all regional keyspaces or just one. (bootstrapper-managed)       |
-| `OCTOCON_DB_RETRY_ATTEMPTS`         | `3`                                               | (operator)                                                                                             |
-| `OCTOCON_DB_RETRY_INITIAL_DELAY_MS` | `100`                                             | (operator)                                                                                             |
-| `OCTOCON_DB_RETRY_MAX_DELAY_MS`     | `1500`                                            | (operator)                                                                                             |
-| `OCTOCON_HYDRATION_MAX_CONCURRENCY` | `8`                                               | (operator)                                                                                             |
+| `OCTOCON_DB_RETRY_ATTEMPTS`         | `3`                                               | Sourced from `BootstrapConfig.persistence.dbRetryAttempts` via Aspire parameter `db-retry-attempts`; bounded 1..100 by `ConfigPhase.Validate`. (bootstrapper-managed) |
+| `OCTOCON_DB_RETRY_INITIAL_DELAY_MS` | `100`                                             | Sourced from `BootstrapConfig.persistence.dbRetryInitialDelayMs` via Aspire parameter `db-retry-initial-delay-ms`; bounded 1..60000 and must be `<= dbRetryMaxDelayMs`. (bootstrapper-managed) |
+| `OCTOCON_DB_RETRY_MAX_DELAY_MS`     | `1500`                                            | Sourced from `BootstrapConfig.persistence.dbRetryMaxDelayMs` via Aspire parameter `db-retry-max-delay-ms`; bounded 1..600000 and must be `>= dbRetryInitialDelayMs`. (bootstrapper-managed) |
+| `OCTOCON_HYDRATION_MAX_CONCURRENCY` | `8`                                               | Sourced from `BootstrapConfig.persistence.hydrationMaxConcurrency` via Aspire parameter `hydration-max-concurrency`; bounded 1..1024. (bootstrapper-managed) |
 
 `OCTOCON_COMPATIBILITY_MODE` was a "Postgres isn't reachable" escape hatch that forced
 idempotency + token revocation into in-memory stores. It's been removed — Postgres is now
@@ -148,11 +239,12 @@ encryption pepper, and the API refuses to boot without it). If the value is stil
 
 | Env var                               | Default         | Notes                                                                                                                                                 |
 | ------------------------------------- | --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `OCTOCON_AUTH_CALLBACK_BASE_URL`      | *null*          | (operator)                                                                                                                                            |
-| `OCTOCON_JWT_AUTHORITY`               | `octocon-local` | (operator)                                                                                                                                            |
-| `OCTOCON_GOOGLE_OAUTH_CLIENT_ID`      | *null*          | (operator)                                                                                                                                            |
-| `OCTOCON_DISCORD_OAUTH_CLIENT_ID`     | *null*          | (operator)                                                                                                                                            |
-| `OCTOCON_APPLE_OAUTH_CLIENT_ID`       | *null*          | (operator)                                                                                                                                            |
+| `OCTOCON_AUTH_CALLBACK_BASE_URL`      | *empty*         | Base URL the API's OAuth callbacks redirect to. Sourced from `BootstrapConfig.apiRuntime.callbackBaseUrl` via Aspire parameter `oauth-callback-base-url`; defaults derive to `{scheme}://{domains[0]}` (scheme follows `deployment.webHttps`) when the operator leaves the field blank. (bootstrapper-managed) |
+| `OCTOCON_JWT_AUTHORITY`               | `octocon-local` | JWT `iss` claim. Sourced from `BootstrapConfig.apiRuntime.jwtAuthority` via Aspire parameter `jwt-authority`; derives the same way as `OCTOCON_AUTH_CALLBACK_BASE_URL`. The `octocon-local` default applies only to dev / non-bootstrapped runs. (bootstrapper-managed) |
+| `OCTOCON_JWT_AUDIENCE`                | `octocon`       | JWT `aud` claim. Sourced from `BootstrapConfig.apiRuntime.jwtAudience` via Aspire parameter `jwt-audience`. Bound into `AuthenticationConfiguration.JwtAudience` by `ConfigurationServiceCollectionExtensions.ApplyAuthentication` (previously documented as bound but the binding was missing; fixed alongside the bootstrapper wire-up). (bootstrapper-managed) |
+| `OCTOCON_GOOGLE_OAUTH_CLIENT_ID`      | *empty*         | Sourced from `BootstrapConfig.oauth.googleClientId` via Aspire parameter `google-oauth-client-id`; empty value disables the Google scheme. (bootstrapper-managed) |
+| `OCTOCON_DISCORD_OAUTH_CLIENT_ID`     | *empty*         | Same handling, sourced from `oauth.discordClientId`. (bootstrapper-managed)                                                                           |
+| `OCTOCON_APPLE_OAUTH_CLIENT_ID`       | *empty*         | Same handling, sourced from `oauth.appleClientId`. (bootstrapper-managed)                                                                             |
 | `OCTOCON_GOOGLE_OAUTH_CLIENT_SECRET`  | *null*          | Placeholder only; overwritten at startup from `internal.secrets:oauth:google:client_secret`. **Do not rely on the env value.** (bootstrapper-managed) |
 | `OCTOCON_DISCORD_OAUTH_CLIENT_SECRET` | *null*          | Same handling. (bootstrapper-managed)                                                                                                                 |
 | `OCTOCON_APPLE_OAUTH_CLIENT_SECRET`   | *null*          | Same handling. (bootstrapper-managed)                                                                                                                 |
@@ -189,7 +281,7 @@ reads them.
 
 | Env var                        | Default                | Notes                                                                                                                                                                                              |
 | ------------------------------ | ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `OCTOCON_CORS_ALLOWED_ORIGINS` | *null* (= allow any) | Comma-separated allow-list of origin URLs. Empty or unset falls back to "allow any origin", which is acceptable for solo-API dev but should always be set explicitly in production. (operator) |
+| `OCTOCON_CORS_ALLOWED_ORIGINS` | *empty* (= allow any in dev only) | Comma-separated allow-list of origin URLs. The API still falls back to "allow any origin" when this is unset/empty, but the bootstrapper never emits a stack with an unset value — `BootstrapConfig.apiRuntime.corsAllowedOrigins` defaults to one entry per `deployment.domains` (joined with `,`), routed through Aspire parameter `cors-allowed-origins`. Operators that want a different allow-list edit the list in the interactive form or the JSON. (bootstrapper-managed) |
 
 `OCTOCON_FRONTEND`, `OCTOCON_BETA_FRONTEND`, and `OCTOCON_DEEPLINK_ADDRESS` have all been
 removed. Their CORS allow-list use moved to `OCTOCON_CORS_ALLOWED_ORIGINS`; their
@@ -205,8 +297,8 @@ your `.env`, they are dead values — the API no longer reads them.
 
 | Env var                       | Default | Notes      |
 | ----------------------------- | ------- | ---------- |
-| `OCTOCON_AVATAR_STORAGE_ROOT` | *null*  | (operator) |
-| `OCTOCON_AVATAR_PUBLIC_BASE`  | *null*  | (operator) |
+| `OCTOCON_AVATAR_STORAGE_ROOT` | *empty* (= avatar storage disabled) | Container-side absolute path the API writes uploaded avatars to. Sourced from `BootstrapConfig.storage.avatarStorageRoot` via Aspire parameter `avatar-storage-root`; empty value is normalised to `null` by `ApplyStorage` so the API's not-configured branch still fires. The bootstrapper validates the value is an absolute path; operators that opt in are responsible for adding the matching compose bind mount. (bootstrapper-managed) |
+| `OCTOCON_AVATAR_PUBLIC_BASE`  | *empty* (= avatar storage disabled) | Public URL prefix the API uses to construct avatar URLs in responses (e.g. `https://cdn.example.com/avatars/`). Sourced from `BootstrapConfig.storage.avatarPublicBase` via Aspire parameter `avatar-public-base`; empty normalised to `null`. Non-empty values must parse as absolute http(s) URLs. (bootstrapper-managed) |
 
 
 #### Observability
@@ -214,7 +306,7 @@ your `.env`, they are dead values — the API no longer reads them.
 
 | Env var                 | Default | Notes                                                        |
 | ----------------------- | ------- | ------------------------------------------------------------ |
-| `OCTOCON_OTLP_ENDPOINT` | *null*  | gRPC OTLP endpoint, e.g. `http://localhost:4317`. (operator) |
+| `OCTOCON_OTLP_ENDPOINT` | *empty* (= OTLP exporter not registered) | gRPC OTLP endpoint, e.g. `http://localhost:4317`. Sourced from `BootstrapConfig.observability.otlpEndpoint` via Aspire parameter `otlp-endpoint`; empty normalised to `null` by `ApplyObservability` so the OTLP exporter is not registered. Non-empty values must parse as absolute http(s) URIs. (bootstrapper-managed) |
 
 
 #### Cluster
@@ -223,7 +315,7 @@ your `.env`, they are dead values — the API no longer reads them.
 | Env var              | Default     | Notes                                             |
 | -------------------- | ----------- | ------------------------------------------------- |
 | `FLY_PROCESS_GROUP`  | *null*      | Fly.io automatic. Wins over `OCTOCON_NODE_GROUP`. |
-| `OCTOCON_NODE_GROUP` | `auxiliary` | (operator)                                        |
+| `OCTOCON_NODE_GROUP` | `auxiliary` | Sourced from `BootstrapConfig.cluster.nodeGroup` via Aspire parameter `node-group`; restricted to `primary` / `auxiliary` / `sidecar` by `ConfigPhase.Validate` (lower-cased on read by `ApplyCluster`). (bootstrapper-managed) |
 
 
 #### Socket
@@ -231,7 +323,7 @@ your `.env`, they are dead values — the API no longer reads them.
 
 | Env var                                | Default                       | Notes      |
 | -------------------------------------- | ----------------------------- | ---------- |
-| `OCTOCON_SOCKET_BATCH_BYTES_THRESHOLD` | *null* (use built-in default) | (operator) |
+| `OCTOCON_SOCKET_BATCH_BYTES_THRESHOLD` | *empty* (= API uses built-in default) | Bytes threshold the API flushes a batched WebSocket payload at. Sourced from `BootstrapConfig.socket.batchBytesThreshold` (nullable int) via Aspire parameter `socket-batch-bytes-threshold`; empty/null serialises as the empty string and `ApplySocket`'s `TryParseInt` returns `null` so the API's compile-time default still applies. When set, bounded 1..16 MiB. (bootstrapper-managed) |
 
 
 #### Kestrel (self-host)
@@ -483,8 +575,12 @@ verification on the server side use the same PEMs.
 ## Common gotchas
 
 - `**OCTOCON_SCYLLA_KEYSPACE` is required for correct routing.** It used to fall back to
-`internal.secrets:scylla:keyspace`; that row no longer exists. If the env is missing,
-the API defaults to `"nam"` in code — which is correct for a single-region deployment
+`internal.secrets:scylla:keyspace`; that row no longer exists. The bootstrapper now
+manages this env var end-to-end (sourced from `BootstrapConfig.scyllaKeyspace`,
+defaulted to `nam`, validated against the seven regional values), so a bootstrap-emitted
+stack always ships with an explicit value. The gotcha survives for operators running the
+API container *outside* the bootstrapper-produced compose stack: if the env is missing in
+that path, the API defaults to `"nam"` in code — correct for a single-region deployment
 but the *wrong* answer for a `eur` or `gdpr` node. Failure mode is "wrong region", not
 "crash".
 - **Don't put `ASPNETCORE_Kestrel__Certificates__Default__Password` back in `.env`.** It

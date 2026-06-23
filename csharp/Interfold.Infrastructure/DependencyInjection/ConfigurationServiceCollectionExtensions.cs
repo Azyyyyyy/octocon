@@ -149,8 +149,14 @@ public static class ConfigurationServiceCollectionExtensions
 
     internal static void ApplyCluster(ClusterConfiguration opts, IConfiguration config)
     {
-        opts.NodeGroup = (config["FLY_PROCESS_GROUP"]
-                       ?? config["OCTOCON_NODE_GROUP"]
+        // .NET's EnvironmentVariablesConfigurationProvider surfaces an env var set to ""
+        // as a configuration key with value "" (not null), which breaks the ?? fall-through
+        // pattern below. The bootstrapper now always emits OCTOCON_NODE_GROUP (even when the
+        // operator leaves the cluster section at its defaults), so guard against the empty-
+        // string case explicitly via NullIfEmpty — otherwise Fly stacks that also have
+        // OCTOCON_NODE_GROUP="" would short-circuit before reading FLY_PROCESS_GROUP.
+        opts.NodeGroup = (NullIfEmpty(config["FLY_PROCESS_GROUP"])
+                       ?? NullIfEmpty(config["OCTOCON_NODE_GROUP"])
                        ?? "auxiliary").ToLowerInvariant();
     }
 
@@ -180,6 +186,10 @@ public static class ConfigurationServiceCollectionExtensions
     {
         opts.CallbackBaseUrl = config["OCTOCON_AUTH_CALLBACK_BASE_URL"];
         opts.JwtAuthority = config["OCTOCON_JWT_AUTHORITY"] ?? "octocon-local";
+        // OCTOCON_JWT_AUDIENCE was documented but never bound — bind it now so the
+        // bootstrapper's value flows through. Falls back to the property-initialiser
+        // default ("octocon") when the env var is unset so existing callers keep working.
+        opts.JwtAudience = config["OCTOCON_JWT_AUDIENCE"] ?? opts.JwtAudience;
 
         // OAuth client IDs are public values (they appear in OAuth redirect URLs); keep them
         // env-bound. The matching secrets are placeholders here and get overwritten by
@@ -217,13 +227,22 @@ public static class ConfigurationServiceCollectionExtensions
 
     private static void ApplyObservability(ObservabilityConfiguration opts, IConfiguration config)
     {
-        opts.OtlpEndpoint = config["OCTOCON_OTLP_ENDPOINT"];
+        // The OTLP endpoint is optional — null means "skip exporter registration entirely".
+        // The bootstrapper now always emits OCTOCON_OTLP_ENDPOINT (even when blank), so an
+        // empty env var would otherwise land here as the literal string "" and confuse the
+        // OTLP exporter SDK (it would attempt to connect to ""). Normalise to null so the
+        // not-configured branch in the telemetry registration still fires.
+        opts.OtlpEndpoint = NullIfEmpty(config["OCTOCON_OTLP_ENDPOINT"]);
     }
 
     private static void ApplyStorage(StorageConfiguration opts, IConfiguration config)
     {
-        opts.AvatarStorageRoot = config["OCTOCON_AVATAR_STORAGE_ROOT"];
-        opts.AvatarPublicBase = config["OCTOCON_AVATAR_PUBLIC_BASE"];
+        // Both avatar fields are optional — null on each disables the corresponding API
+        // surface. The bootstrapper emits empty strings for the unset case (its always-
+        // emit-every-parameter contract), so normalise empty → null here to preserve the
+        // pre-bootstrapper behaviour where an unset env var produced a null on read.
+        opts.AvatarStorageRoot = NullIfEmpty(config["OCTOCON_AVATAR_STORAGE_ROOT"]);
+        opts.AvatarPublicBase = NullIfEmpty(config["OCTOCON_AVATAR_PUBLIC_BASE"]);
     }
 
     private static void ApplySocket(SocketConfiguration opts, IConfiguration config)
@@ -240,4 +259,13 @@ public static class ConfigurationServiceCollectionExtensions
 
         return int.TryParse(value, out var result) ? result : null;
     }
+
+    /// <summary>
+    /// Returns <c>null</c> for null, empty, or whitespace-only inputs; otherwise the input
+    /// unchanged. Used to bridge the gap between the .NET configuration system (which
+    /// surfaces env-var-set-to-"" as a key with empty-string value) and binders whose
+    /// "feature disabled" signal is <c>null</c>.
+    /// </summary>
+    private static string? NullIfEmpty(string? value) =>
+        string.IsNullOrWhiteSpace(value) ? null : value;
 }

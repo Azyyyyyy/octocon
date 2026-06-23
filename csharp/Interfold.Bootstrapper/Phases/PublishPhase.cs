@@ -146,6 +146,52 @@ internal static class PublishPhase
             // by DatabaseInitPhase). They are not surfaced as compose env vars and the API
             // reads them through SecretsBootstrapService / a one-shot Npgsql query at
             // startup.
+
+            // OAuth client IDs are public per-provider identifiers (NOT secrets) — they end up
+            // in each scheme's authorize redirect URL and are paired with the matching client
+            // secrets that live in internal.secrets. Surface them here so the bootstrapper
+            // rewrites the Aspire-emitted blank entries with the operator's BootstrapConfig
+            // values; an empty string for a provider is a valid "I'm not using this one"
+            // signal (the API's scheme registrar skips schemes with empty IDs). The names
+            // match the upper-snake-cased Aspire parameter keys declared in
+            // InterfoldAppHost.Configure (google-oauth-client-id, etc.).
+            ["GOOGLE_OAUTH_CLIENT_ID"] = config.OAuth.GoogleClientId ?? string.Empty,
+            ["DISCORD_OAUTH_CLIENT_ID"] = config.OAuth.DiscordClientId ?? string.Empty,
+            ["APPLE_OAUTH_CLIENT_ID"] = config.OAuth.AppleClientId ?? string.Empty,
+
+            // API runtime config. All five are non-secret plain-text values the API container
+            // consumes as OCTOCON_* env vars. ConfigPhase.ResolveDerivedDefaults fills empties
+            // before Validate runs, so by the time PublishPhase sees the config every value
+            // here is guaranteed non-empty (the CORS list is joined into a comma-separated
+            // string to match OCTOCON_CORS_ALLOWED_ORIGINS' wire format). Parameter names
+            // match InterfoldAppHost.Configure's AddParameter calls (scylla-keyspace,
+            // oauth-callback-base-url, jwt-authority, jwt-audience, cors-allowed-origins) and
+            // Aspire upper-snake-cases each into the matching .env key.
+            ["SCYLLA_KEYSPACE"] = config.ScyllaKeyspace,
+            ["OAUTH_CALLBACK_BASE_URL"] = config.ApiRuntime.CallbackBaseUrl,
+            ["JWT_AUTHORITY"] = config.ApiRuntime.JwtAuthority,
+            ["JWT_AUDIENCE"] = config.ApiRuntime.JwtAudience,
+            ["CORS_ALLOWED_ORIGINS"] = string.Join(",", config.ApiRuntime.CorsAllowedOrigins),
+
+            // Operator tuning knobs (cluster / storage / observability / socket /
+            // persistence). All nine are non-secret Aspire parameters; the four nullable
+            // / disabled-when-empty fields (AvatarStorageRoot, AvatarPublicBase,
+            // OtlpEndpoint, BatchBytesThreshold) serialise empty/null as the empty
+            // string. The API's ApplyStorage / ApplyObservability binders normalise
+            // empty → null and TryParseInt treats empty as null, so a blank value here
+            // reproduces the "env var unset" behaviour 1:1. Parameter names match
+            // InterfoldAppHost.Configure's AddParameter calls (node-group,
+            // avatar-storage-root, …) and Aspire upper-snake-cases each into the
+            // matching .env key.
+            ["NODE_GROUP"] = config.Cluster.NodeGroup,
+            ["AVATAR_STORAGE_ROOT"] = config.Storage.AvatarStorageRoot ?? string.Empty,
+            ["AVATAR_PUBLIC_BASE"] = config.Storage.AvatarPublicBase ?? string.Empty,
+            ["OTLP_ENDPOINT"] = config.Observability.OtlpEndpoint ?? string.Empty,
+            ["SOCKET_BATCH_BYTES_THRESHOLD"] = config.Socket.BatchBytesThreshold?.ToString() ?? string.Empty,
+            ["DB_RETRY_ATTEMPTS"] = config.Persistence.DbRetryAttempts.ToString(),
+            ["DB_RETRY_INITIAL_DELAY_MS"] = config.Persistence.DbRetryInitialDelayMs.ToString(),
+            ["DB_RETRY_MAX_DELAY_MS"] = config.Persistence.DbRetryMaxDelayMs.ToString(),
+            ["HYDRATION_MAX_CONCURRENCY"] = config.Persistence.HydrationMaxConcurrency.ToString(),
         };
 
         // Bind-mount source resolution. Aspire emits a comment of the form
@@ -271,10 +317,15 @@ internal static class PublishPhase
                 lines[i] = $"{key}={value}";
                 rewritten++;
             }
-            else if (line.EndsWith('=') && !key.StartsWith("DISCORD_", StringComparison.Ordinal))
+            else if (line.EndsWith('='))
             {
-                // A blank value that we did NOT recognise. Surface it - operator may need to fix.
-                // Discord secret is optional in the bootstrap config so we intentionally leave it blank.
+                // A blank value that we did NOT recognise. Surface it - operator may need to
+                // fix it before `docker compose up`. (Historically the DISCORD_* prefix was
+                // excluded because DISCORD_OAUTH_CLIENT_SECRET was the only optional Aspire
+                // parameter that Aspire would emit unfilled; the secret moved to
+                // internal.secrets and the matching CLIENT_ID is now explicitly written via
+                // BuildEnvReplacements with an empty string when the operator didn't supply
+                // one, so the carve-out is no longer needed.)
                 skipped.Add(key);
             }
 
@@ -355,6 +406,42 @@ internal static class PublishPhase
             // too, but the API now reads them from internal.secrets exclusively (see
             // SeedKeys / SecretsBootstrapService), so we no longer inject them into the
             // AppHost's in-memory config.
+            // OAuth client IDs ARE Aspire parameters (declared as non-secret with
+            // publishValueAsDefault:true and an empty default in InterfoldAppHost). Injecting
+            // them here pushes the operator-supplied values from BootstrapConfig through to
+            // the .env entry that ConfigureApiSelfHostEnv's WithEnvironment("OCTOCON_*_OAUTH_CLIENT_ID")
+            // references — see BuildEnvReplacements above for the matching .env rewrite.
+            ["Parameters:google-oauth-client-id"] = config.OAuth.GoogleClientId ?? string.Empty,
+            ["Parameters:discord-oauth-client-id"] = config.OAuth.DiscordClientId ?? string.Empty,
+            ["Parameters:apple-oauth-client-id"] = config.OAuth.AppleClientId ?? string.Empty,
+            // API runtime config: ScyllaKeyspace + ApiRuntimeSection (CallbackBaseUrl,
+            // JwtAuthority, JwtAudience, CorsAllowedOrigins). All five are non-secret Aspire
+            // parameters declared in InterfoldAppHost.Configure. ConfigPhase has already run
+            // ResolveDerivedDefaults + Validate by this point, so every value is guaranteed
+            // non-empty (the .env rewrite in BuildEnvReplacements above writes the same five
+            // keys onto the matching SCYLLA_KEYSPACE / OAUTH_CALLBACK_BASE_URL / ... entries
+            // Aspire emits unfilled in publish mode).
+            ["Parameters:scylla-keyspace"] = config.ScyllaKeyspace,
+            ["Parameters:oauth-callback-base-url"] = config.ApiRuntime.CallbackBaseUrl,
+            ["Parameters:jwt-authority"] = config.ApiRuntime.JwtAuthority,
+            ["Parameters:jwt-audience"] = config.ApiRuntime.JwtAudience,
+            ["Parameters:cors-allowed-origins"] = string.Join(",", config.ApiRuntime.CorsAllowedOrigins),
+            // Operator tuning parameters — see BuildEnvReplacements above for the
+            // wire-side documentation. The four optional fields serialise empty/null
+            // as the empty string; ApplyStorage / ApplyObservability / TryParseInt
+            // normalise to null on read so the API's not-configured branches still
+            // fire. Parameter names match InterfoldAppHost.Configure's AddParameter
+            // calls; injecting them through IConfiguration here lets the AppHost graph
+            // (and any future code path that reads Parameters:*) pick them up.
+            ["Parameters:node-group"] = config.Cluster.NodeGroup,
+            ["Parameters:avatar-storage-root"] = config.Storage.AvatarStorageRoot ?? string.Empty,
+            ["Parameters:avatar-public-base"] = config.Storage.AvatarPublicBase ?? string.Empty,
+            ["Parameters:otlp-endpoint"] = config.Observability.OtlpEndpoint ?? string.Empty,
+            ["Parameters:socket-batch-bytes-threshold"] = config.Socket.BatchBytesThreshold?.ToString() ?? string.Empty,
+            ["Parameters:db-retry-attempts"] = config.Persistence.DbRetryAttempts.ToString(),
+            ["Parameters:db-retry-initial-delay-ms"] = config.Persistence.DbRetryInitialDelayMs.ToString(),
+            ["Parameters:db-retry-max-delay-ms"] = config.Persistence.DbRetryMaxDelayMs.ToString(),
+            ["Parameters:hydration-max-concurrency"] = config.Persistence.HydrationMaxConcurrency.ToString(),
             ["Parameters:include-scylla"] = includeScylla,
             ["Parameters:include-cassandra"] = includeCassandra,
             ["Parameters:scylla-topology"] = scyllaTopology,

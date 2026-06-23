@@ -83,9 +83,9 @@ public class PublishIntegrationTests(UbuntuDinDFixture dinD)
     public async Task CustomApiImageAppearsInGeneratedCompose()
     {
         // The default test fixture config sets apiImage to `interfold-api:test`, which differs
-        // from the production default `ghcr.io/interfold/api:latest`. The compose YAML must
-        // reference the override - if not, the rest of the pipeline would silently pull from
-        // the public registry.
+        // from the production default `ghcr.io/azyyyyyy/interfold-api:latest`. The compose YAML
+        // must reference the override - if not, the rest of the pipeline would silently pull
+        // from the public registry.
         var scratch = await dinD.CreateScratchAsync(nameof(CustomApiImageAppearsInGeneratedCompose), TestConfigJsonPath);
 
         var result = await dinD.RunBootstrapperAsync(nameof(CustomApiImageAppearsInGeneratedCompose),
@@ -98,7 +98,7 @@ public class PublishIntegrationTests(UbuntuDinDFixture dinD)
         await Assert.That(compose).Contains("interfold-api:test")
             .Because("the custom apiImage from interfold.bootstrap.test.json should appear in the emitted compose");
         // The production default tag must NOT leak through when overridden.
-        await Assert.That(compose).DoesNotContain("ghcr.io/interfold/api:latest")
+        await Assert.That(compose).DoesNotContain("ghcr.io/azyyyyyy/interfold-api:latest")
             .Because("the default api image tag must not appear when apiImage is overridden");
     }
 

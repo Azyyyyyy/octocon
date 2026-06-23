@@ -265,6 +265,236 @@ public sealed class ConfigValidationTests
     }
 
     [Test]
+    public async Task InvalidScyllaKeyspaceFailsValidation()
+    {
+        // The seven valid values are baked into ConfigPhase.ValidScyllaKeyspaces; anything else
+        // (including the empty string) must surface as an upfront validation failure naming
+        // the field so the operator can spot the typo.
+        var cfg = MakeValid();
+        cfg.ScyllaKeyspace = "antarctica";
+
+        var ex = Assert.Throws<InvalidOperationException>(() => ConfigPhase.Validate(cfg));
+        await Assert.That(ex.Message).Contains("scyllaKeyspace");
+        await Assert.That(ex.Message).Contains("antarctica");
+    }
+
+    [Test]
+    public async Task EachValidScyllaKeyspacePasses()
+    {
+        // Smoke test that all seven canonical region values are accepted. The single test body
+        // iterates so a future addition to the region list will fail loudly here first.
+        foreach (var keyspace in ConfigPhase.ValidScyllaKeyspaces)
+        {
+            var cfg = MakeValid();
+            cfg.ScyllaKeyspace = keyspace;
+            ConfigPhase.Validate(cfg);
+        }
+        await Task.CompletedTask;
+    }
+
+    [Test]
+    public async Task NonHttpCallbackBaseUrlFailsValidation()
+    {
+        // The shared ValidateAbsoluteHttpUri helper rejects anything that doesn't parse as an
+        // absolute http(s) URL. Even valid URIs with a different scheme (file://, ftp://, …)
+        // must fail so the operator catches typos before the API tries to use the value in
+        // the OAuth redirect-URL stitching.
+        var cfg = MakeValid();
+        cfg.ApiRuntime.CallbackBaseUrl = "ftp://api.example.com";
+
+        var ex = Assert.Throws<InvalidOperationException>(() => ConfigPhase.Validate(cfg));
+        await Assert.That(ex.Message).Contains("callbackBaseUrl");
+    }
+
+    [Test]
+    public async Task EmptyJwtAudienceFailsValidation()
+    {
+        // jwtAudience has a property-initialiser default ("octocon") so it's never empty in
+        // practice — but a hand-edited JSON with `"jwtAudience": ""` must reject upfront
+        // rather than silently writing an empty value into OCTOCON_JWT_AUDIENCE.
+        var cfg = MakeValid();
+        cfg.ApiRuntime.JwtAudience = "";
+
+        var ex = Assert.Throws<InvalidOperationException>(() => ConfigPhase.Validate(cfg));
+        await Assert.That(ex.Message).Contains("jwtAudience");
+    }
+
+    [Test]
+    public async Task NonHttpCorsOriginFailsValidation()
+    {
+        // Each CORS allow-list entry must parse as an absolute http(s) origin — bare hostnames,
+        // wildcards, or non-http schemes would never match the request's Origin header at
+        // runtime and are therefore a bootstrapper-time error.
+        var cfg = MakeValid();
+        cfg.ApiRuntime.CorsAllowedOrigins = ["https://app.example.com", "not-a-url"];
+
+        var ex = Assert.Throws<InvalidOperationException>(() => ConfigPhase.Validate(cfg));
+        await Assert.That(ex.Message).Contains("corsAllowedOrigins");
+    }
+
+    [Test]
+    public async Task ValidateFillsDerivedApiRuntimeDefaults()
+    {
+        // Validate is the bootstrapper's single materialisation point for derived defaults: a
+        // non-interactive caller (loading a JSON file that omits apiRuntime.*) must end up
+        // with the same post-derivation values the interactive form would produce. This pins
+        // the side-effect contract — Validate doesn't just check, it mutates.
+        var cfg = MakeValid();
+        cfg.Deployment.Domains = ["api.example.com", "admin.example.com"];
+        cfg.Deployment.WebHttps = true;
+        // Force the apiRuntime fields back to their "empty" state (MakeValid leaves them at
+        // their property-initialiser defaults which are already empty, but be explicit).
+        cfg.ApiRuntime.CallbackBaseUrl = string.Empty;
+        cfg.ApiRuntime.JwtAuthority = string.Empty;
+        cfg.ApiRuntime.CorsAllowedOrigins = [];
+
+        ConfigPhase.Validate(cfg);
+
+        await Assert.That(cfg.ApiRuntime.CallbackBaseUrl).IsEqualTo("https://api.example.com");
+        await Assert.That(cfg.ApiRuntime.JwtAuthority).IsEqualTo("https://api.example.com");
+        await Assert.That(cfg.ApiRuntime.CorsAllowedOrigins.Count).IsEqualTo(2);
+    }
+
+    // --- Cluster / Storage / Observability / Socket / Persistence tuning validation ---
+
+    [Test]
+    public async Task InvalidNodeGroupFailsValidation()
+    {
+        // ConfigPhase.ValidNodeGroups is the authoritative allow-list — anything else (including
+        // an empty string) must surface as a named validation failure rather than silently
+        // degrading to the API's "auxiliary" fallback at runtime.
+        var cfg = MakeValid();
+        cfg.Cluster.NodeGroup = "guardian";
+
+        var ex = Assert.Throws<InvalidOperationException>(() => ConfigPhase.Validate(cfg));
+        await Assert.That(ex.Message).Contains("nodeGroup");
+        await Assert.That(ex.Message).Contains("guardian");
+    }
+
+    [Test]
+    public async Task EachValidNodeGroupPasses()
+    {
+        // Smoke test all three canonical values. Same shape as EachValidScyllaKeyspacePasses
+        // — drives a future allow-list extension to fail loudly here first.
+        foreach (var nodeGroup in ConfigPhase.ValidNodeGroups)
+        {
+            var cfg = MakeValid();
+            cfg.Cluster.NodeGroup = nodeGroup;
+            ConfigPhase.Validate(cfg);
+        }
+        await Task.CompletedTask;
+    }
+
+    [Test]
+    public async Task EmptyOptionalStringsPass()
+    {
+        // The four "disabled when empty" string fields (Avatar* + OtlpEndpoint) must accept
+        // the empty default. This pins the contract that leaving those rows blank in the
+        // form (or omitting the JSON section entirely) is a supported "feature disabled"
+        // signal rather than a validation failure.
+        var cfg = MakeValid();
+        cfg.Storage.AvatarStorageRoot = string.Empty;
+        cfg.Storage.AvatarPublicBase = string.Empty;
+        cfg.Observability.OtlpEndpoint = string.Empty;
+        cfg.Socket.BatchBytesThreshold = null;
+
+        ConfigPhase.Validate(cfg);
+        await Task.CompletedTask;
+    }
+
+    [Test]
+    public async Task NonHttpAvatarPublicBaseFailsValidation()
+    {
+        // The optional URL fields reuse the same absolute http(s) check as the apiRuntime URL
+        // fields — non-http schemes still fail, even when the field is optional overall.
+        var cfg = MakeValid();
+        cfg.Storage.AvatarPublicBase = "ftp://cdn.example.com/avatars/";
+
+        var ex = Assert.Throws<InvalidOperationException>(() => ConfigPhase.Validate(cfg));
+        await Assert.That(ex.Message).Contains("avatarPublicBase");
+    }
+
+    [Test]
+    public async Task RelativeAvatarStorageRootFailsValidation()
+    {
+        // The avatar storage root lives inside the API container; relative paths would resolve
+        // against the container's CWD (whatever Aspire baked into the image) and silently
+        // break the avatar-write code path. Reject upfront.
+        var cfg = MakeValid();
+        cfg.Storage.AvatarStorageRoot = "avatars";
+
+        var ex = Assert.Throws<InvalidOperationException>(() => ConfigPhase.Validate(cfg));
+        await Assert.That(ex.Message).Contains("avatarStorageRoot");
+    }
+
+    [Test]
+    public async Task NonHttpOtlpEndpointFailsValidation()
+    {
+        var cfg = MakeValid();
+        cfg.Observability.OtlpEndpoint = "grpc://otel-collector:4317";
+
+        var ex = Assert.Throws<InvalidOperationException>(() => ConfigPhase.Validate(cfg));
+        await Assert.That(ex.Message).Contains("otlpEndpoint");
+    }
+
+    [Test]
+    public async Task ZeroDbRetryAttemptsFailsValidation()
+    {
+        var cfg = MakeValid();
+        cfg.Persistence.DbRetryAttempts = 0;
+
+        var ex = Assert.Throws<InvalidOperationException>(() => ConfigPhase.Validate(cfg));
+        await Assert.That(ex.Message).Contains("dbRetryAttempts");
+    }
+
+    [Test]
+    public async Task DbRetryAttemptsAboveCapFailsValidation()
+    {
+        var cfg = MakeValid();
+        cfg.Persistence.DbRetryAttempts = 9999;
+
+        var ex = Assert.Throws<InvalidOperationException>(() => ConfigPhase.Validate(cfg));
+        await Assert.That(ex.Message).Contains("dbRetryAttempts");
+    }
+
+    [Test]
+    public async Task DbRetryMaxBelowInitialFailsValidation()
+    {
+        // The cross-check catches the easy swap mistake (initial=1500, max=100) which would
+        // make the exponential backoff cap below the starting delay — a guaranteed source of
+        // confused operators reading retry logs.
+        var cfg = MakeValid();
+        cfg.Persistence.DbRetryInitialDelayMs = 500;
+        cfg.Persistence.DbRetryMaxDelayMs = 100;
+
+        var ex = Assert.Throws<InvalidOperationException>(() => ConfigPhase.Validate(cfg));
+        await Assert.That(ex.Message).Contains("dbRetryMaxDelayMs");
+        await Assert.That(ex.Message).Contains("dbRetryInitialDelayMs");
+    }
+
+    [Test]
+    public async Task HydrationConcurrencyAboveCapFailsValidation()
+    {
+        var cfg = MakeValid();
+        cfg.Persistence.HydrationMaxConcurrency = 9999;
+
+        var ex = Assert.Throws<InvalidOperationException>(() => ConfigPhase.Validate(cfg));
+        await Assert.That(ex.Message).Contains("hydrationMaxConcurrency");
+    }
+
+    [Test]
+    public async Task SocketBatchThresholdOutOfRangeFailsValidation()
+    {
+        // The nullable field is bounded only when set — null still passes (see
+        // EmptyOptionalStringsPass above). Once supplied, the 1..16 MiB range applies.
+        var cfg = MakeValid();
+        cfg.Socket.BatchBytesThreshold = 0;
+
+        var ex = Assert.Throws<InvalidOperationException>(() => ConfigPhase.Validate(cfg));
+        await Assert.That(ex.Message).Contains("batchBytesThreshold");
+    }
+
+    [Test]
     public async Task MalformedJsonReturnsClearError()
     {
         // ConfigPhase.RunAsync uses JsonSerializer.Deserialize, which surfaces a JsonException

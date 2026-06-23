@@ -10,11 +10,17 @@ namespace Interfold.Bootstrapper.UnitTests;
 /// tests confirm that those same keys are present in the <em>real</em> emitted file, but this
 /// unit-level check catches drift in either direction at sub-second speed.
 ///
-/// After the JWT / OAuth-secret / leaf-PFX-password migration into <c>internal.secrets</c>,
-/// the parameter dict shrunk from 10 to 6 keys; the subsequent addition of <c>POSTGRES_DB</c>
-/// (operator-tunable application database name) bumped it back to 7. The API bind-mount set
-/// dropped from two (<c>/keys</c> + <c>/certs</c>) to one (<c>/certs</c>). Single-mode total is
-/// now 7 + 1 + 1 = 9.
+/// Key-count history: after the JWT / OAuth-secret / leaf-PFX-password migration into
+/// <c>internal.secrets</c> the parameter dict shrunk from 10 to 6 keys; <c>POSTGRES_DB</c>
+/// (operator-tunable application database name) bumped it back to 7; the three OAuth
+/// client IDs (public per-provider identifiers paired with the secrets in
+/// <c>internal.secrets</c>) brought it to 10. The five API-runtime keys
+/// (<c>SCYLLA_KEYSPACE</c>, <c>OAUTH_CALLBACK_BASE_URL</c>, <c>JWT_AUTHORITY</c>,
+/// <c>JWT_AUDIENCE</c>, <c>CORS_ALLOWED_ORIGINS</c>) brought it to 15. The API bind-mount
+/// set dropped from two (<c>/keys</c> + <c>/certs</c>) to one (<c>/certs</c>). The nine
+/// operator tuning keys (<c>NODE_GROUP</c>, two avatar paths, <c>OTLP_ENDPOINT</c>, the
+/// nullable socket batch threshold, and the four DB-retry / hydration tuning ints)
+/// brought the parameter dict to 24 and the single-mode total to 24 + 1 + 1 = 26.
 /// </summary>
 public sealed class PublishEnvPostProcessingTests
 {
@@ -25,20 +31,40 @@ public sealed class PublishEnvPostProcessingTests
         var config = new BootstrapConfig
         {
             DatabaseMode = databaseMode,
-            ApiImage = apiImage ?? "ghcr.io/interfold/api:latest",
+            ApiImage = apiImage ?? "ghcr.io/azyyyyyy/interfold-api:latest",
         };
         // OAuth client secrets flow through PostgresSeedOptions into internal.secrets;
         // they no longer appear in the env replacements. Setting them here only exercises
         // the irrelevant config path.
         config.OAuth.GoogleClientSecret = "google-secret-from-config";
         config.OAuth.DiscordClientSecret = "discord-secret-from-config";
+
+        // BuildEnvReplacements assumes ConfigPhase has already run ResolveDerivedDefaults
+        // (Validate runs it on every config). Mirror that here so the unit tests exercise
+        // the same post-derivation snapshot the runtime sees, without depending on the
+        // full Validate path (the publish tests intentionally allow exotic combinations
+        // like exotic apiImage strings that Validate would reject).
+        ConfigPhase.ResolveDerivedDefaults(config);
         return (config, SecretsPhase.Generate());
     }
 
     [Test]
-    public async Task BuildEnvReplacementsProducesAllSevenParameterKeys()
+    public async Task BuildEnvReplacementsProducesAllRequiredParameterKeys()
     {
         var (config, secrets) = MakeInputs();
+        // Pin all three OAuth IDs so the non-empty assertion below is meaningful; the
+        // empty-IDs-still-emit-keys behaviour is locked down by a dedicated test below.
+        config.OAuth.GoogleClientId = "google-client-id";
+        config.OAuth.DiscordClientId = "discord-client-id";
+        config.OAuth.AppleClientId = "apple-client-id";
+        // Same shape for the four optional / nullable tuning fields — pin non-empty
+        // values here so the IsNotEmpty assertion stays meaningful for all required
+        // keys; the matching empty-still-emits-key behaviour is locked down by
+        // BuildEnvReplacementsEmitsEmptyTuningSlotsForNullables below.
+        config.Storage.AvatarStorageRoot = "/var/lib/interfold/avatars";
+        config.Storage.AvatarPublicBase = "https://cdn.example.com/avatars/";
+        config.Observability.OtlpEndpoint = "http://localhost:4317";
+        config.Socket.BatchBytesThreshold = 65536;
         const string baseDir = "/var/lib/interfold";
         const string outputDir = "/srv/interfold/deploy";
 
@@ -53,6 +79,38 @@ public sealed class PublishEnvPostProcessingTests
             "SCYLLA_USER",
             "SCYLLA_PASSWORD",
             "ENCRYPTION_PRIVATE_KEY",
+            // Public per-provider OAuth identifiers - paired with the per-provider secrets that
+            // live in internal.secrets. The matching scheme registration on the API side is
+            // gated on the client ID being non-empty; the bootstrapper writes whatever
+            // BootstrapConfig.OAuth.*ClientId says, including the empty string (see
+            // BuildEnvReplacementsEmitsEmptyOAuthClientIdsWhenNotConfigured below).
+            "GOOGLE_OAUTH_CLIENT_ID",
+            "DISCORD_OAUTH_CLIENT_ID",
+            "APPLE_OAUTH_CLIENT_ID",
+            // API runtime config — bootstrapper-managed, sourced from BootstrapConfig
+            // (ScyllaKeyspace + ApiRuntime.*). All five are post-derivation non-empty
+            // (MakeInputs runs ResolveDerivedDefaults).
+            "SCYLLA_KEYSPACE",
+            "OAUTH_CALLBACK_BASE_URL",
+            "JWT_AUTHORITY",
+            "JWT_AUDIENCE",
+            "CORS_ALLOWED_ORIGINS",
+            // Operator tuning knobs — five of these have non-null defaults on
+            // BootstrapConfig (NodeGroup "auxiliary"; DbRetry attempts/initial/max =
+            // 3/100/1500; HydrationMaxConcurrency = 8) and so always land here non-empty.
+            // The four nullable-or-empty-allowed fields (Avatar* / OTLP / socket
+            // threshold) are pinned non-empty above to keep the IsNotEmpty assertion
+            // meaningful; their "blank still emits the key" behaviour is locked down by
+            // BuildEnvReplacementsEmitsEmptyTuningSlotsForNullables below.
+            "NODE_GROUP",
+            "AVATAR_STORAGE_ROOT",
+            "AVATAR_PUBLIC_BASE",
+            "OTLP_ENDPOINT",
+            "SOCKET_BATCH_BYTES_THRESHOLD",
+            "DB_RETRY_ATTEMPTS",
+            "DB_RETRY_INITIAL_DELAY_MS",
+            "DB_RETRY_MAX_DELAY_MS",
+            "HYDRATION_MAX_CONCURRENCY",
         ];
         foreach (var key in required)
         {
@@ -69,10 +127,56 @@ public sealed class PublishEnvPostProcessingTests
         await Assert.That(replacements.Parameters.ContainsKey("ENCRYPTION_PEPPER")).IsFalse();
         await Assert.That(replacements.Parameters.ContainsKey("GOOGLE_OAUTH_CLIENT_SECRET")).IsFalse();
         await Assert.That(replacements.Parameters.ContainsKey("DISCORD_OAUTH_CLIENT_SECRET")).IsFalse();
+        await Assert.That(replacements.Parameters.ContainsKey("APPLE_OAUTH_CLIENT_SECRET")).IsFalse();
         await Assert.That(replacements.Parameters.ContainsKey("LEAF_PFX_PASSWORD")).IsFalse();
         // Admin credentials must also stay inside internal.secrets exclusively.
         await Assert.That(replacements.Parameters.ContainsKey("SCYLLA_ADMIN_PASSWORD")).IsFalse();
         await Assert.That(replacements.Parameters.ContainsKey("POSTGRES_ADMIN_PASSWORD")).IsFalse();
+    }
+
+    [Test]
+    public async Task BuildEnvReplacementsCarriesOAuthClientIdsFromConfig()
+    {
+        // Pin the contract: BuildEnvReplacements copies the operator's BootstrapConfig.OAuth.*ClientId
+        // values verbatim into the env-replacement dict. Each provider's ID lands on the matching
+        // OCTOCON_*_OAUTH_CLIENT_ID env var via the Parameters:*-oauth-client-id wiring in
+        // PublishInProcessAsync (and the ConfigureApiSelfHostEnv WithEnvironment calls in
+        // InterfoldAppHost), so a drift between BootstrapConfig field name and Aspire parameter
+        // name would surface as either a missing key here or a value mismatch.
+        var (config, secrets) = MakeInputs();
+        config.OAuth.GoogleClientId = "google-client-from-config.apps.googleusercontent.com";
+        config.OAuth.DiscordClientId = "1234567890";
+        config.OAuth.AppleClientId = "com.example.interfold.signin";
+
+        var replacements = PublishPhase.BuildEnvReplacements(config, secrets, "/base", "/out");
+
+        await Assert.That(replacements.Parameters["GOOGLE_OAUTH_CLIENT_ID"])
+            .IsEqualTo("google-client-from-config.apps.googleusercontent.com");
+        await Assert.That(replacements.Parameters["DISCORD_OAUTH_CLIENT_ID"]).IsEqualTo("1234567890");
+        await Assert.That(replacements.Parameters["APPLE_OAUTH_CLIENT_ID"])
+            .IsEqualTo("com.example.interfold.signin");
+    }
+
+    [Test]
+    public async Task BuildEnvReplacementsEmitsEmptyOAuthClientIdsWhenNotConfigured()
+    {
+        // Empty client IDs are a valid "I'm not using this provider" signal — the API's
+        // scheme registrar skips schemes whose OCTOCON_*_OAUTH_CLIENT_ID is empty. The
+        // bootstrapper must still emit explicit empty-string entries (rather than omitting
+        // the keys) so the Aspire-emitted blank `.env` lines get rewritten as `KEY=`
+        // instead of triggering the "blank value left unfilled" operator warning in
+        // ApplyReplacementsToEnvFile.
+        var (config, secrets) = MakeInputs();
+        // (defaults are already empty for all three IDs)
+
+        var replacements = PublishPhase.BuildEnvReplacements(config, secrets, "/base", "/out");
+
+        await Assert.That(replacements.Parameters.ContainsKey("GOOGLE_OAUTH_CLIENT_ID")).IsTrue();
+        await Assert.That(replacements.Parameters.ContainsKey("DISCORD_OAUTH_CLIENT_ID")).IsTrue();
+        await Assert.That(replacements.Parameters.ContainsKey("APPLE_OAUTH_CLIENT_ID")).IsTrue();
+        await Assert.That(replacements.Parameters["GOOGLE_OAUTH_CLIENT_ID"]).IsEqualTo(string.Empty);
+        await Assert.That(replacements.Parameters["DISCORD_OAUTH_CLIENT_ID"]).IsEqualTo(string.Empty);
+        await Assert.That(replacements.Parameters["APPLE_OAUTH_CLIENT_ID"]).IsEqualTo(string.Empty);
     }
 
     [Test]
@@ -91,7 +195,7 @@ public sealed class PublishEnvPostProcessingTests
     }
 
     [Test]
-    public async Task BuildEnvReplacementsProducesAllNineKeysInSingleMode()
+    public async Task BuildEnvReplacementsProducesAllTwentySixKeysInSingleMode()
     {
         var (config, secrets) = MakeInputs(databaseMode: "single");
         const string baseDir = "/var/lib/interfold";
@@ -100,8 +204,142 @@ public sealed class PublishEnvPostProcessingTests
         var replacements = PublishPhase.BuildEnvReplacements(config, secrets, baseDir, outputDir);
 
         var total = replacements.Parameters.Count + replacements.BindMounts.Count;
-        // Single mode: 7 parameter keys + 1 API bind mount (/certs) + 1 Scylla rackdc bind mount = 9.
-        await Assert.That(total).IsEqualTo(9);
+        // Single mode: 24 parameter keys (7 infra + 3 OAuth client IDs + 5 API runtime
+        // + 9 operator tuning: NODE_GROUP, two avatar paths, OTLP_ENDPOINT, socket
+        // threshold, four DB-retry/hydration ints) + 1 API bind mount (/certs)
+        // + 1 Scylla rackdc bind mount = 26.
+        await Assert.That(total).IsEqualTo(26);
+    }
+
+    [Test]
+    public async Task BuildEnvReplacementsCarriesApiRuntimeFromConfig()
+    {
+        // Pin the contract: BuildEnvReplacements copies BootstrapConfig.ScyllaKeyspace and
+        // every ApiRuntime field verbatim into the env replacements. Each value lands on
+        // the matching OCTOCON_* env var via Parameters:scylla-keyspace / oauth-callback-base-url
+        // / jwt-authority / jwt-audience / cors-allowed-origins (see PublishInProcessAsync) and
+        // the WithEnvironment calls in InterfoldAppHost.ConfigureApiSelfHostEnv.
+        var (config, secrets) = MakeInputs();
+        config.ScyllaKeyspace = "eur";
+        config.ApiRuntime.CallbackBaseUrl = "https://callback.example.com";
+        config.ApiRuntime.JwtAuthority = "https://issuer.example.com";
+        config.ApiRuntime.JwtAudience = "custom-aud";
+        config.ApiRuntime.CorsAllowedOrigins = ["https://app.example.com", "https://admin.example.com"];
+
+        var replacements = PublishPhase.BuildEnvReplacements(config, secrets, "/base", "/out");
+
+        await Assert.That(replacements.Parameters["SCYLLA_KEYSPACE"]).IsEqualTo("eur");
+        await Assert.That(replacements.Parameters["OAUTH_CALLBACK_BASE_URL"])
+            .IsEqualTo("https://callback.example.com");
+        await Assert.That(replacements.Parameters["JWT_AUTHORITY"]).IsEqualTo("https://issuer.example.com");
+        await Assert.That(replacements.Parameters["JWT_AUDIENCE"]).IsEqualTo("custom-aud");
+        // CorsAllowedOrigins lands on OCTOCON_CORS_ALLOWED_ORIGINS as a comma-separated string;
+        // the API's CORS startup block splits on the same character.
+        await Assert.That(replacements.Parameters["CORS_ALLOWED_ORIGINS"])
+            .IsEqualTo("https://app.example.com,https://admin.example.com");
+    }
+
+    [Test]
+    public async Task BuildEnvReplacementsDerivesApiRuntimeFromDeploymentWhenUnset()
+    {
+        // The bootstrapper's contract: leaving apiRuntime.* empty derives the values from
+        // deployment.domains + deployment.webHttps via ConfigPhase.ResolveDerivedDefaults
+        // (which MakeInputs runs on every config). The derived defaults must round-trip
+        // through BuildEnvReplacements unchanged so the .env reflects what the menu showed.
+        var config = new BootstrapConfig
+        {
+            Deployment =
+            {
+                Domains = ["api.example.com", "admin.example.com"],
+                WebHttps = true,
+            },
+        };
+        // ResolveDerivedDefaults runs explicitly here (rather than reusing MakeInputs, which
+        // hands you ghcr.io defaults) so we exercise the empty-apiRuntime path.
+        ConfigPhase.ResolveDerivedDefaults(config);
+        var secrets = SecretsPhase.Generate();
+
+        var replacements = PublishPhase.BuildEnvReplacements(config, secrets, "/base", "/out");
+
+        await Assert.That(replacements.Parameters["OAUTH_CALLBACK_BASE_URL"])
+            .IsEqualTo("https://api.example.com");
+        await Assert.That(replacements.Parameters["JWT_AUTHORITY"])
+            .IsEqualTo("https://api.example.com");
+        // JwtAudience has a hardcoded property-initialiser default ("octocon"); not derived.
+        await Assert.That(replacements.Parameters["JWT_AUDIENCE"]).IsEqualTo("octocon");
+        // CORS derivation emits one entry per domain, each with the WebHttps-derived scheme.
+        await Assert.That(replacements.Parameters["CORS_ALLOWED_ORIGINS"])
+            .IsEqualTo("https://api.example.com,https://admin.example.com");
+        // ScyllaKeyspace's hardcoded default lives on the field itself, not in derivation.
+        await Assert.That(replacements.Parameters["SCYLLA_KEYSPACE"]).IsEqualTo("nam");
+    }
+
+    [Test]
+    public async Task BuildEnvReplacementsCarriesTuningFromConfig()
+    {
+        // Pin the contract: every operator tuning field round-trips through
+        // BuildEnvReplacements verbatim. Each lands on the matching OCTOCON_* env var
+        // via Parameters:* (see PublishInProcessAsync) and the WithEnvironment calls
+        // in InterfoldAppHost.ConfigureApiSelfHostEnv — a typo in either layer would
+        // show up here as a missing key or a value mismatch.
+        var (config, secrets) = MakeInputs();
+        config.Cluster.NodeGroup = "primary";
+        config.Storage.AvatarStorageRoot = "/srv/avatars";
+        config.Storage.AvatarPublicBase = "https://cdn.example.com/a/";
+        config.Observability.OtlpEndpoint = "http://otel-collector:4317";
+        config.Socket.BatchBytesThreshold = 131_072;
+        config.Persistence.DbRetryAttempts = 5;
+        config.Persistence.DbRetryInitialDelayMs = 250;
+        config.Persistence.DbRetryMaxDelayMs = 3_000;
+        config.Persistence.HydrationMaxConcurrency = 16;
+
+        var replacements = PublishPhase.BuildEnvReplacements(config, secrets, "/base", "/out");
+
+        await Assert.That(replacements.Parameters["NODE_GROUP"]).IsEqualTo("primary");
+        await Assert.That(replacements.Parameters["AVATAR_STORAGE_ROOT"]).IsEqualTo("/srv/avatars");
+        await Assert.That(replacements.Parameters["AVATAR_PUBLIC_BASE"])
+            .IsEqualTo("https://cdn.example.com/a/");
+        await Assert.That(replacements.Parameters["OTLP_ENDPOINT"])
+            .IsEqualTo("http://otel-collector:4317");
+        await Assert.That(replacements.Parameters["SOCKET_BATCH_BYTES_THRESHOLD"]).IsEqualTo("131072");
+        await Assert.That(replacements.Parameters["DB_RETRY_ATTEMPTS"]).IsEqualTo("5");
+        await Assert.That(replacements.Parameters["DB_RETRY_INITIAL_DELAY_MS"]).IsEqualTo("250");
+        await Assert.That(replacements.Parameters["DB_RETRY_MAX_DELAY_MS"]).IsEqualTo("3000");
+        await Assert.That(replacements.Parameters["HYDRATION_MAX_CONCURRENCY"]).IsEqualTo("16");
+    }
+
+    [Test]
+    public async Task BuildEnvReplacementsEmitsEmptyTuningSlotsForNullables()
+    {
+        // The four "disabled when empty" tuning fields (Avatar*, OtlpEndpoint, socket
+        // threshold) must still emit explicit empty-string entries when unset — rather
+        // than being omitted — so the Aspire-emitted blank `.env` lines get rewritten
+        // as `KEY=` instead of triggering the "blank value left unfilled" warning in
+        // ApplyReplacementsToEnvFile. The API binders normalise the resulting empty
+        // env vars to null on read (ApplyStorage / ApplyObservability via NullIfEmpty,
+        // socket via TryParseInt) so the not-configured branches still fire.
+        var (config, secrets) = MakeInputs();
+        // (defaults: Avatar* empty, OtlpEndpoint empty, BatchBytesThreshold null)
+
+        var replacements = PublishPhase.BuildEnvReplacements(config, secrets, "/base", "/out");
+
+        await Assert.That(replacements.Parameters.ContainsKey("AVATAR_STORAGE_ROOT")).IsTrue();
+        await Assert.That(replacements.Parameters.ContainsKey("AVATAR_PUBLIC_BASE")).IsTrue();
+        await Assert.That(replacements.Parameters.ContainsKey("OTLP_ENDPOINT")).IsTrue();
+        await Assert.That(replacements.Parameters.ContainsKey("SOCKET_BATCH_BYTES_THRESHOLD")).IsTrue();
+        await Assert.That(replacements.Parameters["AVATAR_STORAGE_ROOT"]).IsEqualTo(string.Empty);
+        await Assert.That(replacements.Parameters["AVATAR_PUBLIC_BASE"]).IsEqualTo(string.Empty);
+        await Assert.That(replacements.Parameters["OTLP_ENDPOINT"]).IsEqualTo(string.Empty);
+        await Assert.That(replacements.Parameters["SOCKET_BATCH_BYTES_THRESHOLD"]).IsEqualTo(string.Empty);
+
+        // The five non-nullable tuning fields fall back to their BootstrapConfig
+        // property-initialiser defaults so the API container sees the same values it
+        // would have used pre-bootstrapper from its compile-time fallbacks.
+        await Assert.That(replacements.Parameters["NODE_GROUP"]).IsEqualTo("auxiliary");
+        await Assert.That(replacements.Parameters["DB_RETRY_ATTEMPTS"]).IsEqualTo("3");
+        await Assert.That(replacements.Parameters["DB_RETRY_INITIAL_DELAY_MS"]).IsEqualTo("100");
+        await Assert.That(replacements.Parameters["DB_RETRY_MAX_DELAY_MS"]).IsEqualTo("1500");
+        await Assert.That(replacements.Parameters["HYDRATION_MAX_CONCURRENCY"]).IsEqualTo("8");
     }
 
     [Test]
@@ -246,7 +484,7 @@ public sealed class PublishEnvPostProcessingTests
         // (which Aspire bakes into the compose YAML as a `image:` line), NOT through the .env.
         // This test pins that contract: changing config.ApiImage must not change the env
         // replacement keys or values — only the compose YAML.
-        var (configA, secretsA) = MakeInputs(apiImage: "ghcr.io/interfold/api:v1.2.3");
+        var (configA, secretsA) = MakeInputs(apiImage: "ghcr.io/azyyyyyy/interfold-api:v1.2.3");
         var (configB, secretsB) = MakeInputs(apiImage: "private-registry.example.com/api:custom-tag");
         // Pin secrets so the only difference is ApiImage.
         secretsB.PostgresPassword = secretsA.PostgresPassword;
