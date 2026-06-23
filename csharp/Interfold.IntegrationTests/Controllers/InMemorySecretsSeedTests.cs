@@ -18,6 +18,15 @@ namespace Interfold.IntegrationTests.Controllers;
 /// </summary>
 public class InMemorySecretsSeedTests : BaseEndpointTest
 {
+    // Operator-facing env-var names (the `__` form). The .NET EnvironmentVariablesConfigurationProvider
+    // rewrites `__` to `:` on load, so SeedFromConfig in InMemoryServiceCollectionExtensions looks up
+    // the `:`-normalised key — but the contract operators set in their docker run / Testcontainers
+    // env is the `__` form below, which is exactly what we mutate here to lock that real path.
+    private const string EnvKeyEncryptionPepper       = "OCTOCON_INMEMORY_SECRETS_SEED__ENCRYPTION_PEPPER";
+    private const string EnvKeyJwtEs256PrivatePem     = "OCTOCON_INMEMORY_SECRETS_SEED__AUTH_JWT_ES256_PRIVATE_PEM";
+    private const string EnvKeyDeepLinkSecret         = "OCTOCON_INMEMORY_SECRETS_SEED__AUTH_DEEP_LINK_SECRET";
+    private const string EnvKeyJwtRsa256PrivatePem    = "OCTOCON_INMEMORY_SECRETS_SEED__AUTH_JWT_RSA256_PRIVATE_PEM";
+
     [Test]
     public async Task Api_InMemorySecretsSeed_PatchesAuthFromEnvVars()
     {
@@ -47,5 +56,75 @@ public class InMemorySecretsSeedTests : BaseEndpointTest
         await Assert.That(response.StatusCode)
             .IsEqualTo(HttpStatusCode.NoContent)
             .Because($"Expected 204 NoContent, got {(int)response.StatusCode}. Body: {await response.Content.ReadAsStringAsync()}");
+    }
+
+    /// <summary>
+    /// Locks the real env-var ingestion path that <c>octocon-app</c>'s Testcontainers harness and
+    /// the published-image docker run both rely on. The sibling test above only exercises the
+    /// <c>FactoryConfigurationProvider</c> shortcut — that path stores keys verbatim and so happily
+    /// matched the literal <c>__</c>-form lookup even while real env vars (which the
+    /// <c>EnvironmentVariablesConfigurationProvider</c> rewrites to <c>:</c>) silently missed.
+    /// This test mutates <see cref="Environment.SetEnvironmentVariable(string,string)"/> with the
+    /// operator-facing <c>__</c> form and builds the factory with the in-fixture <c>:</c>-form
+    /// seeds suppressed (<c>seedInMemorySecretsFromFactoryConfig: false</c>), so the only route
+    /// from env var to <c>InMemorySecretsStore</c> is the production
+    /// <c>EnvironmentVariablesConfigurationProvider</c> → <c>SeedFromConfig</c> chain.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <c>Environment.SetEnvironmentVariable</c> is process-global, so the <c>NotInParallel</c>
+    /// key serialises this test against any other env-var-sensitive test in the suite (none today,
+    /// but the named key is the established pattern in <c>AvatarSourceTests</c> /
+    /// <c>SettingsControllerTests</c>). Prior values are captured up front and restored in the
+    /// <c>finally</c> so re-runs in the same test session don't leak state — important because
+    /// <c>EnvironmentVariablesConfigurationProvider</c> snapshots env vars at host build time, so a
+    /// leaked value would silently flip the behaviour of a later host build in the same process.
+    /// </para>
+    /// </remarks>
+    [Test, NotInParallel("inmemory-secrets-seed-envvars")]
+    public async Task Api_InMemorySecretsSeed_PatchesAuthFromRealEnvVars()
+    {
+        var prior = new[]
+        {
+            (Key: EnvKeyEncryptionPepper,    Value: Environment.GetEnvironmentVariable(EnvKeyEncryptionPepper)),
+            (Key: EnvKeyJwtEs256PrivatePem,  Value: Environment.GetEnvironmentVariable(EnvKeyJwtEs256PrivatePem)),
+            (Key: EnvKeyDeepLinkSecret,      Value: Environment.GetEnvironmentVariable(EnvKeyDeepLinkSecret)),
+            (Key: EnvKeyJwtRsa256PrivatePem, Value: Environment.GetEnvironmentVariable(EnvKeyJwtRsa256PrivatePem)),
+        };
+
+        try
+        {
+            Environment.SetEnvironmentVariable(EnvKeyEncryptionPepper,    "TEST");
+            Environment.SetEnvironmentVariable(EnvKeyJwtEs256PrivatePem,  TestDbCredentials.JwtEs256PrivateKeyPem);
+            Environment.SetEnvironmentVariable(EnvKeyDeepLinkSecret,      TestDbCredentials.DeepLinkSecret);
+            Environment.SetEnvironmentVariable(EnvKeyJwtRsa256PrivatePem, TestDbCredentials.JwtRsa256PrivateKeyPem);
+
+            // seedInMemorySecretsFromFactoryConfig: false suppresses the constructor's `:`-form
+            // FactoryConfigurationProvider writes for these four keys, so SeedFromConfig has no
+            // shortcut and must resolve them from the env-var-backed configuration provider — i.e.
+            // the same code path the published image exercises in production.
+            await using var factory = new InterfoldWebApplicationFactory(
+                "inmemory",
+                seedInMemorySecretsFromFactoryConfig: false);
+            using var client = factory.CreateClient();
+
+            var principalId = $"sys-secrets-env-{Guid.NewGuid():N}"[..24];
+            using var request = new HttpRequestMessage(HttpMethod.Post, "/api/settings/username")
+            {
+                Content = JsonContent.Create(new { username = principalId })
+            };
+            AttachPrincipalAuth(request, client, principalId);
+
+            var response = await client.SendAsync(request);
+
+            await Assert.That(response.StatusCode)
+                .IsEqualTo(HttpStatusCode.NoContent)
+                .Because($"Expected 204 NoContent, got {(int)response.StatusCode}. Body: {await response.Content.ReadAsStringAsync()}");
+        }
+        finally
+        {
+            foreach (var (key, value) in prior)
+                Environment.SetEnvironmentVariable(key, value);
+        }
     }
 }

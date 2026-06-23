@@ -44,14 +44,24 @@ public static class InMemoryServiceCollectionExtensions
             // env-state mutation needed in tests. Blank/missing values are skipped silently;
             // SecretsBootstrapService is the single source of fail-fast for encryption:pepper
             // and we deliberately don't duplicate that contract here.
+            //
+            // Note on the lookup-key shape: operators set these as `OCTOCON_INMEMORY_SECRETS_SEED__*`
+            // env vars, but the .NET EnvironmentVariablesConfigurationProvider rewrites the `__`
+            // separator to the config-key delimiter `:` on load (so an env var
+            // `OCTOCON_INMEMORY_SECRETS_SEED__ENCRYPTION_PEPPER` lands in IConfiguration under the
+            // key `OCTOCON_INMEMORY_SECRETS_SEED:ENCRYPTION_PEPPER`). The lookup strings below use
+            // the `:`-form deliberately — that's the post-normalisation key. The operator-facing
+            // env-var name is unchanged; only this one-character difference lives here. If you
+            // ever revert to the `__`-form lookup, the env-var path will silently miss and
+            // SecretsBootstrapService will fail-fast on `encryption:pepper` instead.
             .AddSingleton<ISecretsStore>(sp =>
             {
                 var config = sp.GetRequiredService<IConfiguration>();
                 var store = new InMemorySecretsStore();
-                SeedFromConfig(store, config, "OCTOCON_INMEMORY_SECRETS_SEED__ENCRYPTION_PEPPER",           "encryption:pepper");
-                SeedFromConfig(store, config, "OCTOCON_INMEMORY_SECRETS_SEED__AUTH_JWT_ES256_PRIVATE_PEM",  "auth:jwt_es256_private_pem");
-                SeedFromConfig(store, config, "OCTOCON_INMEMORY_SECRETS_SEED__AUTH_DEEP_LINK_SECRET",       "auth:deep_link_secret");
-                SeedFromConfig(store, config, "OCTOCON_INMEMORY_SECRETS_SEED__AUTH_JWT_RSA256_PRIVATE_PEM", "auth:jwt_rsa256_private_pem");
+                SeedFromConfig(store, config, "OCTOCON_INMEMORY_SECRETS_SEED:ENCRYPTION_PEPPER",           "encryption:pepper");
+                SeedFromConfig(store, config, "OCTOCON_INMEMORY_SECRETS_SEED:AUTH_JWT_ES256_PRIVATE_PEM",  "auth:jwt_es256_private_pem");
+                SeedFromConfig(store, config, "OCTOCON_INMEMORY_SECRETS_SEED:AUTH_DEEP_LINK_SECRET",       "auth:deep_link_secret");
+                SeedFromConfig(store, config, "OCTOCON_INMEMORY_SECRETS_SEED:AUTH_JWT_RSA256_PRIVATE_PEM", "auth:jwt_rsa256_private_pem");
                 return store;
             })
             .AddSingleton<INotificationTokenRepository, InMemoryNotificationTokenRepository>()
@@ -68,9 +78,9 @@ public static class InMemoryServiceCollectionExtensions
             .AddSingleton<IAuthTokenRevocationRepository, InMemoryAuthTokenRevocationRepository>();
     }
 
-    private static void SeedFromConfig(InMemorySecretsStore store, IConfiguration config, string envName, string secretKey)
+    private static void SeedFromConfig(InMemorySecretsStore store, IConfiguration config, string configKey, string secretKey)
     {
-        var value = config[envName];
+        var value = config[configKey];
         if (!string.IsNullOrWhiteSpace(value))
             store.Seed(secretKey, value);
     }

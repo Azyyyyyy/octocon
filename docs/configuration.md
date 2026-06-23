@@ -462,15 +462,23 @@ Tests centralise the test-only material in
 — a single source of lazy-generated in-process keypairs and deterministic passwords. The
 real DB fixtures seed those values into `internal.secrets` via `PostgresSeedOptions`; the
 in-memory `WebApplicationFactory` instead drives the production env-var seed path by
-pushing the same PEMs + pepper into the factory's configuration provider as
-`OCTOCON_INMEMORY_SECRETS_SEED__*` keys (see the constructor of
+pushing the same PEMs + pepper into the factory's configuration provider (see the
+constructor of
 `[InterfoldWebApplicationFactory](../csharp/Interfold.IntegrationTests/TestServices/InterfoldWebApplicationFactory.cs)`).
-The in-memory `ISecretsStore` registration in
+External runners (e.g. the Kotlin Testcontainers harness) set them as
+`OCTOCON_INMEMORY_SECRETS_SEED__*` env vars on the container; the .NET
+`EnvironmentVariablesConfigurationProvider` rewrites the `__` separator to the config-key
+delimiter `:` on load, so the in-memory `ISecretsStore` registration in
 `[InMemoryServiceCollectionExtensions](../csharp/Interfold.Infrastructure.InMemory/InMemoryServiceCollectionExtensions.cs)`
-reads those values via `IConfiguration` and seeds the store, so in-process tests and the
-published container image (e.g. driven by the Kotlin Testcontainers harness) exercise
-exactly the same wiring. Either way, signing in `CreateToken` and verification on the
-server side use the same PEMs.
+looks them up via `IConfiguration` under the `:`-form key
+(`OCTOCON_INMEMORY_SECRETS_SEED:ENCRYPTION_PEPPER`, …) and seeds the store. The
+in-process test fixture writes the same `:`-form keys into its
+`FactoryConfigurationProvider` so both code paths land on the identical lookup, and a
+dedicated regression test
+(`Api_InMemorySecretsSeed_PatchesAuthFromRealEnvVars`) additionally mutates the
+operator-facing `__`-form env vars via `Environment.SetEnvironmentVariable` to lock the
+real env-var ingestion path end-to-end. Either way, signing in `CreateToken` and
+verification on the server side use the same PEMs.
 
 ## Common gotchas
 

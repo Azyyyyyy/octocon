@@ -36,7 +36,7 @@ internal static class PublishPhase
 
         Directory.CreateDirectory(options.OutputDir);
 
-        var anchor = SetupAnchor(logger, webTls: config.Deployment.WebHttps);
+        var anchor = SetupAnchor();
         var previousCwd = Directory.GetCurrentDirectory();
 
         try
@@ -167,7 +167,8 @@ internal static class PublishPhase
         // bind mounts on the octocon-web service: the cert directory (re-using the API's
         // {outputDir}/certs/) and an envsubst template that the official nginx image renders
         // into /etc/nginx/conf.d/ at startup. The template ships alongside the bootstrapper
-        // binary under {baseDir}/web/nginx/ (see SetupAnchor and BootstrapperBuild).
+        // binary under {baseDir}/web/nginx/ (extracted by EmbeddedSupportFiles on first run;
+        // BootstrapperBuild also stages it for the integration tests).
         if (config.Deployment.WebHttps)
         {
             bindMountLookup["octocon-web:/certs"] = Path.Combine(outputDir, "certs");
@@ -284,38 +285,17 @@ internal static class PublishPhase
         return (rewritten, skipped);
     }
 
-    private static string SetupAnchor(PhaseLogger logger, bool webTls)
+    private static string SetupAnchor()
     {
         // AppContext.BaseDirectory is where the published binary lives (e.g. /opt/interfold-bootstrap/).
-        // We expect operators to deploy `db/scylla/cassandra-rackdc.*.properties` alongside the binary
-        // in the release tarball. The internal.secrets schema is owned by DatabaseInitPhase, so the
-        // bootstrap-auth shell scripts and the 000_create_secrets_table.sql bind mount are no longer
-        // required on disk - the bootstrapper executes the equivalent SQL/CQL directly via
-        // `docker compose exec` against the running postgres/scylla containers.
+        // Anchor is the relative working dir Aspire's compose publisher runs against; the
+        // bind-mount source files (Scylla rackdc properties, nginx envsubst template) are
+        // guaranteed to be on disk under baseDir by Orchestrator.RunAsync's call to
+        // EmbeddedSupportFiles.EnsureExtracted, so this method only has to ensure the anchor
+        // directory exists.
         var baseDir = AppContext.BaseDirectory;
         var anchor = Path.Combine(baseDir, Path.Combine(AnchorSegments));
         Directory.CreateDirectory(anchor);
-
-        var required = new List<string>
-        {
-            Path.Combine(baseDir, "db", "scylla", "cassandra-rackdc.nam.properties"),
-        };
-        if (webTls)
-        {
-            // The compose graph bind-mounts this template into octocon-web; missing it would
-            // surface as a docker mount failure on `docker compose up`.
-            required.Add(Path.Combine(baseDir, "web", "nginx", "default.conf.template"));
-        }
-        var missing = required.Where(p => !File.Exists(p)).ToList();
-        if (missing.Count > 0)
-        {
-            logger.Warn(
-                "expected support files missing under the bootstrapper directory: " +
-                string.Join(", ", missing.Select(p => Path.GetRelativePath(baseDir, p))));
-            logger.Warn(
-                "Compose publish will succeed but `docker compose up` will fail until these files exist.");
-        }
-
         return anchor;
     }
 

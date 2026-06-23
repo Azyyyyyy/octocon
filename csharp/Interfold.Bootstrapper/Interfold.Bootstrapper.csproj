@@ -66,17 +66,22 @@
 
   <ItemGroup>
     <!--
-      Ship the nginx envsubst template next to the binary so the published compose can bind-mount
-      it into the octocon-web container. Aspire's publish pipeline resolves WithBindMount source
-      paths against AppContext.BaseDirectory at publish time, so the file has to be present in the
-      bootstrapper's output directory. The integration test fixture (BootstrapperBuild) also copies
-      this file manually for its publish-output staging, but `dotnet publish` carries it
-      automatically via this entry for plain operator workflows.
+      Support files the AppHost's `WithBindMount` calls resolve against AppContext.BaseDirectory at
+      compose-up time. Embedding them keeps the published binary self-sufficient: on first run,
+      EmbeddedSupportFiles.EnsureExtracted writes any missing file out next to the binary, and
+      leaves operator-edited copies alone. The LogicalName scheme (`support/<relative-on-disk-path>`)
+      is the contract the extractor reads — keep new entries under that prefix so they are picked up
+      automatically without touching the C# manifest.
+
+      The cassandra-rackdc.*.properties entry is a wildcard so adding a new region is a single-file
+      drop into db/scylla/; MSBuild expands %(Filename)%(Extension) per matched file.
     -->
-    <Content Include="..\..\web\nginx\default.conf.template"
-             Link="web\nginx\default.conf.template"
-             CopyToOutputDirectory="PreserveNewest"
-             CopyToPublishDirectory="PreserveNewest" />
+    <EmbeddedResource Include="..\..\db\scylla\cassandra-rackdc.*.properties"
+                      LogicalName="support/db/scylla/%(Filename)%(Extension)" />
+    <EmbeddedResource Include="..\..\scripts\docker\ensure-host-aio.sh"
+                      LogicalName="support/scripts/docker/ensure-host-aio.sh" />
+    <EmbeddedResource Include="..\..\web\nginx\default.conf.template"
+                      LogicalName="support/web/nginx/default.conf.template" />
   </ItemGroup>
 
 </Project>

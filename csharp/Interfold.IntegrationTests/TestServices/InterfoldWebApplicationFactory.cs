@@ -42,7 +42,10 @@ public class InterfoldWebApplicationFactory : WebApplicationFactory<Program>
     public string DisplayName { get; private set; }
     private readonly string _persistenceType;
 
-    public InterfoldWebApplicationFactory(string persistenceType, string? displayName = null)
+    public InterfoldWebApplicationFactory(
+        string persistenceType,
+        string? displayName = null,
+        bool seedInMemorySecretsFromFactoryConfig = true)
     {
         _persistenceType = persistenceType;
         DisplayName = displayName ?? persistenceType;
@@ -55,12 +58,27 @@ public class InterfoldWebApplicationFactory : WebApplicationFactory<Program>
         // pepper into the factory's configuration provider — IConfiguration is the single source of truth
         // for `OCTOCON_INMEMORY_SECRETS_SEED__*`, so the in-process tests exercise exactly the same wiring
         // an external runner (e.g. the Kotlin Testcontainers harness) uses against the published image.
-        if (string.Equals(persistenceType, "inmemory", StringComparison.OrdinalIgnoreCase))
+        //
+        // The keys below use the `:`-form rather than the operator-facing `__`-form because that's
+        // the post-normalisation shape: when the real EnvironmentVariablesConfigurationProvider
+        // loads an `OCTOCON_INMEMORY_SECRETS_SEED__ENCRYPTION_PEPPER` env var it rewrites the
+        // separator to the config-key delimiter `:`, so SeedFromConfig in InMemoryServiceCollectionExtensions
+        // looks up the `:`-form key. FactoryConfigurationProvider.Set stores keys verbatim, so we
+        // have to mirror the normalised shape here for the in-process tests to drive the same
+        // lookup the production env-var path resolves at runtime.
+        //
+        // The seedInMemorySecretsFromFactoryConfig opt-out is for InMemorySecretsSeedTests'
+        // env-var regression test, which mutates Environment.SetEnvironmentVariable for the `__`
+        // form and must NOT be shadowed by the FactoryConfigurationProvider seeds below — that
+        // would mask any regression in the real env-var ingestion path (which is exactly the bug
+        // the test exists to catch).
+        if (seedInMemorySecretsFromFactoryConfig &&
+            string.Equals(persistenceType, "inmemory", StringComparison.OrdinalIgnoreCase))
         {
-            _configProvider.Set("OCTOCON_INMEMORY_SECRETS_SEED__ENCRYPTION_PEPPER",           "TEST");
-            _configProvider.Set("OCTOCON_INMEMORY_SECRETS_SEED__AUTH_JWT_ES256_PRIVATE_PEM",  TestDbCredentials.JwtEs256PrivateKeyPem);
-            _configProvider.Set("OCTOCON_INMEMORY_SECRETS_SEED__AUTH_DEEP_LINK_SECRET",       TestDbCredentials.DeepLinkSecret);
-            _configProvider.Set("OCTOCON_INMEMORY_SECRETS_SEED__AUTH_JWT_RSA256_PRIVATE_PEM", TestDbCredentials.JwtRsa256PrivateKeyPem);
+            _configProvider.Set("OCTOCON_INMEMORY_SECRETS_SEED:ENCRYPTION_PEPPER",           "TEST");
+            _configProvider.Set("OCTOCON_INMEMORY_SECRETS_SEED:AUTH_JWT_ES256_PRIVATE_PEM",  TestDbCredentials.JwtEs256PrivateKeyPem);
+            _configProvider.Set("OCTOCON_INMEMORY_SECRETS_SEED:AUTH_DEEP_LINK_SECRET",       TestDbCredentials.DeepLinkSecret);
+            _configProvider.Set("OCTOCON_INMEMORY_SECRETS_SEED:AUTH_JWT_RSA256_PRIVATE_PEM", TestDbCredentials.JwtRsa256PrivateKeyPem);
         }
     }
 
@@ -172,9 +190,11 @@ public class InterfoldWebApplicationFactory : WebApplicationFactory<Program>
             //
             // In-memory persistence does NOT participate in this strip: there are no
             // migration hosted services to remove, and the secrets-store seed flows through
-            // the production env-var path (set in this factory's constructor via
-            // OCTOCON_INMEMORY_SECRETS_SEED__*) — the same wiring an external container
-            // runner uses, so tests exercise the published code path end-to-end.
+            // the production lookup path (set in this factory's constructor via the
+            // `:`-form keys that EnvironmentVariablesConfigurationProvider would expose for
+            // `OCTOCON_INMEMORY_SECRETS_SEED__*` env vars) — the same IConfiguration lookup
+            // an external container runner triggers via real env vars, so tests exercise the
+            // published code path end-to-end.
             if (!string.Equals(_persistenceType, "inmemory", StringComparison.OrdinalIgnoreCase))
             {
                 RemoveHostedService<PostgresMigrationService>(x);

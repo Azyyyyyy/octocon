@@ -1,5 +1,6 @@
 using Interfold.Bootstrapper.Cli;
 using Interfold.Bootstrapper.Configuration;
+using Interfold.Bootstrapper.Util;
 
 namespace Interfold.Bootstrapper.Phases;
 
@@ -11,6 +12,14 @@ internal static class Orchestrator
 {
     public static async Task<int> RunAsync(BootstrapOptions options, PhaseLogger logger, CancellationToken ct)
     {
+        // Materialise embedded support files (Scylla rackdc properties, nginx envsubst template,
+        // ensure-host-aio.sh) next to the binary on first run. Runs before any phase so every
+        // downstream consumer — PublishPhase's compose emit, AppHost's WithBindMount resolution,
+        // and operator-facing recovery scripts — sees the same on-disk layout. Power users who
+        // dropped their own copy keep it; only missing files are written. See
+        // Util/EmbeddedSupportFiles.cs for the manifest discovery rules.
+        EmbeddedSupportFiles.EnsureExtracted(AppContext.BaseDirectory, logger);
+
         // Phase sequence per command:
         //   bootstrap       prereqs -> config -> secrets -> certs -> publish -> db-init -> launch
         //   publish         config  -> secrets -> certs -> publish
