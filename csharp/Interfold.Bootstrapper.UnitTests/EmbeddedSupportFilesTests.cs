@@ -65,11 +65,11 @@ public sealed class EmbeddedSupportFilesTests
         {
             var resources = EnumerateSupportResources();
             // Guards against regression: if a future refactor drops every embedded resource the
-            // test would otherwise pass vacuously. The 9-file inventory at the time of writing is
-            // 7 rackdc properties + ensure-host-aio.sh + default.conf.template; allow growth but
-            // require some entries to be present.
-            await Assert.That(resources.Count).IsGreaterThanOrEqualTo(9)
-                .Because("at least the 9 originally-embedded support files should still ship");
+            // test would otherwise pass vacuously. The inventory at the time of writing is
+            // 7 rackdc properties + ensure-host-aio.sh + default.conf.template + Cassandra
+            // Dockerfile; allow growth but require some entries to be present.
+            await Assert.That(resources.Count).IsGreaterThanOrEqualTo(10)
+                .Because("at least the 10 originally-embedded support files should still ship");
 
             EmbeddedSupportFiles.EnsureExtracted(baseDir, new PhaseLogger(OptionsFor()));
 

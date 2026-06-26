@@ -3,6 +3,7 @@ using System.Text.Json;
 using Interfold.Bootstrapper.Cli;
 using Interfold.Bootstrapper.Configuration;
 using Interfold.Bootstrapper.Util;
+using static Interfold.Bootstrapper.Phases.CassandraImagePhase;
 
 namespace Interfold.Bootstrapper.Phases;
 
@@ -31,6 +32,11 @@ internal static class LaunchPhase
         logger.Info($"    using compose file {composeFile}");
 
         var apiHttpPort = await ResolveApiHttpPortAsync(options, ct).ConfigureAwait(false);
+
+        if (await IsCassandraDeploymentAsync(options, ct).ConfigureAwait(false))
+        {
+            await EnsureBuiltAsync(logger, ct).ConfigureAwait(false);
+        }
 
         await DockerComposeUpAsync(composeFile, logger, ct).ConfigureAwait(false);
 
@@ -66,6 +72,26 @@ internal static class LaunchPhase
             if (cfg is not null) return cfg.Ports.ApiHttp;
         }
         return 5000;
+    }
+
+    private static async Task<bool> IsCassandraDeploymentAsync(BootstrapOptions options, CancellationToken ct)
+    {
+        var configPath = options.ConfigPath ?? Path.Combine(options.OutputDir, "interfold.bootstrap.json");
+        if (!File.Exists(configPath))
+        {
+            return false;
+        }
+
+        try
+        {
+            var json = await File.ReadAllTextAsync(configPath, ct).ConfigureAwait(false);
+            var cfg = JsonSerializer.Deserialize(json, BootstrapJsonContext.Default.BootstrapConfig);
+            return cfg is not null && IsCassandraDeployment(cfg);
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private static async Task DockerComposeUpAsync(string composeFile, PhaseLogger logger, CancellationToken ct)

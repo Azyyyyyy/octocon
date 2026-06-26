@@ -133,6 +133,13 @@ internal static class BootstrapperBuild
         {
             Copy(nginxTemplate, Path.Combine(outDir, "web", "nginx", "default.conf.template"));
         }
+
+        // Cassandra-only mode builds this Dockerfile at compose-up time (see CassandraImagePhase).
+        var cassandraDockerfile = RepoRoot.Combine("db", "cassandra", "Dockerfile");
+        if (File.Exists(cassandraDockerfile))
+        {
+            Copy(cassandraDockerfile, Path.Combine(outDir, "db", "cassandra", "Dockerfile"));
+        }
     }
 
     private static void Copy(string src, string dest)
