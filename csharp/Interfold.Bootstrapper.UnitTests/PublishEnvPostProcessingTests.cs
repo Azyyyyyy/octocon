@@ -422,6 +422,28 @@ public sealed class PublishEnvPostProcessingTests
     }
 
     [Test]
+    public async Task CassandraModeFillsCassandraImageEnvKey()
+    {
+        var (config, secrets) = MakeInputs(databaseMode: "cassandra");
+        var replacements = PublishPhase.BuildEnvReplacements(config, secrets, "/base", "/out");
+
+        await Assert.That(replacements.Parameters.ContainsKey("CASSANDRA_IMAGE")).IsTrue()
+            .Because("Aspire emits image: \"${CASSANDRA_IMAGE}\" for the Dockerfile service");
+        await Assert.That(replacements.Parameters["CASSANDRA_IMAGE"])
+            .IsEqualTo(CassandraImagePhase.LocalImageTag);
+    }
+
+    [Test]
+    public async Task NonCassandraModesOmitCassandraImageEnvKey()
+    {
+        var (config, secrets) = MakeInputs(databaseMode: "single");
+        var replacements = PublishPhase.BuildEnvReplacements(config, secrets, "/base", "/out");
+
+        await Assert.That(replacements.Parameters.ContainsKey("CASSANDRA_IMAGE")).IsFalse()
+            .Because("Scylla-only stacks must not carry an unused CASSANDRA_IMAGE entry");
+    }
+
+    [Test]
     public async Task TranslateDatabaseModeRejectsUnknownValue()
     {
         // ConfigPhase.Validate is the operator-facing rejection point, but the helper

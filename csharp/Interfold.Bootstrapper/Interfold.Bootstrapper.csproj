@@ -92,4 +92,16 @@
                       LogicalName="support/web/nginx/default.conf.template" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!--
+      Cassandra-only deployments build this Dockerfile at compose-up time (see CassandraImagePhase).
+      Aspire's compose publisher emits image: "${CASSANDRA_IMAGE}" instead of an inline build:
+      section, so the bootstrapper must ship the context next to the binary and docker-build it
+      before the stack starts. The FROM cassandra:5 base image publishes arm64 layers, which is
+      what makes Raspberry Pi / aarch64 self-hosting viable when Scylla is unavailable.
+    -->
+    <EmbeddedResource Include="..\..\db\cassandra\Dockerfile"
+                      LogicalName="support/db/cassandra/Dockerfile" />
+  </ItemGroup>
+
 </Project>
