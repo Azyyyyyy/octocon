@@ -201,12 +201,21 @@ public sealed class DeploymentSection
     ///         CA's Name Constraints permittedSubtrees but does <em>not</em> appear in the
     ///         leaf cert SAN and is ineligible to be the URL primary host.</item>
     /// </list>
-    /// The default is intentionally empty: a fresh bootstrap fails fast in
+    /// The default is intentionally empty: a non-interactive bootstrap fails fast in
     /// <see cref="Phases.ConfigPhase.Validate"/> unless the operator populates this list,
     /// so we never silently issue a cert for a placeholder. The first non-CIDR entry is
     /// the "primary host" used for the leaf cert subject CN, nginx <c>server_name</c>, and
     /// the derived <c>callbackBaseUrl</c> / <c>jwtAuthority</c> URLs — see
     /// <see cref="Phases.ConfigPhase.ResolveDerivedDefaults"/>.
+    /// <para>
+    /// The <em>interactive</em> bootstrap path is more forgiving: when the form starts with
+    /// an empty <c>Hosts</c> list, <see cref="Phases.ConfigPhase.PromptForConfig"/> consults
+    /// <see cref="LocalAddressDetector.TryDetectPrimaryIp"/> and pre-fills the row with the
+    /// device's primary unicast IP (skipping loopback, tunnels, link-local, APIPA, and
+    /// virtual-bridge interfaces). The operator can accept or override. The detector is
+    /// never consulted on the non-interactive / JSON-loaded path — the fail-fast contract
+    /// above stays intact for unattended runs.
+    /// </para>
     /// </summary>
     [JsonPropertyName("hosts")]
     public List<string> Hosts { get; set; } = [];

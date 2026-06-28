@@ -1,3 +1,4 @@
+using System.Net;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Interfold.Bootstrapper.Cli;
@@ -89,9 +90,46 @@ internal static class ConfigPhase
     /// <c>TestConsole</c> input queue; the test seam is therefore unmasked. Production callers
     /// in <see cref="RunAsync"/> opt in explicitly.
     /// </param>
-    internal static BootstrapConfig PromptForConfig(IAnsiConsole console, bool maskSecrets = false)
+    /// <param name="localAddressProbe">
+    /// Test seam for the device-IP pre-fill on the <c>Public host(s)</c> row. When the
+    /// freshly-constructed <see cref="DeploymentSection.Hosts"/> list is empty (the property's
+    /// shipped default) and the probe returns a non-null <see cref="IPAddress"/>, that address
+    /// is stored verbatim as the first <c>Hosts</c> entry so the menu row paints it as the
+    /// Enter-to-accept default and the operator can override or keep it. Defaults to
+    /// <see cref="LocalAddressDetector.TryDetectPrimaryIp"/> (live NIC enumeration with
+    /// loopback / virtual-bridge / link-local filtering); unit tests pass <c>() =&gt; null</c>
+    /// to keep the empty-Hosts default deterministic, or a concrete <see cref="IPAddress"/>
+    /// fake to exercise the auto-default path. Non-interactive flows (<see cref="RunAsync"/>'s
+    /// JSON-load branch + <see cref="Validate"/>) never consult the probe, so the fail-fast
+    /// contract on a JSON file with no <c>hosts</c> stays intact.
+    /// </param>
+    internal static BootstrapConfig PromptForConfig(
+        IAnsiConsole console,
+        bool maskSecrets = false,
+        Func<IPAddress?>? localAddressProbe = null)
     {
         var c = new BootstrapConfig();
+
+        // Auto-default the "Public host(s)" row to the device's primary unicast IP on a fresh
+        // interactive bootstrap. The probe is the only place this runs — RunAsync's JSON-load
+        // branch and Validate stay untouched, so a non-interactive caller passing a config
+        // file with empty `hosts` still hard-fails fast (per the explicit contract on
+        // DeploymentSection.Hosts). The check guards on `Hosts.Count == 0` rather than calling
+        // the probe unconditionally so it costs nothing when an existing config is being
+        // re-edited and the operator has already populated the list.
+        if (c.Deployment.Hosts.Count == 0)
+        {
+            var detected = (localAddressProbe ?? LocalAddressDetector.TryDetectPrimaryIp)();
+            if (detected is not null)
+            {
+                // Store the bare IP literal (e.g. "192.168.1.42" or "fe80::1") — HostParser
+                // accepts either form for IPv6 (bracketed or bare) and the bare form is what
+                // we want serialised back into the JSON file. Downstream consumers do their
+                // own bracketing where required (URL derivation in ResolveDerivedDefaults
+                // via HostParser.ToUrlHost) so the SAN encoding stays correct.
+                c.Deployment.Hosts = [detected.ToString()];
+            }
+        }
 
         // Local helpers — each closes over `console` (and, for the OAuth wrapper, `maskSecrets`)
         // so the per-field Edit delegates further down can be one-liners. Kept as locals rather

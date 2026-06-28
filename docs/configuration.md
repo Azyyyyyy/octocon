@@ -250,6 +250,15 @@ The leaf cert gets an `iPAddress` SAN for `192.168.1.42`, the root CA's Name Con
 pin to the same `/32`, and devices on the LAN that install the root CA validate
 `https://192.168.1.42/` cleanly.
 
+> **Interactive auto-default.** When the bootstrapper runs interactively on a fresh box
+> (no `interfold.bootstrap.json` yet) it pre-fills the *Public host(s)* row with the
+> device's primary unicast IP — enumerated via `NetworkInterface.GetAllNetworkInterfaces()`
+> and filtered to skip loopback, tunnels, link-local, APIPA, and named virtual bridges
+> (Docker, k8s overlays, Hyper-V switches, WireGuard / Tailscale tunnels). The operator
+> hits Enter to accept or types a replacement. The non-interactive path (`--non-interactive`
+> with a JSON file) does **not** consult the detector — a file with an empty `hosts` list
+> still fails fast with a clear validation error, by design.
+
 ## Layer 3 — Environment variables
 
 Two flavours:

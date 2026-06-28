@@ -1,5 +1,8 @@
+using System.Net;
 using System.Text.RegularExpressions;
+using Interfold.Bootstrapper.Configuration;
 using Interfold.Bootstrapper.Phases;
+using Spectre.Console;
 using Spectre.Console.Testing;
 using TUnit.Core;
 
@@ -127,13 +130,28 @@ public sealed class ConfigInteractivePromptTests
             c.Input.PushTextWithEnter(a);
     }
 
+    /// <summary>
+    /// Calls <see cref="ConfigPhase.PromptForConfig(IAnsiConsole, bool, Func{IPAddress?}?)"/>
+    /// with a null-returning <c>localAddressProbe</c> so the device-IP auto-default never fires
+    /// during unit tests. Every test below that doesn't specifically exercise the auto-default
+    /// goes through this wrapper — without it, a CI runner with a routable NIC would silently
+    /// pre-populate <c>Deployment.Hosts</c> with the runner's primary IP and break the existing
+    /// "fresh config = empty Hosts" assertion in <see cref="ConfirmingFormImmediatelyUsesDefaults"/>
+    /// (and incidentally pollute the derived-URL menu rows in tests that don't edit hosts).
+    /// The few tests that DO want a detected IP call
+    /// <see cref="ConfigPhase.PromptForConfig(IAnsiConsole, bool, Func{IPAddress?}?)"/> directly
+    /// with an explicit fake.
+    /// </summary>
+    private static BootstrapConfig PromptWithoutDetection(IAnsiConsole console, bool maskSecrets = false) =>
+        ConfigPhase.PromptForConfig(console, maskSecrets, localAddressProbe: () => null);
+
     [Test]
     public async Task ConfirmingFormImmediatelyUsesDefaults()
     {
         var console = NewConsole();
         ConfirmForm(console);
 
-        var config = ConfigPhase.PromptForConfig(console);
+        var config = PromptWithoutDetection(console);
 
         // Deployment defaults
         await Assert.That(config.Deployment.OutputDir).IsEqualTo("./deploy");
@@ -141,9 +159,12 @@ public sealed class ConfigInteractivePromptTests
         await Assert.That(config.Deployment.CertYears).IsEqualTo(5);
         await Assert.That(config.Deployment.TrustStoreInstall).IsTrue();
         await Assert.That(config.Deployment.WebHttps).IsFalse();
-        // Hosts has no shipped default placeholder - confirming the form without editing the
+        // Hosts has no shipped default placeholder — confirming the form without editing the
         // Hosts row leaves Hosts as []. Validate fails fast on this state downstream, which is
-        // the explicit fail-fast contract documented in DeploymentSection.Hosts.
+        // the explicit fail-fast contract documented in DeploymentSection.Hosts. Note: this
+        // test routes through PromptWithoutDetection which suppresses the runtime device-IP
+        // pre-fill; in production an interactive bootstrap on a box with a routable NIC sees
+        // the detected IP as the row's default (see DetectedDeviceIpPreFillsHostsOnFreshBootstrap).
         await Assert.That(config.Deployment.Hosts.Count).IsEqualTo(0);
 
         // Ports defaults
@@ -203,7 +224,7 @@ public sealed class ConfigInteractivePromptTests
         EditField(console, fieldIndex: 1, "api.example.com,admin.example.com,www.example.com");
         ConfirmForm(console);
 
-        var config = ConfigPhase.PromptForConfig(console);
+        var config = PromptWithoutDetection(console);
 
         await Assert.That(config.Deployment.Hosts.Count).IsEqualTo(3);
         await Assert.That(config.Deployment.Hosts).Contains("api.example.com");
@@ -218,7 +239,7 @@ public sealed class ConfigInteractivePromptTests
         EditField(console, fieldIndex: 1, "  foo.example.com  ,  bar.example.com  ");
         ConfirmForm(console);
 
-        var config = ConfigPhase.PromptForConfig(console);
+        var config = PromptWithoutDetection(console);
 
         await Assert.That(config.Deployment.Hosts.Count).IsEqualTo(2);
         await Assert.That(config.Deployment.Hosts).Contains("foo.example.com");
@@ -235,11 +256,106 @@ public sealed class ConfigInteractivePromptTests
         EditField(console, fieldIndex: 1, "192.168.1.42,fe80::/64");
         ConfirmForm(console);
 
-        var config = ConfigPhase.PromptForConfig(console);
+        var config = PromptWithoutDetection(console);
 
         await Assert.That(config.Deployment.Hosts.Count).IsEqualTo(2);
         await Assert.That(config.Deployment.Hosts[0]).IsEqualTo("192.168.1.42");
         await Assert.That(config.Deployment.Hosts[1]).IsEqualTo("fe80::/64");
+    }
+
+    [Test]
+    public async Task DetectedDeviceIpPreFillsHostsOnFreshBootstrap()
+    {
+        // The interactive prompt pre-fills "Public host(s)" with the device's primary IP so the
+        // operator's first-run experience is a single Enter to accept the detected LAN address.
+        // We inject a deterministic probe so the test doesn't depend on the runner's NICs.
+        var console = NewConsole();
+        ConfirmForm(console);
+
+        var config = ConfigPhase.PromptForConfig(
+            console,
+            maskSecrets: false,
+            localAddressProbe: () => IPAddress.Parse("192.168.1.42"));
+
+        await Assert.That(config.Deployment.Hosts.Count).IsEqualTo(1);
+        await Assert.That(config.Deployment.Hosts[0]).IsEqualTo("192.168.1.42");
+    }
+
+    [Test]
+    public async Task DetectedIpv6IsStoredAsBareLiteralNotBracketed()
+    {
+        // The stored Hosts entry must be the bare literal — HostParser accepts either form for
+        // IPv6 (bracketed or bare), but downstream consumers expect the bare form: the SAN
+        // encoder uses entry.Ip directly, and URL derivation in ResolveDerivedDefaults handles
+        // its own bracket-wrapping via HostParser.ToUrlHost. Storing "[::1]" would round-trip
+        // into the JSON file with the brackets and silently surprise anyone hand-editing it.
+        var console = NewConsole();
+        ConfirmForm(console);
+
+        var config = ConfigPhase.PromptForConfig(
+            console,
+            maskSecrets: false,
+            localAddressProbe: () => IPAddress.Parse("2001:db8::1"));
+
+        await Assert.That(config.Deployment.Hosts.Count).IsEqualTo(1);
+        await Assert.That(config.Deployment.Hosts[0]).IsEqualTo("2001:db8::1");
+    }
+
+    [Test]
+    public async Task OperatorEditedHostsOverrideDetectedIpDefault()
+    {
+        // Pre-fill is just a default — the operator can still edit the row to whatever they
+        // want, and the typed value MUST win. Sanity-check that the auto-default doesn't bake
+        // itself into the stored config when the operator explicitly types a replacement.
+        var console = NewConsole();
+        EditField(console, fieldIndex: 1, "api.example.com");
+        ConfirmForm(console);
+
+        var config = ConfigPhase.PromptForConfig(
+            console,
+            maskSecrets: false,
+            localAddressProbe: () => IPAddress.Parse("192.168.1.42"));
+
+        await Assert.That(config.Deployment.Hosts.Count).IsEqualTo(1);
+        await Assert.That(config.Deployment.Hosts[0]).IsEqualTo("api.example.com");
+    }
+
+    [Test]
+    public async Task NullDetectorLeavesHostsEmpty()
+    {
+        // The detector can legitimately return null (loopback-only test runner, air-gapped box,
+        // every NIC filtered as virtual). In that case the prompt must NOT invent a fallback —
+        // Hosts stays [] and Validate fails fast downstream, which is the documented contract
+        // on DeploymentSection.Hosts. This is the same shape PromptWithoutDetection exercises,
+        // but pinned as an explicit test so a future "default to 127.0.0.1 when detection fails"
+        // refactor gets caught.
+        var console = NewConsole();
+        ConfirmForm(console);
+
+        var config = ConfigPhase.PromptForConfig(
+            console,
+            maskSecrets: false,
+            localAddressProbe: () => null);
+
+        await Assert.That(config.Deployment.Hosts.Count).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task DetectedIpAppearsInPublicHostMenuRow()
+    {
+        // The menu rendering is where the operator sees the auto-default before deciding to
+        // accept or override. Pin that the detected IP appears in the captured output next to
+        // the "Public host(s)" label so a future refactor that bypasses the Hosts pre-fill (or
+        // accidentally puts the detected value in the wrong row) is caught visually too.
+        var console = NewConsole();
+        ConfirmForm(console);
+
+        ConfigPhase.PromptForConfig(
+            console,
+            maskSecrets: false,
+            localAddressProbe: () => IPAddress.Parse("10.0.0.42"));
+
+        await Assert.That(Regex.IsMatch(console.Output, @"Public host\(s\)\s+10\.0\.0\.42")).IsTrue();
     }
 
     [Test]
@@ -255,7 +371,7 @@ public sealed class ConfigInteractivePromptTests
 
         // maskSecrets:false (the default) keeps the prompt off the ReadKey path so PushTextWithEnter
         // suffices — matches the in-test behaviour we want.
-        var config = ConfigPhase.PromptForConfig(console);
+        var config = PromptWithoutDetection(console);
 
         await Assert.That(config.OAuth.GoogleClientSecret).IsEqualTo("google-secret-xyz");
         await Assert.That(config.OAuth.DiscordClientSecret).IsEqualTo("discord-secret-abc");
@@ -274,7 +390,7 @@ public sealed class ConfigInteractivePromptTests
         EditField(console, fieldIndex: 34, "com.example.interfold.signin");
         ConfirmForm(console);
 
-        var config = ConfigPhase.PromptForConfig(console);
+        var config = PromptWithoutDetection(console);
 
         await Assert.That(config.OAuth.GoogleClientId).IsEqualTo("1234.apps.googleusercontent.com");
         await Assert.That(config.OAuth.DiscordClientId).IsEqualTo("9876543210");
@@ -293,7 +409,7 @@ public sealed class ConfigInteractivePromptTests
         var console = NewConsole();
         ConfirmForm(console);
 
-        ConfigPhase.PromptForConfig(console);
+        PromptWithoutDetection(console);
 
         // The menu row format is "<padded label> <value>" after markup stripping, so a guard
         // regex anchored on each ID's label catches a regression that would leave the value
@@ -316,7 +432,7 @@ public sealed class ConfigInteractivePromptTests
         EditField(console, fieldIndex: 30, googleId);
         ConfirmForm(console);
 
-        ConfigPhase.PromptForConfig(console);
+        PromptWithoutDetection(console);
 
         await Assert.That(console.Output).Contains(googleId);
     }
@@ -333,7 +449,7 @@ public sealed class ConfigInteractivePromptTests
         EditField(console, fieldIndex: 11, "9043");   // Scylla
         ConfirmForm(console);
 
-        var config = ConfigPhase.PromptForConfig(console);
+        var config = PromptWithoutDetection(console);
 
         await Assert.That(config.Ports.ApiHttp).IsEqualTo(5100);
         await Assert.That(config.Ports.ApiHttps).IsEqualTo(5101);
@@ -351,7 +467,7 @@ public sealed class ConfigInteractivePromptTests
         EditField(console, fieldIndex: 5, "y");   // WebHttps := true
         ConfirmForm(console);
 
-        var config = ConfigPhase.PromptForConfig(console);
+        var config = PromptWithoutDetection(console);
 
         await Assert.That(config.Deployment.TrustStoreInstall).IsFalse();
         await Assert.That(config.Deployment.WebHttps).IsTrue();
@@ -366,7 +482,7 @@ public sealed class ConfigInteractivePromptTests
         EditField(console, fieldIndex: 6, "bad", "5005");
         ConfirmForm(console);
 
-        var config = ConfigPhase.PromptForConfig(console);
+        var config = PromptWithoutDetection(console);
 
         await Assert.That(config.Ports.ApiHttp).IsEqualTo(5005);
         await Assert.That(console.Output).Contains("must be an integer");
@@ -379,7 +495,7 @@ public sealed class ConfigInteractivePromptTests
         EditField(console, fieldIndex: 4, "maybe", "n");
         ConfirmForm(console);
 
-        var config = ConfigPhase.PromptForConfig(console);
+        var config = PromptWithoutDetection(console);
 
         await Assert.That(config.Deployment.TrustStoreInstall).IsFalse();
     }
@@ -391,7 +507,7 @@ public sealed class ConfigInteractivePromptTests
         EditField(console, fieldIndex: 12, "invalid", "multi");
         ConfirmForm(console);
 
-        var config = ConfigPhase.PromptForConfig(console);
+        var config = PromptWithoutDetection(console);
 
         await Assert.That(config.DatabaseMode).IsEqualTo("multi");
     }
@@ -406,7 +522,7 @@ public sealed class ConfigInteractivePromptTests
         EditField(console, fieldIndex: 15, "eur");
         ConfirmForm(console);
 
-        var config = ConfigPhase.PromptForConfig(console);
+        var config = PromptWithoutDetection(console);
 
         await Assert.That(config.ScyllaKeyspace).IsEqualTo("eur");
     }
@@ -420,7 +536,7 @@ public sealed class ConfigInteractivePromptTests
         EditField(console, fieldIndex: 15, "ant", "gdpr");
         ConfirmForm(console);
 
-        var config = ConfigPhase.PromptForConfig(console);
+        var config = PromptWithoutDetection(console);
 
         await Assert.That(config.ScyllaKeyspace).IsEqualTo("gdpr");
     }
@@ -439,7 +555,7 @@ public sealed class ConfigInteractivePromptTests
         EditField(console, fieldIndex: 19, "https://app.example.com,https://admin.example.com");
         ConfirmForm(console);
 
-        var config = ConfigPhase.PromptForConfig(console);
+        var config = PromptWithoutDetection(console);
 
         await Assert.That(config.ApiRuntime.CallbackBaseUrl).IsEqualTo("https://api.custom.example.com");
         await Assert.That(config.ApiRuntime.JwtAuthority).IsEqualTo("https://issuer.custom.example.com");
@@ -462,7 +578,7 @@ public sealed class ConfigInteractivePromptTests
         EditField(console, fieldIndex: 1, "api.example.com");
         ConfirmForm(console);
 
-        ConfigPhase.PromptForConfig(console);
+        PromptWithoutDetection(console);
 
         var output = console.Output;
         // Same row-format guard as the OAuth-ID <empty> assertions: anchor on the label so
@@ -486,7 +602,7 @@ public sealed class ConfigInteractivePromptTests
             "https://app.example.com,https://admin.example.com");
         ConfirmForm(console);
 
-        var config = ConfigPhase.PromptForConfig(console);
+        var config = PromptWithoutDetection(console);
 
         await Assert.That(config.ApiRuntime.CorsAllowedOrigins.Count).IsEqualTo(2);
         await Assert.That(config.ApiRuntime.CorsAllowedOrigins).Contains("https://app.example.com");
@@ -501,7 +617,7 @@ public sealed class ConfigInteractivePromptTests
         var console = NewConsole();
         ConfirmForm(console);
 
-        ConfigPhase.PromptForConfig(console);
+        PromptWithoutDetection(console);
 
         var output = console.Output;
         // Deployment
@@ -563,7 +679,7 @@ public sealed class ConfigInteractivePromptTests
         var console = NewConsole();
         ConfirmForm(console);
 
-        ConfigPhase.PromptForConfig(console);
+        PromptWithoutDetection(console);
 
         var output = console.Output;
         await Assert.That(output).Contains("Deployment");
@@ -596,7 +712,7 @@ public sealed class ConfigInteractivePromptTests
         EditField(console, fieldIndex: 21, "primary");
         ConfirmForm(console);
 
-        var config = ConfigPhase.PromptForConfig(console);
+        var config = PromptWithoutDetection(console);
 
         await Assert.That(config.Cluster.NodeGroup).IsEqualTo("primary");
     }
@@ -611,7 +727,7 @@ public sealed class ConfigInteractivePromptTests
         EditField(console, fieldIndex: 21, "guardian", "sidecar");
         ConfirmForm(console);
 
-        var config = ConfigPhase.PromptForConfig(console);
+        var config = PromptWithoutDetection(console);
 
         await Assert.That(config.Cluster.NodeGroup).IsEqualTo("sidecar");
     }
@@ -629,7 +745,7 @@ public sealed class ConfigInteractivePromptTests
         EditField(console, fieldIndex: 24, "https://cdn.example.com/avatars/");
         ConfirmForm(console);
 
-        var config = ConfigPhase.PromptForConfig(console);
+        var config = PromptWithoutDetection(console);
 
         await Assert.That(config.Observability.OtlpEndpoint).IsEqualTo("http://otel-collector:4317");
         await Assert.That(config.Storage.AvatarStorageRoot).IsEqualTo("/var/lib/interfold/avatars");
@@ -650,7 +766,7 @@ public sealed class ConfigInteractivePromptTests
         EditField(console, fieldIndex: 29, "16");
         ConfirmForm(console);
 
-        var config = ConfigPhase.PromptForConfig(console);
+        var config = PromptWithoutDetection(console);
 
         await Assert.That(config.Socket.BatchBytesThreshold).IsEqualTo(131072);
         await Assert.That(config.Persistence.DbRetryAttempts).IsEqualTo(5);
@@ -671,7 +787,7 @@ public sealed class ConfigInteractivePromptTests
         EditField(console, fieldIndex: 25, string.Empty);
         ConfirmForm(console);
 
-        var config = ConfigPhase.PromptForConfig(console);
+        var config = PromptWithoutDetection(console);
 
         await Assert.That(config.Socket.BatchBytesThreshold).IsNull();
     }
@@ -686,7 +802,7 @@ public sealed class ConfigInteractivePromptTests
         EditField(console, fieldIndex: 26, "9999", "5");
         ConfirmForm(console);
 
-        var config = ConfigPhase.PromptForConfig(console);
+        var config = PromptWithoutDetection(console);
 
         await Assert.That(config.Persistence.DbRetryAttempts).IsEqualTo(5);
         // PromptInt's ValidationErrorMessage uses "must be an integer in [N..M]" — pin the
@@ -705,7 +821,7 @@ public sealed class ConfigInteractivePromptTests
         EditField(console, fieldIndex: 6, "5005");
         ConfirmForm(console);
 
-        ConfigPhase.PromptForConfig(console);
+        PromptWithoutDetection(console);
 
         // The literal "5005" appears at least once in the captured output — the form's
         // post-edit re-render echoes the freshly-typed value back into the menu row. (It also
@@ -733,7 +849,7 @@ public sealed class ConfigInteractivePromptTests
         EditField(console, fieldIndex: 31, secret);
         ConfirmForm(console);
 
-        ConfigPhase.PromptForConfig(console);
+        PromptWithoutDetection(console);
 
         var output = console.Output;
         // The post-edit form renders show <set> next to Google OAuth client secret (and <empty>
@@ -767,7 +883,7 @@ public sealed class ConfigInteractivePromptTests
         EditField(console, fieldIndex: 31, secret);
         ConfirmForm(console);
 
-        var config = ConfigPhase.PromptForConfig(console, maskSecrets: true);
+        var config = PromptWithoutDetection(console, maskSecrets: true);
 
         // The actual value still lands on the config — masking is purely a display concern.
         await Assert.That(config.OAuth.GoogleClientSecret).IsEqualTo(secret);
