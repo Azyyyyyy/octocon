@@ -38,7 +38,7 @@ public sealed class CertificateGenerationTests
     private static (BootstrapConfig Config, GeneratedSecrets Secrets) MakeInputs(
         string? rootCaName = null,
         int? certYears = null,
-        IList<string>? domains = null,
+        IList<string>? hosts = null,
         bool trustStoreInstall = false)
     {
         var config = new BootstrapConfig
@@ -47,7 +47,7 @@ public sealed class CertificateGenerationTests
             {
                 RootCaName = rootCaName ?? "Interfold Root CA",
                 CertYears = certYears ?? 5,
-                Domains = domains is null ? ["api.example.com"] : [.. domains],
+                Hosts = hosts is null ? ["api.example.com"] : [.. hosts],
                 TrustStoreInstall = trustStoreInstall,
             },
         };
@@ -168,12 +168,12 @@ public sealed class CertificateGenerationTests
     }
 
     [Test]
-    public async Task MultipleDomainsBecomeMultipleSans()
+    public async Task MultipleHostsBecomeMultipleSans()
     {
         var outputDir = MakeScratchDir();
         try
         {
-            var (config, secrets) = MakeInputs(domains:
+            var (config, secrets) = MakeInputs(hosts:
                 ["api.example.com", "admin.example.com", "www.example.com"]);
             var options = OptionsFor(outputDir);
             var logger = new PhaseLogger(options);
@@ -267,7 +267,7 @@ public sealed class CertificateGenerationTests
         var outputDir = MakeScratchDir();
         try
         {
-            var (config, secrets) = MakeInputs(domains: ["api.example.com"]);
+            var (config, secrets) = MakeInputs(hosts: ["api.example.com"]);
             var options = OptionsFor(outputDir);
             var logger = new PhaseLogger(options);
 
@@ -287,13 +287,13 @@ public sealed class CertificateGenerationTests
     }
 
     [Test]
-    public async Task PermittedSubtreesMatchDomains()
+    public async Task PermittedSubtreesMatchHosts()
     {
         var outputDir = MakeScratchDir();
         try
         {
-            var domains = new List<string> { "api.example.com", "admin.example.com", "www.example.com" };
-            var (config, secrets) = MakeInputs(domains: domains);
+            var hosts = new List<string> { "api.example.com", "admin.example.com", "www.example.com" };
+            var (config, secrets) = MakeInputs(hosts: hosts);
             var options = OptionsFor(outputDir);
             var logger = new PhaseLogger(options);
 
@@ -303,8 +303,8 @@ public sealed class CertificateGenerationTests
             var nc = root.Extensions.First(e => e.Oid?.Value == "2.5.29.30");
 
             var parsed = ParseDnsPermittedSubtrees(nc.RawData);
-            await Assert.That(parsed).IsEquivalentTo(domains)
-                .Because($"permittedSubtrees must contain exactly the configured domains; got [{string.Join(", ", parsed)}]");
+            await Assert.That(parsed).IsEquivalentTo(hosts)
+                .Because($"permittedSubtrees must contain exactly the configured hosts; got [{string.Join(", ", parsed)}]");
         }
         finally
         {
@@ -322,7 +322,7 @@ public sealed class CertificateGenerationTests
         var outputDir = MakeScratchDir();
         try
         {
-            var (config, secrets) = MakeInputs(domains: ["*.example.com"]);
+            var (config, secrets) = MakeInputs(hosts: ["*.example.com"]);
             var options = OptionsFor(outputDir);
             var logger = new PhaseLogger(options);
 
@@ -351,7 +351,7 @@ public sealed class CertificateGenerationTests
         var outputDir = MakeScratchDir();
         try
         {
-            var (config, secrets) = MakeInputs(domains: ["api.example.com"]);
+            var (config, secrets) = MakeInputs(hosts: ["api.example.com"]);
             var options = OptionsFor(outputDir);
             var logger = new PhaseLogger(options);
 
@@ -467,11 +467,169 @@ public sealed class CertificateGenerationTests
         }
     }
 
+    [Test]
+    public async Task LeafSanIncludesIPv4AsIpAddress()
+    {
+        // An IPv4 host on deployment.hosts must end up as an iPAddress GeneralName on the leaf's
+        // SAN extension. Clients hitting `https://192.168.1.42/` need that entry to validate the
+        // cert against the bare IP authority.
+        var outputDir = MakeScratchDir();
+        try
+        {
+            var (config, secrets) = MakeInputs(hosts: ["192.168.1.42"]);
+            var options = OptionsFor(outputDir);
+            var logger = new PhaseLogger(options);
+
+            await CertificatePhase.RunAsync(options, config, secrets, logger, CancellationToken.None);
+
+            using var leaf = LoadCert(Path.Combine(outputDir, "certs", "leaf.crt"));
+            var sanExt = leaf.Extensions.OfType<X509SubjectAlternativeNameExtension>().First();
+            var ips = sanExt.EnumerateIPAddresses().Select(ip => ip.ToString()).ToList();
+            await Assert.That(ips).Contains("192.168.1.42")
+                .Because($"leaf SAN must contain an iPAddress entry for the configured IPv4 host; got [{string.Join(", ", ips)}]");
+        }
+        finally
+        {
+            try { Directory.Delete(outputDir, recursive: true); } catch { /* best effort */ }
+        }
+    }
+
+    [Test]
+    public async Task LeafSanIncludesIPv6AsIpAddress()
+    {
+        var outputDir = MakeScratchDir();
+        try
+        {
+            var (config, secrets) = MakeInputs(hosts: ["fe80::1234"]);
+            var options = OptionsFor(outputDir);
+            var logger = new PhaseLogger(options);
+
+            await CertificatePhase.RunAsync(options, config, secrets, logger, CancellationToken.None);
+
+            using var leaf = LoadCert(Path.Combine(outputDir, "certs", "leaf.crt"));
+            var sanExt = leaf.Extensions.OfType<X509SubjectAlternativeNameExtension>().First();
+            var ips = sanExt.EnumerateIPAddresses().Select(ip => ip.ToString()).ToList();
+            await Assert.That(ips).Contains("fe80::1234")
+                .Because($"leaf SAN must contain an iPAddress entry for the configured IPv6 host; got [{string.Join(", ", ips)}]");
+        }
+        finally
+        {
+            try { Directory.Delete(outputDir, recursive: true); } catch { /* best effort */ }
+        }
+    }
+
+    [Test]
+    public async Task CidrEntrySkippedFromLeafSan()
+    {
+        // CIDR entries widen the root CA's Name Constraints scope but MUST NOT appear on the
+        // leaf SAN — a leaf cert can only serve a specific host. The leaf gets the DNS name; the
+        // CIDR only shows up in the root's permittedSubtrees (tested separately below).
+        var outputDir = MakeScratchDir();
+        try
+        {
+            var (config, secrets) = MakeInputs(hosts: ["api.example.com", "10.0.0.0/8"]);
+            var options = OptionsFor(outputDir);
+            var logger = new PhaseLogger(options);
+
+            await CertificatePhase.RunAsync(options, config, secrets, logger, CancellationToken.None);
+
+            using var leaf = LoadCert(Path.Combine(outputDir, "certs", "leaf.crt"));
+            var sanExt = leaf.Extensions.OfType<X509SubjectAlternativeNameExtension>().First();
+            var dnsNames = sanExt.EnumerateDnsNames().ToList();
+            var ips = sanExt.EnumerateIPAddresses().Select(ip => ip.ToString()).ToList();
+
+            await Assert.That(dnsNames).Contains("api.example.com");
+            // The CIDR must NOT appear in either category.
+            await Assert.That(ips.Count).IsEqualTo(0)
+                .Because($"leaf SAN must not contain any iPAddress entry for a CIDR host; got [{string.Join(", ", ips)}]");
+            await Assert.That(dnsNames.Any(d => d.Contains('/'))).IsFalse()
+                .Because($"leaf SAN must not contain any DNS entry containing '/' (CIDR shape); got [{string.Join(", ", dnsNames)}]");
+        }
+        finally
+        {
+            try { Directory.Delete(outputDir, recursive: true); } catch { /* best effort */ }
+        }
+    }
+
+    [Test]
+    public async Task NameConstraintsEncodesIpv4Cidr()
+    {
+        // The byte layout of an iPAddress permittedSubtree is load-bearing: chain validators on
+        // every client check it as `address || mask`. A drift here would silently broaden or
+        // narrow the operator's blast-radius cap. Pin the canonical /24 form (192.168.1.0/24)
+        // against the expected 8 bytes: 4 addr (C0 A8 01 00) + 4 mask (FF FF FF 00).
+        var outputDir = MakeScratchDir();
+        try
+        {
+            var (config, secrets) = MakeInputs(hosts: ["api.example.com", "192.168.1.0/24"]);
+            var options = OptionsFor(outputDir);
+            var logger = new PhaseLogger(options);
+
+            await CertificatePhase.RunAsync(options, config, secrets, logger, CancellationToken.None);
+
+            using var root = LoadCert(Path.Combine(outputDir, "certs", "rootCA.crt"));
+            var nc = root.Extensions.First(e => e.Oid?.Value == "2.5.29.30");
+            var ipSubtrees = ParseIpPermittedSubtrees(nc.RawData);
+
+            await Assert.That(ipSubtrees.Count).IsEqualTo(1)
+                .Because($"expected exactly one iPAddress permittedSubtree; got {ipSubtrees.Count}");
+            await Assert.That(ipSubtrees[0]).IsEquivalentTo(new byte[]
+            {
+                0xC0, 0xA8, 0x01, 0x00,
+                0xFF, 0xFF, 0xFF, 0x00,
+            });
+        }
+        finally
+        {
+            try { Directory.Delete(outputDir, recursive: true); } catch { /* best effort */ }
+        }
+    }
+
+    [Test]
+    public async Task NameConstraintsEncodesIpv6SingleHostMask()
+    {
+        // A bare IPv6 literal becomes a single-host iPAddress subtree with the all-ones /128
+        // mask (16 addr bytes + 16 mask bytes). Spot-check the boundary bytes for the canonical
+        // form rather than asserting the full 32 bytes verbatim.
+        var outputDir = MakeScratchDir();
+        try
+        {
+            var (config, secrets) = MakeInputs(hosts: ["api.example.com", "fe80::1"]);
+            var options = OptionsFor(outputDir);
+            var logger = new PhaseLogger(options);
+
+            await CertificatePhase.RunAsync(options, config, secrets, logger, CancellationToken.None);
+
+            using var root = LoadCert(Path.Combine(outputDir, "certs", "rootCA.crt"));
+            var nc = root.Extensions.First(e => e.Oid?.Value == "2.5.29.30");
+            var ipSubtrees = ParseIpPermittedSubtrees(nc.RawData);
+
+            await Assert.That(ipSubtrees.Count).IsEqualTo(1);
+            var bytes = ipSubtrees[0];
+            await Assert.That(bytes.Length).IsEqualTo(32)
+                .Because($"IPv6 iPAddress subtree must be 16 (addr) + 16 (mask) = 32 bytes; got {bytes.Length}");
+            // fe80::1 = fe 80 00...00 01 — boundary bytes are deterministic.
+            await Assert.That(bytes[0]).IsEqualTo((byte)0xFE);
+            await Assert.That(bytes[1]).IsEqualTo((byte)0x80);
+            await Assert.That(bytes[15]).IsEqualTo((byte)0x01);
+            // All 16 mask bytes are 0xFF for a /128 single host.
+            for (var i = 16; i < 32; i++)
+            {
+                await Assert.That(bytes[i]).IsEqualTo((byte)0xFF)
+                    .Because($"mask byte at index {i} must be 0xFF for a /128 subtree");
+            }
+        }
+        finally
+        {
+            try { Directory.Delete(outputDir, recursive: true); } catch { /* best effort */ }
+        }
+    }
+
     /// <summary>
     /// Parses the DER-encoded Name Constraints extension value (OID 2.5.29.30) and returns
-    /// the dNSName entries inside permittedSubtrees. Only handles the shape
-    /// <c>CertificatePhase.BuildNameConstraintsExtension</c> emits (single permittedSubtrees,
-    /// dNSName-only, no excludedSubtrees) so a deliberately narrow parser is fine here.
+    /// the dNSName entries inside permittedSubtrees. Skips iPAddress entries (handled by
+    /// <see cref="ParseIpPermittedSubtrees"/>) so legacy tests that only care about DNS
+    /// names continue to pass on mixed-shape configs.
     /// </summary>
     private static List<string> ParseDnsPermittedSubtrees(byte[] rawExtensionValue)
     {
@@ -482,11 +640,45 @@ public sealed class CertificateGenerationTests
         while (permitted.HasData)
         {
             var subtree = permitted.ReadSequence();
-            var dnsName = subtree.ReadCharacterString(
-                UniversalTagNumber.IA5String,
-                new Asn1Tag(TagClass.ContextSpecific, 2));
-            names.Add(dnsName);
+            var peeked = subtree.PeekTag();
+            if (peeked.TagClass == TagClass.ContextSpecific && peeked.TagValue == 2)
+            {
+                names.Add(subtree.ReadCharacterString(
+                    UniversalTagNumber.IA5String,
+                    new Asn1Tag(TagClass.ContextSpecific, 2)));
+            }
+            else
+            {
+                _ = subtree.ReadEncodedValue();
+            }
         }
         return names;
+    }
+
+    /// <summary>
+    /// Sibling of <see cref="ParseDnsPermittedSubtrees"/> that pulls out the iPAddress entries
+    /// (tag [7] IMPLICIT OCTET STRING; payload is address || mask per RFC 5280 §4.2.1.10). DNS
+    /// entries are skipped. Used by the IP / CIDR Name Constraints tests below.
+    /// </summary>
+    private static List<byte[]> ParseIpPermittedSubtrees(byte[] rawExtensionValue)
+    {
+        var reader = new AsnReader(rawExtensionValue, AsnEncodingRules.DER);
+        var nameConstraints = reader.ReadSequence();
+        var permitted = nameConstraints.ReadSequence(new Asn1Tag(TagClass.ContextSpecific, 0));
+        var entries = new List<byte[]>();
+        while (permitted.HasData)
+        {
+            var subtree = permitted.ReadSequence();
+            var peeked = subtree.PeekTag();
+            if (peeked.TagClass == TagClass.ContextSpecific && peeked.TagValue == 7)
+            {
+                entries.Add(subtree.ReadOctetString(new Asn1Tag(TagClass.ContextSpecific, 7)));
+            }
+            else
+            {
+                _ = subtree.ReadEncodedValue();
+            }
+        }
+        return entries;
     }
 }

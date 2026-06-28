@@ -19,7 +19,7 @@ public sealed class ConfigValidationTests
         Deployment =
         {
             OutputDir = "./deploy",
-            Domains = ["api.example.com"],
+            Hosts = ["api.example.com"],
             RootCaName = "Interfold Root CA",
             CertYears = 5,
             TrustStoreInstall = true,
@@ -44,13 +44,13 @@ public sealed class ConfigValidationTests
     }
 
     [Test]
-    public async Task EmptyDomainsListFailsValidation()
+    public async Task EmptyHostsListFailsValidation()
     {
         var cfg = MakeValid();
-        cfg.Deployment.Domains = [];
+        cfg.Deployment.Hosts = [];
 
         var ex = Assert.Throws<InvalidOperationException>(() => ConfigPhase.Validate(cfg));
-        await Assert.That(ex.Message).Contains("domains");
+        await Assert.That(ex.Message).Contains("hosts");
     }
 
     [Test]
@@ -100,10 +100,108 @@ public sealed class ConfigValidationTests
     public async Task DomainWithSpaceFailsValidation()
     {
         var cfg = MakeValid();
-        cfg.Deployment.Domains = ["api example.com"];
+        cfg.Deployment.Hosts = ["api example.com"];
 
         var ex = Assert.Throws<InvalidOperationException>(() => ConfigPhase.Validate(cfg));
-        await Assert.That(ex.Message).Contains("Invalid domain");
+        await Assert.That(ex.Message).Contains("whitespace");
+    }
+
+    [Test]
+    public async Task Ipv4HostPassesValidation()
+    {
+        // Self-hoster on a LAN box without any DNS - just the box's static IP. Must pass validation
+        // and produce a working stack with an IP-SAN'd leaf cert.
+        var cfg = MakeValid();
+        cfg.Deployment.Hosts = ["192.168.1.42"];
+
+        ConfigPhase.Validate(cfg);
+        await Assert.That(cfg.ApiRuntime.CallbackBaseUrl).IsEqualTo("http://192.168.1.42");
+    }
+
+    [Test]
+    public async Task Ipv6HostPassesValidation()
+    {
+        // IPv6 literal as the only host. Validate must accept it, and the derived URL must
+        // bracket-wrap the address per RFC 3986 §3.2.2 — un-bracketed IPv6 in a URL authority
+        // is malformed and would break every downstream Uri.Parse caller.
+        var cfg = MakeValid();
+        cfg.Deployment.Hosts = ["fe80::1"];
+
+        ConfigPhase.Validate(cfg);
+        await Assert.That(cfg.ApiRuntime.CallbackBaseUrl).IsEqualTo("http://[fe80::1]");
+    }
+
+    [Test]
+    public async Task Ipv4CidrPlusDnsHostPassesValidation()
+    {
+        // CIDR alone fails (no primary host), but CIDR alongside a DNS / IP entry is valid:
+        // the DNS / IP entry serves as the primary, the CIDR widens the root-CA Name
+        // Constraints scope.
+        var cfg = MakeValid();
+        cfg.Deployment.Hosts = ["api.example.com", "10.0.0.0/8"];
+
+        ConfigPhase.Validate(cfg);
+        await Assert.That(cfg.ApiRuntime.CallbackBaseUrl).IsEqualTo("http://api.example.com");
+    }
+
+    [Test]
+    public async Task Ipv6CidrPlusIpv4HostPassesValidation()
+    {
+        var cfg = MakeValid();
+        cfg.Deployment.Hosts = ["192.168.1.42", "fe80::/64"];
+
+        ConfigPhase.Validate(cfg);
+        await Assert.That(cfg.ApiRuntime.CallbackBaseUrl).IsEqualTo("http://192.168.1.42");
+    }
+
+    [Test]
+    public async Task AllCidrHostsFailValidation()
+    {
+        // A CIDR-only host list has no leaf-eligible primary, so the leaf cert can't be issued
+        // (it'd have no CN / no SANs). Validate must reject upfront.
+        var cfg = MakeValid();
+        cfg.Deployment.Hosts = ["192.168.1.0/24", "fe80::/64"];
+
+        var ex = Assert.Throws<InvalidOperationException>(() => ConfigPhase.Validate(cfg));
+        await Assert.That(ex.Message).Contains("non-CIDR");
+    }
+
+    [Test]
+    public async Task CidrWithHostBitsSetFailsValidation()
+    {
+        // Operator typo: meant /32 (single host) or /24 (network) but typed the host address
+        // with /24. Surface the fix-it from HostParser rather than silently normalising.
+        var cfg = MakeValid();
+        cfg.Deployment.Hosts = ["192.168.1.42/24"];
+
+        var ex = Assert.Throws<InvalidOperationException>(() => ConfigPhase.Validate(cfg));
+        await Assert.That(ex.Message).Contains("host bits");
+        await Assert.That(ex.Message).Contains("192.168.1.0/24");
+        await Assert.That(ex.Message).Contains("192.168.1.42/32");
+    }
+
+    [Test]
+    public async Task DefaultConstructedDeploymentHasNoHosts()
+    {
+        // Pins the "no placeholder" contract from BootstrapConfig.Deployment.Hosts. A future
+        // refactor that silently re-introduces ["api.example.com"] (or any other default) would
+        // brick the fail-fast guarantee documented in DeploymentSection.Hosts' xmldoc.
+        var deployment = new DeploymentSection();
+        await Assert.That(deployment.Hosts.Count).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task DefaultConstructedBootstrapConfigFailsValidation()
+    {
+        // The flip side of DefaultConstructedDeploymentHasNoHosts: a non-interactive caller that
+        // ships a config file omitting `deployment.hosts` (or just calls `new BootstrapConfig()`)
+        // must hit a precise validation error rather than silently issuing a cert for some
+        // placeholder.
+        var cfg = new BootstrapConfig();
+
+        var ex = Assert.Throws<InvalidOperationException>(() => ConfigPhase.Validate(cfg));
+        await Assert.That(ex.Message).Contains("hosts");
+        await Assert.That(ex.Message).Contains("at least one");
     }
 
     [Test]
@@ -340,7 +438,7 @@ public sealed class ConfigValidationTests
         // with the same post-derivation values the interactive form would produce. This pins
         // the side-effect contract — Validate doesn't just check, it mutates.
         var cfg = MakeValid();
-        cfg.Deployment.Domains = ["api.example.com", "admin.example.com"];
+        cfg.Deployment.Hosts = ["api.example.com", "admin.example.com"];
         cfg.Deployment.WebHttps = true;
         // Force the apiRuntime fields back to their "empty" state (MakeValid leaves them at
         // their property-initialiser defaults which are already empty, but be explicit).

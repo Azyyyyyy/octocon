@@ -684,7 +684,7 @@ public static class InterfoldAppHost
                    //     bootstrapper-managed so the operator's canonical API URL flows through.
                    //   * OCTOCON_CORS_ALLOWED_ORIGINS — comma-separated allow-list. Empty falls
                    //     back to "allow any origin" in Program.cs, which is a production
-                   //     foot-gun; the bootstrapper derives a default from Domains.
+                   //     foot-gun; the bootstrapper derives a default from Hosts.
                    .WithEnvironment("OCTOCON_SCYLLA_KEYSPACE", scyllaKeyspace)
                    .WithEnvironment("OCTOCON_AUTH_CALLBACK_BASE_URL", oauthCallbackBaseUrl)
                    .WithEnvironment("OCTOCON_JWT_AUTHORITY", jwtAuthority)
@@ -802,10 +802,10 @@ public static class InterfoldAppHost
             if (webTls)
             {
                 // Server name has to be passed through configuration because Configure() doesn't
-                // see the operator's BootstrapConfig directly. PublishPhase injects it from
-                // BootstrapConfig.Deployment.Domains[0]; fall back to a wildcard so dev callers
-                // that flip the toggle on without populating the parameter still get a working
-                // server block (nginx accepts `_` as a catch-all).
+                // see the operator's BootstrapConfig directly. PublishPhase injects it from the
+                // first non-CIDR entry in BootstrapConfig.Deployment.Hosts (see PickServerName);
+                // fall back to a wildcard so dev callers that flip the toggle on without populating
+                // the parameter still get a working server block (nginx accepts `_` as a catch-all).
                 var serverName = builder.Configuration["Parameters:web-server-name"];
                 if (string.IsNullOrWhiteSpace(serverName)) serverName = "_";
 

@@ -11,9 +11,11 @@ using Interfold.Bootstrapper.Util;
 namespace Interfold.Bootstrapper.Phases;
 
 /// <summary>
-/// Phase 4 — generates a root CA and a leaf TLS certificate (with SANs) for the configured domains,
+/// Phase 4 — generates a root CA and a leaf TLS certificate (with SANs) for the configured hosts,
 /// emits <c>.crt</c>/<c>.key</c>/<c>.pfx</c> files, and installs the root CA into the system trust
-/// store. All-C# port of <c>scripts/create-certs.sh</c>.
+/// store. Hosts can be DNS names, IPv4 / IPv6 literals, or CIDR blocks (the latter restrict the
+/// root CA's Name Constraints but never appear as leaf SAN entries). All-C# port of
+/// <c>scripts/create-certs.sh</c>.
 /// </summary>
 internal static partial class CertificatePhase
 {
@@ -61,8 +63,12 @@ internal static partial class CertificatePhase
 
         Directory.CreateDirectory(certsDir);
 
-        var (rootCert, rootKey) = GenerateRootCa(config.Deployment.RootCaName, config.Deployment.CertYears, config.Deployment.Domains);
-        var (leafCert, leafKey) = GenerateLeaf(rootCert, rootKey, config.Deployment.Domains, config.Deployment.CertYears);
+        // Parse once into the structured HostEntry view; ConfigPhase.Validate has already run
+        // HostParser.Parse on every entry by the time we get here, so reparsing here is purely
+        // about producing the typed shape the helpers below pattern-match on.
+        var hosts = config.Deployment.Hosts.Select(HostParser.Parse).ToList();
+        var (rootCert, rootKey) = GenerateRootCa(config.Deployment.RootCaName, config.Deployment.CertYears, hosts);
+        var (leafCert, leafKey) = GenerateLeaf(rootCert, rootKey, hosts, config.Deployment.CertYears);
 
         await PersistAsync(rootCert, rootKey, leafCert, leafKey, secrets.LeafPfxPassword,
             rootCrtPath, rootKeyPath, leafCrtPath, leafKeyPath, leafPfxPath, ct).ConfigureAwait(false);
@@ -109,7 +115,7 @@ internal static partial class CertificatePhase
         logger.PhaseDone(Phase);
     }
 
-    private static (X509Certificate2 Cert, RSA Key) GenerateRootCa(string rootCaName, int years, IReadOnlyList<string> domains)
+    private static (X509Certificate2 Cert, RSA Key) GenerateRootCa(string rootCaName, int years, IReadOnlyList<HostEntry> hosts)
     {
         var key = RSA.Create(2048);
         var subject = new X500DistinguishedName($"CN={rootCaName}");
@@ -119,14 +125,15 @@ internal static partial class CertificatePhase
         // CA with pathlen:0 — can sign leaves but not intermediates.
         req.CertificateExtensions.Add(new X509BasicConstraintsExtension(certificateAuthority: true, hasPathLengthConstraint: true, pathLengthConstraint: 0, critical: true));
         // Name Constraints (RFC 5280 §4.2.1.10). MUST be critical. Limits this CA to issuing
-        // leaves whose dNSName SANs sit within the configured deployment domains. Blast-radius
-        // cap: even a full leak of rootCA.key cannot mint a trusted cert for google.com,
-        // paypal.com, etc. — every device that installed this root rejects out-of-permitted
-        // names at chain validation. The leaf doesn't carry IP SANs so the absence of an IP
-        // permitted entry is itself an implicit "no IP SANs ever validate" denial. Compatibility
-        // trade-off: rejects on Android <7, Java <8u101, and a handful of embedded TLS stacks;
-        // modern curl / browsers / OpenSSL / .NET handle it cleanly.
-        req.CertificateExtensions.Add(BuildNameConstraintsExtension(domains));
+        // leaves whose dNSName / iPAddress SANs sit within the configured deployment hosts.
+        // Blast-radius cap: even a full leak of rootCA.key cannot mint a trusted cert for
+        // google.com, 8.8.8.8, etc. — every device that installed this root rejects out-of-
+        // permitted names at chain validation. CIDR-shaped hosts widen the permitted iPAddress
+        // subtree (operator-scoped to e.g. their LAN) without putting the network range itself
+        // on any leaf SAN. Compatibility trade-off: rejects on Android <7, Java <8u101, and a
+        // handful of embedded TLS stacks; modern curl / browsers / OpenSSL / .NET handle it
+        // cleanly.
+        req.CertificateExtensions.Add(BuildNameConstraintsExtension(hosts));
         req.CertificateExtensions.Add(new X509KeyUsageExtension(X509KeyUsageFlags.KeyCertSign, critical: true));
         req.CertificateExtensions.Add(new X509SubjectKeyIdentifierExtension(req.PublicKey, critical: false));
 
@@ -139,12 +146,25 @@ internal static partial class CertificatePhase
     private static (X509Certificate2 Cert, RSA Key) GenerateLeaf(
         X509Certificate2 issuer,
         RSA issuerKey,
-        IReadOnlyList<string> domains,
+        IReadOnlyList<HostEntry> hosts,
         int years)
     {
         var key = RSA.Create(2048);
-        var primarySubject = $"CN={domains[0]}";
-        var req = new CertificateRequest(new X500DistinguishedName(primarySubject), key, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+        // CN := first leaf-eligible (non-CIDR) host. ConfigPhase.Validate guarantees at least
+        // one such entry exists, so PickPrimary will never return null at this layer.
+        var primary = HostParser.PickPrimary(hosts)
+                      ?? throw new InvalidOperationException(
+                          "GenerateLeaf requires at least one non-CIDR host - ConfigPhase.Validate " +
+                          "should have rejected an all-CIDR list before this point.");
+        var primaryCn = primary.Kind switch
+        {
+            HostKind.Dns => primary.DnsName!,
+            // IPv6 in CN is legal as a literal address string; .NET's X500DistinguishedName parser
+            // accepts both forms. We use the unbracketed canonical form to avoid surprising tools
+            // that diff against the underlying RFC 4514 string representation.
+            _ => primary.Ip!.ToString(),
+        };
+        var req = new CertificateRequest(new X500DistinguishedName($"CN={primaryCn}"), key, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
 
         req.CertificateExtensions.Add(new X509BasicConstraintsExtension(certificateAuthority: false, hasPathLengthConstraint: false, pathLengthConstraint: 0, critical: true));
         req.CertificateExtensions.Add(new X509KeyUsageExtension(
@@ -157,9 +177,24 @@ internal static partial class CertificatePhase
             critical: false));
 
         var sanBuilder = new SubjectAlternativeNameBuilder();
-        foreach (var domain in domains)
+        foreach (var host in hosts)
         {
-            sanBuilder.AddDnsName(domain);
+            switch (host.Kind)
+            {
+                case HostKind.Dns:
+                    sanBuilder.AddDnsName(host.DnsName!);
+                    break;
+                case HostKind.Ipv4:
+                case HostKind.Ipv6:
+                    sanBuilder.AddIpAddress(host.Ip!);
+                    break;
+                // CIDR entries don't belong on the leaf SAN — a leaf cert can only serve a
+                // specific host. They still appear in the root-CA Name Constraints subtree
+                // emitted above, which is where they belong.
+                case HostKind.Ipv4Cidr:
+                case HostKind.Ipv6Cidr:
+                    continue;
+            }
         }
         req.CertificateExtensions.Add(sanBuilder.Build());
 
@@ -263,28 +298,34 @@ internal static partial class CertificatePhase
 
     /// <summary>
     /// Encodes an X.509 v3 Name Constraints extension (OID 2.5.29.30, critical) with one
-    /// dNSName GeneralName per supplied domain in the <c>permittedSubtrees</c> set. No
-    /// <c>excludedSubtrees</c>: RFC 5280 §4.2.1.10 already treats names outside the permitted
-    /// set as implicitly denied. Wildcard entries (<c>*.example.com</c>) collapse to their
-    /// suffix because dNSName subtree semantics already match every sub-label of the suffix
-    /// and the literal <c>*</c> character is not a valid IA5String constraint value.
-    ///
+    /// permittedSubtrees entry per supplied host. No <c>excludedSubtrees</c>: RFC 5280
+    /// §4.2.1.10 treats names outside the permitted set as implicitly denied.
+    /// <list type="bullet">
+    ///   <item><b>DNS</b> hosts emit a <c>dNSName [2] IMPLICIT IA5String</c>. Wildcards
+    ///         (<c>*.example.com</c>) collapse to their suffix because dNSName subtree
+    ///         semantics already match every sub-label of the suffix and the literal <c>*</c>
+    ///         character is not a valid IA5String constraint value.</item>
+    ///   <item><b>IP / CIDR</b> hosts emit an <c>iPAddress [7] IMPLICIT OCTET STRING</c>
+    ///         whose payload is <c>address || mask</c> in network-byte-order (8 octets for
+    ///         IPv4, 32 octets for IPv6). Single-IP hosts use the all-ones mask
+    ///         (<c>/32</c> / <c>/128</c>); CIDR hosts use the operator-supplied prefix.</item>
+    /// </list>
     /// ASN.1 shape:
     /// <code>
     /// NameConstraints ::= SEQUENCE { permittedSubtrees [0] IMPLICIT GeneralSubtrees }
     /// GeneralSubtrees ::= SEQUENCE OF GeneralSubtree
     /// GeneralSubtree ::= SEQUENCE { base GeneralName }
-    /// GeneralName ::= CHOICE { dNSName [2] IMPLICIT IA5String, ... }
+    /// GeneralName ::= CHOICE { dNSName [2] IMPLICIT IA5String, iPAddress [7] IMPLICIT OCTET STRING, ... }
     /// </code>
     /// </summary>
-    internal static X509Extension BuildNameConstraintsExtension(IReadOnlyList<string> domains)
+    internal static X509Extension BuildNameConstraintsExtension(IReadOnlyList<HostEntry> hosts)
     {
-        if (domains is null || domains.Count == 0)
+        if (hosts is null || hosts.Count == 0)
         {
             throw new ArgumentException(
-                "Name Constraints require at least one permitted dNSName. ConfigPhase.Validate " +
-                "rejects an empty deployment.domains list before this method runs.",
-                nameof(domains));
+                "Name Constraints require at least one permitted host. ConfigPhase.Validate " +
+                "rejects an empty deployment.hosts list before this method runs.",
+                nameof(hosts));
         }
 
         var writer = new AsnWriter(AsnEncodingRules.DER);
@@ -294,17 +335,29 @@ internal static partial class CertificatePhase
             // permittedSubtrees [0] IMPLICIT GeneralSubtrees
             using (writer.PushSequence(new Asn1Tag(TagClass.ContextSpecific, 0)))
             {
-                foreach (var domain in domains)
+                foreach (var host in hosts)
                 {
-                    var dnsName = StripWildcardPrefix(domain);
-
                     using (writer.PushSequence())
                     {
-                        // dNSName [2] IMPLICIT IA5String
-                        writer.WriteCharacterString(
-                            UniversalTagNumber.IA5String,
-                            dnsName,
-                            new Asn1Tag(TagClass.ContextSpecific, 2));
+                        switch (host.Kind)
+                        {
+                            case HostKind.Dns:
+                                // dNSName [2] IMPLICIT IA5String
+                                writer.WriteCharacterString(
+                                    UniversalTagNumber.IA5String,
+                                    StripWildcardPrefix(host.DnsName!),
+                                    new Asn1Tag(TagClass.ContextSpecific, 2));
+                                break;
+                            case HostKind.Ipv4:
+                            case HostKind.Ipv6:
+                            case HostKind.Ipv4Cidr:
+                            case HostKind.Ipv6Cidr:
+                                // iPAddress [7] IMPLICIT OCTET STRING: payload is address || mask.
+                                writer.WriteOctetString(
+                                    HostParser.ToNameConstraintSubtreeBytes(host),
+                                    new Asn1Tag(TagClass.ContextSpecific, 7));
+                                break;
+                        }
                     }
                 }
             }

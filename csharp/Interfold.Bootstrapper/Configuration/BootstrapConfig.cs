@@ -4,7 +4,7 @@ namespace Interfold.Bootstrapper.Configuration;
 
 /// <summary>
 /// Operator-supplied configuration loaded from <c>interfold.bootstrap.json</c> or built via
-/// interactive prompts. Holds everything that <em>cannot</em> be generated automatically (domains,
+/// interactive prompts. Holds everything that <em>cannot</em> be generated automatically (hosts,
 /// OAuth secrets, port numbers, etc.).
 /// </summary>
 public sealed class BootstrapConfig
@@ -135,7 +135,7 @@ public sealed class BootstrapConfig
 /// startup block in <c>Program.cs</c>). Three of the four are deliberately derivable from
 /// <see cref="DeploymentSection"/> so a fresh bootstrap doesn't require the operator to type
 /// them: <see cref="Phases.ConfigPhase.ResolveDerivedDefaults"/> fills empties with values
-/// computed from <see cref="DeploymentSection.Domains"/> + <see cref="DeploymentSection.WebHttps"/>.
+/// computed from <see cref="DeploymentSection.Hosts"/> + <see cref="DeploymentSection.WebHttps"/>.
 /// Operators that want different values type them in the interactive form (or set them in the
 /// JSON for non-interactive runs) and the stored value wins over the derived one.
 /// </summary>
@@ -145,7 +145,9 @@ public sealed class ApiRuntimeSection
     /// Base URL the API's OAuth callback handlers redirect to after completing the provider
     /// handshake. Lands on <c>OCTOCON_AUTH_CALLBACK_BASE_URL</c>; bound into
     /// <see cref="Interfold.Contracts.Configuration.AuthenticationConfiguration.CallbackBaseUrl"/>.
-    /// When empty, derived as <c>{scheme}://{Domains[0]}</c> where <c>scheme</c> follows
+    /// When empty, derived as <c>{scheme}://{primary host}</c> where <c>primary host</c> is the
+    /// first non-CIDR entry in <see cref="DeploymentSection.Hosts"/> (IPv6 literals are
+    /// bracket-wrapped per RFC 3986 §3.2.2) and <c>scheme</c> follows
     /// <see cref="DeploymentSection.WebHttps"/>.
     /// </summary>
     [JsonPropertyName("callbackBaseUrl")]
@@ -155,7 +157,7 @@ public sealed class ApiRuntimeSection
     /// JWT <c>iss</c> claim the API signs into issued tokens and validates inbound tokens
     /// against. Lands on <c>OCTOCON_JWT_AUTHORITY</c>; bound into
     /// <see cref="Interfold.Contracts.Configuration.AuthenticationConfiguration.JwtAuthority"/>.
-    /// When empty, derived as <c>{scheme}://{Domains[0]}</c> (same as
+    /// When empty, derived as <c>{scheme}://{primary host}</c> (same as
     /// <see cref="CallbackBaseUrl"/>) — operator usually wants "this API is its own issuer".
     /// </summary>
     [JsonPropertyName("jwtAuthority")]
@@ -173,10 +175,11 @@ public sealed class ApiRuntimeSection
     /// <summary>
     /// Allow-list of origins the API's CORS middleware accepts cross-origin requests from.
     /// Lands on <c>OCTOCON_CORS_ALLOWED_ORIGINS</c> as a comma-separated string. When empty,
-    /// derived as one entry per <see cref="DeploymentSection.Domains"/> (each with the scheme
-    /// from <see cref="DeploymentSection.WebHttps"/>). Production stacks should always have
-    /// a non-empty list — an empty / unset value falls back to "allow any origin" in the API
-    /// startup block, which is fine for solo dev but a foot-gun in production.
+    /// derived as one entry per non-CIDR <see cref="DeploymentSection.Hosts"/> entry (each
+    /// with the scheme from <see cref="DeploymentSection.WebHttps"/>; IPv6 literals are
+    /// bracket-wrapped). Production stacks should always have a non-empty list — an empty /
+    /// unset value falls back to "allow any origin" in the API startup block, which is fine
+    /// for solo dev but a foot-gun in production.
     /// </summary>
     [JsonPropertyName("corsAllowedOrigins")]
     public List<string> CorsAllowedOrigins { get; set; } = [];
@@ -187,8 +190,26 @@ public sealed class DeploymentSection
     [JsonPropertyName("outputDir")]
     public string OutputDir { get; set; } = "./deploy";
 
-    [JsonPropertyName("domains")]
-    public List<string> Domains { get; set; } = ["api.example.com"];
+    /// <summary>
+    /// Hosts the deployed API will be reachable at. Each entry is one of:
+    /// <list type="bullet">
+    ///   <item>A DNS name (<c>api.example.com</c>; wildcards like <c>*.example.com</c>
+    ///         are allowed and collapse to their suffix in the root CA Name Constraints).</item>
+    ///   <item>An IPv4 literal (<c>192.168.1.42</c>) or IPv6 literal (<c>fe80::1</c>;
+    ///         brackets are tolerated on input but not stored).</item>
+    ///   <item>A CIDR block (<c>192.168.1.0/24</c>, <c>fe80::/64</c>) — restricts the root
+    ///         CA's Name Constraints permittedSubtrees but does <em>not</em> appear in the
+    ///         leaf cert SAN and is ineligible to be the URL primary host.</item>
+    /// </list>
+    /// The default is intentionally empty: a fresh bootstrap fails fast in
+    /// <see cref="Phases.ConfigPhase.Validate"/> unless the operator populates this list,
+    /// so we never silently issue a cert for a placeholder. The first non-CIDR entry is
+    /// the "primary host" used for the leaf cert subject CN, nginx <c>server_name</c>, and
+    /// the derived <c>callbackBaseUrl</c> / <c>jwtAuthority</c> URLs — see
+    /// <see cref="Phases.ConfigPhase.ResolveDerivedDefaults"/>.
+    /// </summary>
+    [JsonPropertyName("hosts")]
+    public List<string> Hosts { get; set; } = [];
 
     [JsonPropertyName("rootCaName")]
     public string RootCaName { get; set; } = "Interfold Root CA";

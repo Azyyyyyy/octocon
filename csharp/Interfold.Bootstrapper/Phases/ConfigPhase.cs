@@ -157,8 +157,8 @@ internal static class ConfigPhase
             // --- Deployment ---
             ("Output directory",                () => c.Deployment.OutputDir,
                                                 () => c.Deployment.OutputDir = PromptStr("Output directory", c.Deployment.OutputDir)),
-            ("Public domain(s)",                () => string.Join(",", c.Deployment.Domains),
-                                                () => c.Deployment.Domains = PromptDomains(console, c.Deployment.Domains)),
+            ("Public host(s)",                  () => string.Join(",", c.Deployment.Hosts),
+                                                () => c.Deployment.Hosts = PromptHosts(console, c.Deployment.Hosts)),
             ("Root CA subject",                 () => c.Deployment.RootCaName,
                                                 () => c.Deployment.RootCaName = PromptStr("Root CA subject", c.Deployment.RootCaName)),
             ("Leaf cert validity (years)",      () => c.Deployment.CertYears.ToString(),
@@ -391,26 +391,50 @@ internal static class ConfigPhase
     }
 
     /// <summary>
-    /// Domains-only prompt. Most other fields are single-value; this one parses a comma-
-    /// separated string into a list and validates inline that at least one non-empty entry
-    /// survives. Lives outside <see cref="PromptForConfig"/>'s local helpers because the
-    /// parse-into-list shape doesn't generalise to a one-liner. The CORS allow-list uses the
-    /// same shape — see <see cref="PromptCorsAllowedOrigins"/>.
+    /// Hosts-only prompt. Most other fields are single-value; this one parses a comma-
+    /// separated string into a list and validates inline that every surviving entry is a
+    /// valid host (DNS name, IPv4 / IPv6 literal, or CIDR block). Lives outside
+    /// <see cref="PromptForConfig"/>'s local helpers because the parse-into-list shape
+    /// doesn't generalise to a one-liner. The CORS allow-list uses the same parse shape —
+    /// see <see cref="PromptCorsAllowedOrigins"/>.
     /// </summary>
-    private static List<string> PromptDomains(IAnsiConsole console, List<string> fallback)
+    private static List<string> PromptHosts(IAnsiConsole console, List<string> fallback)
     {
         var fallbackText = string.Join(",", fallback);
         var raw = console.Prompt(
-            new TextPrompt<string>("Public domain(s), comma separated:")
+            new TextPrompt<string>("Public host(s) (domain, IP, or CIDR), comma separated:")
                 .DefaultValue(fallbackText)
                 .AllowEmpty()
                 .Validate(s =>
                 {
-                    if (string.IsNullOrWhiteSpace(s)) return ValidationResult.Success();
-                    var parts = s.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-                    return parts.Length == 0
-                        ? ValidationResult.Error("[red]at least one domain required[/]")
-                        : ValidationResult.Success();
+                    var trimmed = s?.Trim() ?? string.Empty;
+                    if (string.IsNullOrEmpty(trimmed))
+                    {
+                        // Empty input only OK when the fallback was non-empty (operator editing
+                        // an existing config and re-confirming). On a fresh bootstrap the
+                        // fallback is [] and we must force the operator to type something so
+                        // we never silently issue a cert with no SANs.
+                        return fallback.Count == 0
+                            ? ValidationResult.Error("[red]at least one host required (no default to fall back on)[/]")
+                            : ValidationResult.Success();
+                    }
+                    var parts = trimmed.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                    if (parts.Length == 0)
+                    {
+                        return ValidationResult.Error("[red]at least one host required[/]");
+                    }
+                    foreach (var part in parts)
+                    {
+                        try
+                        {
+                            HostParser.Parse(part);
+                        }
+                        catch (FormatException ex)
+                        {
+                            return ValidationResult.Error($"[red]{ex.Message}[/]");
+                        }
+                    }
+                    return ValidationResult.Success();
                 }));
 
         if (string.IsNullOrWhiteSpace(raw)) return fallback;
@@ -418,12 +442,12 @@ internal static class ConfigPhase
     }
 
     /// <summary>
-    /// CORS allow-list prompt. Twin of <see cref="PromptDomains"/> for the
+    /// CORS allow-list prompt. Twin of <see cref="PromptHosts"/> for the
     /// <see cref="ApiRuntimeSection.CorsAllowedOrigins"/> field — same comma-separated parse
     /// shape, but every entry is validated inline as an absolute http(s) URI to match the
     /// non-interactive <see cref="Validate"/> rule. Pre-fills the prompt with the derived
-    /// fallback (one entry per <see cref="DeploymentSection.Domains"/>) so the operator gets a
-    /// sensible Enter-to-accept default even on first run.
+    /// fallback (one entry per non-CIDR <see cref="DeploymentSection.Hosts"/> entry) so the
+    /// operator gets a sensible Enter-to-accept default even on first run.
     /// </summary>
     private static List<string> PromptCorsAllowedOrigins(IAnsiConsole console, List<string> fallback)
     {
@@ -495,7 +519,7 @@ internal static class ConfigPhase
         {
             Deployment = new DeploymentSection
             {
-                Domains = c.Deployment.Domains,
+                Hosts = c.Deployment.Hosts,
                 WebHttps = c.Deployment.WebHttps,
             },
             ApiRuntime = new ApiRuntimeSection
@@ -551,11 +575,14 @@ internal static class ConfigPhase
     /// <summary>
     /// Fills any empty <see cref="ApiRuntimeSection"/> field that has a derivable default from
     /// <see cref="DeploymentSection"/>: <see cref="ApiRuntimeSection.CallbackBaseUrl"/> and
-    /// <see cref="ApiRuntimeSection.JwtAuthority"/> both default to <c>{scheme}://{Domains[0]}</c>
-    /// (where <c>scheme</c> follows <see cref="DeploymentSection.WebHttps"/>), and
-    /// <see cref="ApiRuntimeSection.CorsAllowedOrigins"/> defaults to one entry per domain.
-    /// Stored non-empty values always win — this method only fills blanks. Idempotent: calling
-    /// it twice has no effect after the first.
+    /// <see cref="ApiRuntimeSection.JwtAuthority"/> both default to
+    /// <c>{scheme}://{primary host}</c> (where <c>primary host</c> is the first non-CIDR
+    /// <see cref="DeploymentSection.Hosts"/> entry, with IPv6 literals bracket-wrapped per
+    /// RFC 3986 §3.2.2, and <c>scheme</c> follows <see cref="DeploymentSection.WebHttps"/>),
+    /// and <see cref="ApiRuntimeSection.CorsAllowedOrigins"/> defaults to one entry per
+    /// non-CIDR host. CIDR entries are skipped because they have no canonical URL form.
+    /// Stored non-empty values always win — this method only fills blanks. Idempotent:
+    /// calling it twice has no effect after the first.
     /// <para>
     /// Called by <see cref="Validate"/> before its invariant checks so non-interactive
     /// JSON-loaded configs go through the same derivation path as freshly-prompted ones (the
@@ -570,19 +597,40 @@ internal static class ConfigPhase
     /// </summary>
     internal static void ResolveDerivedDefaults(BootstrapConfig config)
     {
-        if (config.Deployment.Domains.Count == 0)
+        if (config.Deployment.Hosts.Count == 0)
         {
             return;
         }
 
-        var primary = config.Deployment.Domains[0];
-        if (string.IsNullOrWhiteSpace(primary))
+        // Walk the raw strings, skipping anything that doesn't parse cleanly. ResolveDerivedDefaults
+        // runs on EVERY menu redraw (via the Show callbacks), often mid-edit when the operator is
+        // still typing, so a transient parse failure has to be silent here - Validate is the place
+        // that hard-fails on invalid hosts. The same forgiving stance applies to CIDR entries:
+        // they have no URL form, so they just don't contribute to derivation.
+        var parsed = new List<HostEntry>(config.Deployment.Hosts.Count);
+        foreach (var raw in config.Deployment.Hosts)
         {
+            if (string.IsNullOrWhiteSpace(raw)) continue;
+            try
+            {
+                parsed.Add(HostParser.Parse(raw));
+            }
+            catch (FormatException)
+            {
+                // Skip malformed entries silently; Validate surfaces the error to the operator.
+            }
+        }
+
+        var primary = HostParser.PickPrimary(parsed);
+        if (primary is null)
+        {
+            // No leaf-eligible entry yet (all CIDR, or list is empty after filtering) - nothing
+            // to derive against. Validate will reject this config later with a precise error.
             return;
         }
 
         var scheme = config.Deployment.WebHttps ? "https" : "http";
-        var derivedBaseUrl = $"{scheme}://{primary}";
+        var derivedBaseUrl = $"{scheme}://{HostParser.ToUrlHost(primary)}";
 
         if (string.IsNullOrWhiteSpace(config.ApiRuntime.CallbackBaseUrl))
         {
@@ -596,9 +644,9 @@ internal static class ConfigPhase
 
         if (config.ApiRuntime.CorsAllowedOrigins.Count == 0)
         {
-            config.ApiRuntime.CorsAllowedOrigins = config.Deployment.Domains
-                .Where(d => !string.IsNullOrWhiteSpace(d))
-                .Select(d => $"{scheme}://{d}")
+            config.ApiRuntime.CorsAllowedOrigins = parsed
+                .Where(h => h.IsLeafEligible)
+                .Select(h => $"{scheme}://{HostParser.ToUrlHost(h)}")
                 .ToList();
         }
     }
@@ -611,18 +659,31 @@ internal static class ConfigPhase
     /// </summary>
     internal static void Validate(BootstrapConfig config)
     {
-        if (config.Deployment.Domains.Count == 0)
+        if (config.Deployment.Hosts.Count == 0)
         {
-            throw new InvalidOperationException("config.deployment.domains must contain at least one domain.");
+            throw new InvalidOperationException(
+                "config.deployment.hosts must contain at least one host (DNS name, IP literal, or CIDR).");
         }
 
-        foreach (var domain in config.Deployment.Domains)
+        var parsedHosts = new List<HostEntry>(config.Deployment.Hosts.Count);
+        foreach (var raw in config.Deployment.Hosts)
         {
-            // Lightweight RFC 1035 check - rejects obvious typos without pulling in a DNS library.
-            if (string.IsNullOrWhiteSpace(domain) || domain.Length > 253 || domain.Contains(' '))
+            try
             {
-                throw new InvalidOperationException($"Invalid domain '{domain}'.");
+                parsedHosts.Add(HostParser.Parse(raw));
             }
+            catch (FormatException ex)
+            {
+                throw new InvalidOperationException(
+                    $"config.deployment.hosts: {ex.Message}", ex);
+            }
+        }
+        if (!parsedHosts.Any(h => h.IsLeafEligible))
+        {
+            throw new InvalidOperationException(
+                "config.deployment.hosts must contain at least one non-CIDR entry to serve as the " +
+                "primary host (leaf cert CN, nginx server_name, and derived URL defaults). " +
+                "CIDR blocks restrict the root CA's Name Constraints but cannot stand alone.");
         }
 
         if (config.Deployment.CertYears is < 1 or > 30)
@@ -740,7 +801,7 @@ internal static class ConfigPhase
         {
             throw new InvalidOperationException(
                 "config.apiRuntime.corsAllowedOrigins must contain at least one origin after derivation. " +
-                "Add at least one entry to deployment.domains so derivation can produce a default, " +
+                "Add at least one non-CIDR entry to deployment.hosts so derivation can produce a default, " +
                 "or populate corsAllowedOrigins explicitly.");
         }
         foreach (var origin in config.ApiRuntime.CorsAllowedOrigins)

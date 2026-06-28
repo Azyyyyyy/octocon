@@ -1,7 +1,7 @@
 {
   "deployment": {
     "outputDir": "/opt/deploy",
-    "domains": ["web.test.local"],
+    "hosts": ["web.test.local"],
     "rootCaName": "Interfold Test Root CA",
     "certYears": 2,
     "trustStoreInstall": false,

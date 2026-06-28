@@ -70,7 +70,13 @@ Shape lives on `[BootstrapConfig](../csharp/Interfold.Bootstrapper/Configuration
 {
   "deployment": {
     "outputDir": "./deploy",         // artifact root (relative to cwd)
-    "domains":   ["api.example.com"],// SANs on the leaf cert
+    "hosts":     [],                 // required, no default — DNS names / IPv4 / IPv6 / CIDR.
+                                     // See "Hosts" subsection below for the entry shapes
+                                     // and primary-host rule. Examples:
+                                     //   ["api.example.com"]            (DNS only)
+                                     //   ["192.168.1.42"]               (LAN box, no domain)
+                                     //   ["api.example.com","fe80::1"]  (mixed)
+                                     //   ["api.example.com","10.0.0.0/8"] (DNS + CIDR scope)
     "rootCaName":"Interfold Root CA",
     "certYears": 5,
     "trustStoreInstall": true        // add rootCA.crt to system trust store
@@ -100,17 +106,21 @@ Shape lives on `[BootstrapConfig](../csharp/Interfold.Bootstrapper/Configuration
                                      // so this and the migration target must agree).
   "apiRuntime": {
     // Three of the four are derivable from `deployment` and may be left blank — the
-    // bootstrapper fills them at validate-time with values computed from `domains` +
+    // bootstrapper fills them at validate-time with values computed from `hosts` +
     // `webHttps`. The interactive form pre-fills the prompt with the same derived value.
-    "callbackBaseUrl":    "",        // empty -> {scheme}://{domains[0]}; lands on
-                                     // OCTOCON_AUTH_CALLBACK_BASE_URL.
-    "jwtAuthority":       "",        // empty -> {scheme}://{domains[0]}; JWT `iss` claim.
+    "callbackBaseUrl":    "",        // empty -> {scheme}://{primary host}; lands on
+                                     // OCTOCON_AUTH_CALLBACK_BASE_URL. (Primary host = first
+                                     // non-CIDR entry in `hosts`; IPv6 literals are
+                                     // bracket-wrapped per RFC 3986.)
+    "jwtAuthority":       "",        // empty -> {scheme}://{primary host}; JWT `iss` claim.
     "jwtAudience":        "octocon", // JWT `aud` claim; no derivation, just a default.
-    "corsAllowedOrigins": []         // empty -> one entry per `domains` (each with scheme
-                                     // from `webHttps`); joined with ',' for
-                                     // OCTOCON_CORS_ALLOWED_ORIGINS. An empty list at the
-                                     // API would fall back to "allow any origin", which
-                                     // the bootstrapper actively prevents in production.
+    "corsAllowedOrigins": []         // empty -> one entry per non-CIDR `hosts` entry (each
+                                     // with scheme from `webHttps`); joined with ',' for
+                                     // OCTOCON_CORS_ALLOWED_ORIGINS. CIDR entries are
+                                     // skipped because they have no URL form. An empty list
+                                     // at the API would fall back to "allow any origin",
+                                     // which the bootstrapper actively prevents in
+                                     // production.
   },
   "persistence": {
     // DB-retry strategy + per-request fan-out cap. All four have non-null defaults that
@@ -196,6 +206,50 @@ top-to-bottom. The bootstrapper writes the resulting JSON to the path above on
 confirmation; `--non-interactive` and `--config <path>` still bypass the form for
 unattended runs.
 
+### Hosts (`deployment.hosts`)
+
+The `hosts` list is the single source of truth for where the deployed API will be
+reachable. The field is required (no shipped default placeholder), and each entry is one
+of the following shapes:
+
+| Shape           | Example                | Used as leaf SAN? | Used as Name Constraints subtree? | URL-primary eligible? |
+| --------------- | ---------------------- | ----------------- | --------------------------------- | --------------------- |
+| DNS name        | `api.example.com`      | yes (`dNSName`)   | yes (`dNSName`)                   | yes                   |
+| DNS wildcard    | `*.example.com`        | yes (`dNSName`)   | yes (suffix only)                 | no                    |
+| IPv4 literal    | `192.168.1.42`         | yes (`iPAddress`) | yes (`iPAddress` `/32`)           | yes                   |
+| IPv6 literal    | `fe80::1`              | yes (`iPAddress`) | yes (`iPAddress` `/128`)          | yes                   |
+| IPv4 CIDR       | `192.168.1.0/24`       | no                | yes (`iPAddress` + explicit mask) | no                    |
+| IPv6 CIDR       | `fe80::/64`            | no                | yes (`iPAddress` + explicit mask) | no                    |
+
+The **primary host** is the first non-CIDR entry. It seeds the leaf cert subject CN, the
+nginx `server_name`, and the derived `apiRuntime.callbackBaseUrl` /
+`apiRuntime.jwtAuthority` URLs (IPv6 literals are bracket-wrapped per RFC 3986 §3.2.2).
+Wildcard DNS entries cannot be the primary because `*.example.com` is not a single host
+the leaf cert can serve — list the concrete primary alongside the wildcard.
+
+CIDR entries are useful when you want the root CA's Name Constraints scope to cover an
+entire subnet (for example a LAN where individual leaf certs are minted later) without
+listing every host. CIDR entries with host bits set beyond the mask (`192.168.1.42/24`)
+are rejected at parse time with a fix-it message — the operator must canonicalise the
+network address (`192.168.1.0/24`) or pin a single host (`192.168.1.42/32`).
+
+**LAN-only quick start (no DNS at all):**
+
+```jsonc
+{
+  "deployment": {
+    "hosts":     ["192.168.1.42"],   // the box's static LAN IP
+    "rootCaName":"Interfold Root CA",
+    "certYears": 5,
+    "webHttps":  true
+  }
+}
+```
+
+The leaf cert gets an `iPAddress` SAN for `192.168.1.42`, the root CA's Name Constraints
+pin to the same `/32`, and devices on the LAN that install the root CA validate
+`https://192.168.1.42/` cleanly.
+
 ## Layer 3 — Environment variables
 
 Two flavours:
@@ -239,7 +293,7 @@ encryption pepper, and the API refuses to boot without it). If the value is stil
 
 | Env var                               | Default         | Notes                                                                                                                                                 |
 | ------------------------------------- | --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `OCTOCON_AUTH_CALLBACK_BASE_URL`      | *empty*         | Base URL the API's OAuth callbacks redirect to. Sourced from `BootstrapConfig.apiRuntime.callbackBaseUrl` via Aspire parameter `oauth-callback-base-url`; defaults derive to `{scheme}://{domains[0]}` (scheme follows `deployment.webHttps`) when the operator leaves the field blank. (bootstrapper-managed) |
+| `OCTOCON_AUTH_CALLBACK_BASE_URL`      | *empty*         | Base URL the API's OAuth callbacks redirect to. Sourced from `BootstrapConfig.apiRuntime.callbackBaseUrl` via Aspire parameter `oauth-callback-base-url`; defaults derive to `{scheme}://{primary host}` (first non-CIDR entry of `deployment.hosts`; scheme follows `deployment.webHttps`; IPv6 literals bracket-wrapped) when the operator leaves the field blank. (bootstrapper-managed) |
 | `OCTOCON_JWT_AUTHORITY`               | `octocon-local` | JWT `iss` claim. Sourced from `BootstrapConfig.apiRuntime.jwtAuthority` via Aspire parameter `jwt-authority`; derives the same way as `OCTOCON_AUTH_CALLBACK_BASE_URL`. The `octocon-local` default applies only to dev / non-bootstrapped runs. (bootstrapper-managed) |
 | `OCTOCON_JWT_AUDIENCE`                | `octocon`       | JWT `aud` claim. Sourced from `BootstrapConfig.apiRuntime.jwtAudience` via Aspire parameter `jwt-audience`. Bound into `AuthenticationConfiguration.JwtAudience` by `ConfigurationServiceCollectionExtensions.ApplyAuthentication` (previously documented as bound but the binding was missing; fixed alongside the bootstrapper wire-up). (bootstrapper-managed) |
 | `OCTOCON_GOOGLE_OAUTH_CLIENT_ID`      | *empty*         | Sourced from `BootstrapConfig.oauth.googleClientId` via Aspire parameter `google-oauth-client-id`; empty value disables the Google scheme. (bootstrapper-managed) |
@@ -281,7 +335,7 @@ reads them.
 
 | Env var                        | Default                | Notes                                                                                                                                                                                              |
 | ------------------------------ | ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `OCTOCON_CORS_ALLOWED_ORIGINS` | *empty* (= allow any in dev only) | Comma-separated allow-list of origin URLs. The API still falls back to "allow any origin" when this is unset/empty, but the bootstrapper never emits a stack with an unset value — `BootstrapConfig.apiRuntime.corsAllowedOrigins` defaults to one entry per `deployment.domains` (joined with `,`), routed through Aspire parameter `cors-allowed-origins`. Operators that want a different allow-list edit the list in the interactive form or the JSON. (bootstrapper-managed) |
+| `OCTOCON_CORS_ALLOWED_ORIGINS` | *empty* (= allow any in dev only) | Comma-separated allow-list of origin URLs. The API still falls back to "allow any origin" when this is unset/empty, but the bootstrapper never emits a stack with an unset value — `BootstrapConfig.apiRuntime.corsAllowedOrigins` defaults to one `{scheme}://host` entry per non-CIDR `deployment.hosts` entry (joined with `,`), routed through Aspire parameter `cors-allowed-origins`. Operators that want a different allow-list edit the list in the interactive form or the JSON. (bootstrapper-managed) |
 
 `OCTOCON_FRONTEND`, `OCTOCON_BETA_FRONTEND`, and `OCTOCON_DEEPLINK_ADDRESS` have all been
 removed. Their CORS allow-list use moved to `OCTOCON_CORS_ALLOWED_ORIGINS`; their
@@ -446,22 +500,41 @@ sudo cp rootCA.crt /usr/local/share/ca-certificates/interfold-root-ca.crt
 sudo update-ca-certificates
 ```
 
-The OOB channel (Slack / email) is load-bearing: an attacker who can MITM the HTTPS
-request from the user's device can also serve the user a different root CA — the only
-way the user can tell is by comparing the fingerprint they received OOB to the one they
-just downloaded.
+The OOB channel (Slack / email / Signal) is load-bearing. This is the standard
+**trust-on-first-use (TOFU)** bootstrap pattern — the same shape SSH host-key
+fingerprints, GPG key-signing parties, and Signal safety numbers all use: the in-band
+download supplies the bytes, the out-of-band channel supplies the *authenticity
+binding*. Strip the OOB step and the scheme reduces to a "leap of faith" — an attacker
+who can MITM the plain-HTTP request can substitute a different root CA and the user has
+no in-band way to detect it. TOFU explicitly does not defend against an active attacker
+present at first contact ([RFC 7435 §1.1][rfc7435-1-1]); the OOB fingerprint comparison
+is what closes that gap. [RFC 4949][rfc4949] formalises both terms — its "out-of-band"
+tutorial calls out distributing "a root key" as the canonical example, which is
+literally what we're doing here.
+
+[rfc7435-1-1]: https://www.rfc-editor.org/rfc/rfc7435#section-1.1
+[rfc4949]: https://www.rfc-editor.org/rfc/rfc4949
 
 ### Name Constraints invariant
 
 The root CA carries a critical Name Constraints extension (RFC 5280 §4.2.1.10) whose
-`permittedSubtrees` is the operator's `deployment.domains` list. Wildcard entries
-(`*.example.com`) collapse to their suffix because dNSName subtree semantics already
-cover sub-labels and `*` is not a legal IA5String value.
+`permittedSubtrees` is the operator's `deployment.hosts` list:
+
+- **DNS** entries (`api.example.com`, `*.example.com`) emit a `dNSName` permittedSubtree.
+  Wildcard entries collapse to their suffix because dNSName subtree semantics already
+  cover sub-labels and `*` is not a legal IA5String value.
+- **IPv4 / IPv6** literals emit an `iPAddress` permittedSubtree with an all-ones mask
+  (`/32` for IPv4, `/128` for IPv6) — the leaf cert carries a matching `iPAddress` SAN so
+  a client browsing `https://192.168.1.42` validates cleanly.
+- **CIDR** entries (`192.168.1.0/24`, `fe80::/64`) emit an `iPAddress` permittedSubtree
+  with the operator-supplied prefix. CIDR widens the *root CA's permitted scope* without
+  itself appearing on any leaf SAN — the operator must still list the specific hosts they
+  want the leaf cert to serve.
 
 A leaked CA private key therefore cannot mint a trusted cert for any host outside the
-operator's configured domain set — every device that installed this root will reject
-the impostor at chain validation. The blast radius of a key compromise is the
-operator's domain set, not the public internet.
+operator's configured set — every device that installed this root will reject the
+impostor at chain validation. The blast radius of a key compromise is the operator's
+host set, not the public internet.
 
 Trade-off: a handful of older or embedded TLS stacks don't support Name Constraints
 and will reject the leaf chain entirely. Known unsupported clients:

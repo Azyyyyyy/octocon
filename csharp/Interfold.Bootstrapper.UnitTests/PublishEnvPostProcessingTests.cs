@@ -33,6 +33,11 @@ public sealed class PublishEnvPostProcessingTests
             DatabaseMode = databaseMode,
             ApiImage = apiImage ?? "ghcr.io/azyyyyyy/interfold-api:latest",
         };
+        // BootstrapConfig.Deployment.Hosts has no default placeholder, so populate it explicitly
+        // here. Without this the ResolveDerivedDefaults call below has nothing to seed
+        // CallbackBaseUrl / JwtAuthority / CorsAllowedOrigins from, and the required-keys check
+        // (which asserts post-derivation non-emptiness) would fail.
+        config.Deployment.Hosts = ["api.example.com"];
         // OAuth client secrets flow through PostgresSeedOptions into internal.secrets;
         // they no longer appear in the env replacements. Setting them here only exercises
         // the irrelevant config path.
@@ -243,14 +248,14 @@ public sealed class PublishEnvPostProcessingTests
     public async Task BuildEnvReplacementsDerivesApiRuntimeFromDeploymentWhenUnset()
     {
         // The bootstrapper's contract: leaving apiRuntime.* empty derives the values from
-        // deployment.domains + deployment.webHttps via ConfigPhase.ResolveDerivedDefaults
+        // deployment.hosts + deployment.webHttps via ConfigPhase.ResolveDerivedDefaults
         // (which MakeInputs runs on every config). The derived defaults must round-trip
         // through BuildEnvReplacements unchanged so the .env reflects what the menu showed.
         var config = new BootstrapConfig
         {
             Deployment =
             {
-                Domains = ["api.example.com", "admin.example.com"],
+                Hosts = ["api.example.com", "admin.example.com"],
                 WebHttps = true,
             },
         };
@@ -533,5 +538,36 @@ public sealed class PublishEnvPostProcessingTests
             await Assert.That(key.Contains("IMAGE", StringComparison.OrdinalIgnoreCase)).IsFalse()
                 .Because($"unexpected image-related key '{key}' leaked into env replacements");
         }
+    }
+
+    [Test]
+    public async Task WebServerNameSkipsCidrEntries()
+    {
+        // nginx accepts DNS names and bare IPs as server_name but does NOT accept CIDR
+        // notation. PickServerName must walk past any CIDR entries to the first leaf-eligible
+        // host. Order matters here — the CIDR comes first in the list so the test fails loudly
+        // if PickServerName falls back to `_` or yields the CIDR string instead of skipping.
+        var serverName = PublishPhase.PickServerName(["192.168.1.0/24", "api.example.com"]);
+        await Assert.That(serverName).IsEqualTo("api.example.com");
+    }
+
+    [Test]
+    public async Task WebServerNameFallsBackToCatchAllWhenAllCidr()
+    {
+        // Defence-in-depth: ConfigPhase.Validate already rejects an all-CIDR list, but the
+        // direct InterfoldAppHost.Configure path (dev callers that bypass the bootstrapper)
+        // doesn't run Validate. PickServerName must still produce a working server_name in
+        // that branch — `_` is the nginx catch-all that accepts any Host header.
+        var serverName = PublishPhase.PickServerName(["10.0.0.0/8", "fe80::/64"]);
+        await Assert.That(serverName).IsEqualTo("_");
+    }
+
+    [Test]
+    public async Task WebServerNamePicksIpLiteralAsServerName()
+    {
+        // LAN-only deployments (no DNS) must end up with the bare IP as server_name. nginx
+        // happily accepts dotted-quad and bracketed-or-bare IPv6 there.
+        var serverName = PublishPhase.PickServerName(["192.168.1.42"]);
+        await Assert.That(serverName).IsEqualTo("192.168.1.42");
     }
 }

@@ -141,8 +141,10 @@ public sealed class ConfigInteractivePromptTests
         await Assert.That(config.Deployment.CertYears).IsEqualTo(5);
         await Assert.That(config.Deployment.TrustStoreInstall).IsTrue();
         await Assert.That(config.Deployment.WebHttps).IsFalse();
-        await Assert.That(config.Deployment.Domains.Count).IsGreaterThan(0);
-        await Assert.That(config.Deployment.Domains[0]).IsEqualTo("api.example.com");
+        // Hosts has no shipped default placeholder - confirming the form without editing the
+        // Hosts row leaves Hosts as []. Validate fails fast on this state downstream, which is
+        // the explicit fail-fast contract documented in DeploymentSection.Hosts.
+        await Assert.That(config.Deployment.Hosts.Count).IsEqualTo(0);
 
         // Ports defaults
         await Assert.That(config.Ports.ApiHttp).IsEqualTo(5000);
@@ -195,7 +197,7 @@ public sealed class ConfigInteractivePromptTests
     }
 
     [Test]
-    public async Task EditingDomainsParsesCommaSeparated()
+    public async Task EditingHostsParsesCommaSeparated()
     {
         var console = NewConsole();
         EditField(console, fieldIndex: 1, "api.example.com,admin.example.com,www.example.com");
@@ -203,14 +205,14 @@ public sealed class ConfigInteractivePromptTests
 
         var config = ConfigPhase.PromptForConfig(console);
 
-        await Assert.That(config.Deployment.Domains.Count).IsEqualTo(3);
-        await Assert.That(config.Deployment.Domains).Contains("api.example.com");
-        await Assert.That(config.Deployment.Domains).Contains("admin.example.com");
-        await Assert.That(config.Deployment.Domains).Contains("www.example.com");
+        await Assert.That(config.Deployment.Hosts.Count).IsEqualTo(3);
+        await Assert.That(config.Deployment.Hosts).Contains("api.example.com");
+        await Assert.That(config.Deployment.Hosts).Contains("admin.example.com");
+        await Assert.That(config.Deployment.Hosts).Contains("www.example.com");
     }
 
     [Test]
-    public async Task EditingDomainsTrimsWhitespace()
+    public async Task EditingHostsTrimsWhitespace()
     {
         var console = NewConsole();
         EditField(console, fieldIndex: 1, "  foo.example.com  ,  bar.example.com  ");
@@ -218,9 +220,26 @@ public sealed class ConfigInteractivePromptTests
 
         var config = ConfigPhase.PromptForConfig(console);
 
-        await Assert.That(config.Deployment.Domains.Count).IsEqualTo(2);
-        await Assert.That(config.Deployment.Domains).Contains("foo.example.com");
-        await Assert.That(config.Deployment.Domains).Contains("bar.example.com");
+        await Assert.That(config.Deployment.Hosts.Count).IsEqualTo(2);
+        await Assert.That(config.Deployment.Hosts).Contains("foo.example.com");
+        await Assert.That(config.Deployment.Hosts).Contains("bar.example.com");
+    }
+
+    [Test]
+    public async Task EditingHostsAcceptsIpAndCidr()
+    {
+        // Mixed input: IPv4 literal + IPv6 CIDR. Both must survive the validator and reach the
+        // stored list verbatim — the parser pins their kinds (Ipv4 / Ipv6Cidr) at config-load
+        // time, and the prompt's responsibility ends at preserving the operator's raw text.
+        var console = NewConsole();
+        EditField(console, fieldIndex: 1, "192.168.1.42,fe80::/64");
+        ConfirmForm(console);
+
+        var config = ConfigPhase.PromptForConfig(console);
+
+        await Assert.That(config.Deployment.Hosts.Count).IsEqualTo(2);
+        await Assert.That(config.Deployment.Hosts[0]).IsEqualTo("192.168.1.42");
+        await Assert.That(config.Deployment.Hosts[1]).IsEqualTo("fe80::/64");
     }
 
     [Test]
@@ -435,11 +454,12 @@ public sealed class ConfigInteractivePromptTests
     {
         // The four ApiRuntime show callbacks call ResolveDerivedDefaults on a clone so the
         // menu row paints the derived default next to its label even when the stored field
-        // is still empty. The default BootstrapConfig has Domains=["api.example.com"] and
-        // WebHttps=false, so the derived callback URL is "http://api.example.com" — that
-        // exact string should appear in the menu's value column next to the "OAuth callback
-        // base URL" label.
+        // is still empty. Hosts has no shipped default, so the test first populates it via
+        // the Public host(s) row (field index 1); after that, with WebHttps=false the derived
+        // callback URL is "http://api.example.com" — that exact string should appear in the
+        // menu's value column next to the "OAuth callback base URL" label.
         var console = NewConsole();
+        EditField(console, fieldIndex: 1, "api.example.com");
         ConfirmForm(console);
 
         ConfigPhase.PromptForConfig(console);
@@ -449,8 +469,8 @@ public sealed class ConfigInteractivePromptTests
         // a regression that paints a blank value cell or the wrong derived string fails loudly.
         await Assert.That(Regex.IsMatch(output, @"OAuth callback base URL\s+http://api\.example\.com")).IsTrue();
         await Assert.That(Regex.IsMatch(output, @"JWT authority \(iss claim\)\s+http://api\.example\.com")).IsTrue();
-        // CORS row derives one entry per domain, joined with ',' for the menu display. The
-        // single-domain default produces one entry.
+        // CORS row derives one entry per non-CIDR host, joined with ',' for the menu display.
+        // The single-host input produces one entry.
         await Assert.That(Regex.IsMatch(output, @"CORS allowed origins\s+http://api\.example\.com")).IsTrue();
     }
 
@@ -486,7 +506,7 @@ public sealed class ConfigInteractivePromptTests
         var output = console.Output;
         // Deployment
         await Assert.That(output).Contains("Output directory");
-        await Assert.That(output).Contains("Public domain");
+        await Assert.That(output).Contains("Public host");
         await Assert.That(output).Contains("Root CA");
         await Assert.That(output).Contains("Leaf cert validity");
         await Assert.That(output).Contains("Install root CA");

@@ -173,7 +173,7 @@ public class WebHttpsTests(UbuntuDinDFixture dinD)
         await Assert.That(renderedConf.Stdout).Contains("/certs/leaf.key")
             .Because("envsubst should have substituted NGINX_SSL_KEY_FILE into ssl_certificate_key");
         await Assert.That(renderedConf.Stdout).Contains("web.test.local")
-            .Because("envsubst should have substituted NGINX_SERVER_NAME from the fixture's domains[0]");
+            .Because("envsubst should have substituted NGINX_SERVER_NAME from the fixture's hosts[0]");
 
         // Final TLS probe — `-k` because the leaf is signed by the bootstrapper's private root
         // CA which the curl invocation inside the container doesn't trust by default. Asserting

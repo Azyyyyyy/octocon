@@ -466,11 +466,14 @@ internal static class PublishPhase
             // can still drop the toggle in interfold.bootstrap.json after generation.
             ["Parameters:include-web"] = config.Deployment.WebHttps ? "true" : "false",
             ["Parameters:web-tls"] = config.Deployment.WebHttps ? "true" : "false",
-            // Server name baked into the rendered nginx config. Domains is validated to be
-            // non-empty by ConfigPhase, so [0] is safe here.
-            ["Parameters:web-server-name"] = config.Deployment.Domains.Count > 0
-                ? config.Deployment.Domains[0]
-                : "_",
+            // Server name baked into the rendered nginx config. nginx accepts DNS names and bare
+            // IP literals as server_name but does NOT accept CIDR notation, so we use the first
+            // non-CIDR host (the same "primary host" rule ConfigPhase.ResolveDerivedDefaults uses
+            // for callback URL derivation). ConfigPhase.Validate guarantees at least one
+            // leaf-eligible entry exists; the `_` catch-all fallback only kicks in for the
+            // bypass-validation dev path that goes straight to InterfoldAppHost.Configure without
+            // running the bootstrapper.
+            ["Parameters:web-server-name"] = PickServerName(config.Deployment.Hosts),
             ["Ports:postgres"] = config.Ports.Postgres.ToString(),
             ["Ports:scylla"] = config.Ports.Scylla.ToString(),
             ["Ports:api-http"] = config.Ports.ApiHttp.ToString(),
@@ -485,5 +488,36 @@ internal static class PublishPhase
         logger.Info("    invoking Aspire publish...");
         await using var app = builder.Build();
         await app.RunAsync(ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Selects the nginx <c>server_name</c> from a raw <see cref="DeploymentSection.Hosts"/>
+    /// list: first parseable, non-CIDR entry wins. Falls back to <c>_</c> (the nginx catch-all)
+    /// when no leaf-eligible entry exists — covers a defensive path that should be unreachable
+    /// in practice because <see cref="ConfigPhase.Validate"/> rejects an all-CIDR-or-empty list
+    /// before this method runs.
+    /// </summary>
+    internal static string PickServerName(IReadOnlyList<string> hosts)
+    {
+        foreach (var raw in hosts)
+        {
+            if (string.IsNullOrWhiteSpace(raw)) continue;
+            HostEntry entry;
+            try
+            {
+                entry = HostParser.Parse(raw);
+            }
+            catch (FormatException)
+            {
+                continue;
+            }
+            if (!entry.IsLeafEligible) continue;
+            return entry.Kind switch
+            {
+                HostKind.Dns => entry.DnsName!,
+                _ => entry.Ip!.ToString(),
+            };
+        }
+        return "_";
     }
 }
