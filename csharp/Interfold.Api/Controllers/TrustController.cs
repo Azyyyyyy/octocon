@@ -53,6 +53,7 @@ public sealed class TrustController : ControllerBase
     /// <c>application/pkix-cert</c>.
     /// </summary>
     [HttpGet("interfold-root-ca.crt")]
+    [HttpHead("interfold-root-ca.crt")]
     public async Task<IActionResult> GetRootCaDer(CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(_options.RootCaPath) || !System.IO.File.Exists(_options.RootCaPath))
@@ -75,6 +76,7 @@ public sealed class TrustController : ControllerBase
     /// verbatim without re-encoding.
     /// </summary>
     [HttpGet("interfold-root-ca.pem")]
+    [HttpHead("interfold-root-ca.pem")]
     public async Task<IActionResult> GetRootCaPem(CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(_options.RootCaPath) || !System.IO.File.Exists(_options.RootCaPath))
@@ -95,6 +97,7 @@ public sealed class TrustController : ControllerBase
     /// origin — closing the trust-on-first-fetch gap.
     /// </summary>
     [HttpGet("interfold-root-ca.sha256")]
+    [HttpHead("interfold-root-ca.sha256")]
     public async Task<IActionResult> GetRootCaFingerprint(CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(_options.RootCaFingerprintPath) ||

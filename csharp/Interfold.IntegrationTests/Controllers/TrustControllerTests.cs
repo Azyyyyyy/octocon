@@ -133,6 +133,54 @@ public class TrustControllerTests : BaseEndpointTest
     }
 
     [Test]
+    public async Task HeadRequestsReturnHeadersWithoutBody()
+    {
+        // HEAD is mandatory wherever GET is supported (RFC 9110 §9.3.2) and is the request
+        // CDNs / browsers / curl -I issue when revalidating a cached artefact - including
+        // the bootstrapper integration test's curl-based ETag check. Without [HttpHead]
+        // alongside [HttpGet] on each action, the routing layer rejects HEAD as
+        // "no matching endpoint", which then falls through to the default authorize policy
+        // and returns 401 with a WWW-Authenticate: Bearer challenge - the exact regression
+        // we shipped once. This test pins HEAD against the same matrix the GET tests cover
+        // and asserts the cache contract (ETag, Cache-Control) is identical so cache
+        // revalidation behaves correctly.
+        var (certPath, fingerprintPath, _, expectedFingerprint, cleanup) = CreateTempCertFiles();
+        try
+        {
+            await using var factory = new InterfoldWebApplicationFactory("inmemory")
+                .WithConfiguration("OCTOCON_TRUST_ROOT_CA_PATH", certPath)
+                .WithConfiguration("OCTOCON_TRUST_ROOT_CA_FINGERPRINT_PATH", fingerprintPath);
+            using var client = factory.CreateClient();
+
+            foreach (var path in new[]
+                     {
+                         "/.well-known/interfold-root-ca.crt",
+                         "/.well-known/interfold-root-ca.pem",
+                         "/.well-known/interfold-root-ca.sha256",
+                     })
+            {
+                using var req = new HttpRequestMessage(HttpMethod.Head, path);
+                var response = await client.SendAsync(req);
+
+                await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK)
+                    .Because($"HEAD {path} must return 200 (not 401 / 405) so cache revalidation works");
+
+                var etag = response.Headers.ETag?.Tag;
+                await Assert.That(etag).IsEqualTo($"\"{expectedFingerprint}\"")
+                    .Because($"HEAD {path} must publish the same ETag as GET so conditional caches stay in sync");
+
+                var body = await response.Content.ReadAsByteArrayAsync();
+                await Assert.That(body.Length).IsEqualTo(0)
+                    .Because($"HEAD {path} must omit the response body (RFC 9110 §9.3.2)");
+            }
+        }
+        finally
+        {
+            cleanup();
+        }
+    }
+
+    [Test]
     public async Task WellKnownRoutesBypassHttpsRedirect()
     {
         // The trust-distribution bootstrap requires plain HTTP at /.well-known/* because
