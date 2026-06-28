@@ -652,6 +652,15 @@ public static class InterfoldAppHost
                    // internal.secrets:certs:leaf_pfx_password and Program.cs loads it directly
                    // via a one-shot Npgsql query before Kestrel binds.
                    .WithEnvironment("ASPNETCORE_Kestrel__Certificates__Default__Path", "/certs/leaf.pfx")
+                   // Trust-distribution paths consumed by TrustController in Interfold.Api to
+                   // serve /.well-known/interfold-root-ca.{crt,pem,sha256}. Both files live
+                   // inside the read-only /certs bind mount above (CertificatePhase writes
+                   // them as part of certs phase). When the bind mount is absent (dev `aspire
+                   // run`), these stay blank and the controller short-circuits to 404. The
+                   // sha256 file is also the source of the HTTP ETag on the cert routes so
+                   // `--rotate-certs` invalidates downstream caches on the next response.
+                   .WithEnvironment("OCTOCON_TRUST_ROOT_CA_PATH", "/certs/rootCA.crt")
+                   .WithEnvironment("OCTOCON_TRUST_ROOT_CA_FINGERPRINT_PATH", "/certs/rootCA.sha256.txt")
                    // OAuth client IDs are public per-provider identifiers that get rendered into
                    // each scheme's authorize-redirect URL. Attached on the container path only so
                    // the dev `aspire run` workflow keeps reading them from launchSettings.json /

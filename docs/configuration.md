@@ -343,6 +343,18 @@ container standalone (outside AppHost) need to set `ASPNETCORE_URLS` themselves;
 ASP.NET Core falls through to its built-in default of `http://+:8080`.
 
 
+#### Trust artefact paths
+
+| Env var                                  | Default                       | Notes                                                                                                                                                                                                                                                                                              |
+| ---------------------------------------- | ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `OCTOCON_TRUST_ROOT_CA_PATH`             | `/certs/rootCA.crt`           | Path inside the API container to the PEM-encoded root CA. Served at `/.well-known/interfold-root-ca.{crt,pem}` by `TrustController`. Empty/missing (dev `aspire run` with no `/certs` bind mount) makes the routes 404 instead of erroring. (bootstrapper-managed)                                  |
+| `OCTOCON_TRUST_ROOT_CA_FINGERPRINT_PATH` | `/certs/rootCA.sha256.txt`    | Path to the SHA-256 fingerprint sidecar (uppercase colon-hex). Served at `/.well-known/interfold-root-ca.sha256` and reused as the HTTP `ETag` on the cert routes so `rotate-certs` invalidates downstream caches automatically. Empty drops the ETag and 404s the .sha256 route. (bootstrapper-managed) |
+
+See [Trust distribution](#trust-distribution) below for the fetch-and-verify recipe,
+the `bootstrap show-trust` command, the Name Constraints invariant, and the
+unsupported-clients list.
+
+
 #### Testing
 
 
@@ -355,6 +367,129 @@ ASP.NET Core falls through to its built-in default of `http://+:8080`.
 | `OCTOCON_TEST_SCYLLA_PASSWORD`       | `cassandra` | (test-only) |
 | `OCTOCON_TEST_REGION`                | `nam`       | (test-only) |
 
+
+## Trust distribution
+
+The bootstrapper issues its own root CA and signs every leaf cert with it. Devices that
+don't already trust the root must install it before they can talk TLS to the API; the
+combination of a `/.well-known/` download surface, a SHA-256 fingerprint OOB channel,
+and a critical Name Constraints extension on the root cap the blast radius of both
+"untrusted certificate" UX failures and a worst-case CA-key compromise.
+
+### Artefacts (`deploy/certs/`)
+
+| File                  | Purpose                                                                                                  | Mode |
+| --------------------- | -------------------------------------------------------------------------------------------------------- | ---- |
+| `rootCA.crt`          | Public root CA cert (PEM). Bind-mounted into the API at `/certs/rootCA.crt`.                             | 0644 |
+| `rootCA.key`          | CA private key (PKCS#8 PEM). Never leaves the host; the bind mount is RO and the API process can't read it because the file is owned-read-only. | 0600 |
+| `rootCA.sha256.txt`   | SHA-256 fingerprint of `rootCA.crt` in uppercase colon-hex (matches `openssl x509 -fingerprint -sha256`). | 0644 |
+| `leaf.crt` / `leaf.key` / `leaf.pfx` | Leaf cert + key. PFX password lives in `internal.secrets:certs:leaf_pfx_password`. | 0644 |
+
+### Endpoints (`/.well-known/interfold-root-ca.*`)
+
+`[TrustController](../csharp/Interfold.Api/Controllers/TrustController.cs)` serves a
+hard-coded allowlist of three routes off the IANA `.well-known` prefix:
+
+| Route                              | Content-Type                                                                              | Body                                                |
+| ---------------------------------- | ----------------------------------------------------------------------------------------- | --------------------------------------------------- |
+| `interfold-root-ca.crt`            | `application/pkix-cert` (default) / `application/x-x509-ca-cert` (when `Accept` opts in)  | Root CA in DER                                      |
+| `interfold-root-ca.pem`            | `application/x-pem-file`                                                                  | Root CA in PEM (the verbatim on-disk bytes)         |
+| `interfold-root-ca.sha256`         | `text/plain; charset=utf-8`                                                               | One line: SHA-256 fingerprint in uppercase colon-hex |
+
+All three return `Cache-Control: public, max-age=60, must-revalidate` and an `ETag`
+derived from the fingerprint file. `rotate-certs` rewrites the fingerprint, which
+changes the ETag, which invalidates downstream caches on the next conditional request.
+
+Returns 404 on every route when the bootstrapper hasn't supplied trust paths (dev mode
+with no `/certs` bind mount, or a deployment that explicitly disables them). Hardcoded
+allowlist: no user input ever joins a file path, `rootCA.key` is not on the allowlist,
+and the file's 0600 owner-only mode means even a path-traversal regression here cannot
+read it from the API process.
+
+### Operator fingerprint surface
+
+`bootstrap show-trust` is a read-only command that loads the on-disk root CA and prints:
+
+```text
+Root CA:     Interfold Root CA
+  Path:        /…/deploy/certs/rootCA.crt
+  SHA-256:     AA:BB:CC:…:99
+  Not after:   2030-01-01 12:00:00 UTC
+  Distribute:  curl -fSL http://<host>:5000/.well-known/interfold-root-ca.crt -o rootCA.crt
+  Verify:      openssl x509 -in rootCA.crt -noout -fingerprint -sha256
+               (compare the printed SHA256 Fingerprint to the value above)
+```
+
+The same block prints at the end of every `bootstrap` / `bootstrap rotate-certs`
+invocation. `show-trust` short-circuits in `Orchestrator.RunAsync` before any other
+phase runs, so it's safe to invoke from an ops jumphost without an
+`interfold.bootstrap.json` and won't touch the running stack.
+
+### End-user fetch-and-verify recipe
+
+The whole point of the fingerprint is to let an end user verify the cert they just
+downloaded came from the operator and wasn't substituted by a network attacker:
+
+```bash
+# 1. Operator broadcasts the fingerprint via Slack / email / Keybase / etc.
+EXPECTED="AA:BB:CC:DD:…:99"
+
+# 2. User fetches the cert. Plain HTTP is fine here — the SHA-256 is what makes this safe.
+curl -fSL http://api.example.com:5000/.well-known/interfold-root-ca.crt -o rootCA.crt
+
+# 3. User computes the fingerprint and compares character-for-character.
+openssl x509 -in rootCA.crt -noout -fingerprint -sha256
+# SHA256 Fingerprint=AA:BB:CC:DD:…:99
+
+# 4. ONLY after the fingerprints match: install into the device trust store.
+sudo cp rootCA.crt /usr/local/share/ca-certificates/interfold-root-ca.crt
+sudo update-ca-certificates
+```
+
+The OOB channel (Slack / email) is load-bearing: an attacker who can MITM the HTTPS
+request from the user's device can also serve the user a different root CA — the only
+way the user can tell is by comparing the fingerprint they received OOB to the one they
+just downloaded.
+
+### Name Constraints invariant
+
+The root CA carries a critical Name Constraints extension (RFC 5280 §4.2.1.10) whose
+`permittedSubtrees` is the operator's `deployment.domains` list. Wildcard entries
+(`*.example.com`) collapse to their suffix because dNSName subtree semantics already
+cover sub-labels and `*` is not a legal IA5String value.
+
+A leaked CA private key therefore cannot mint a trusted cert for any host outside the
+operator's configured domain set — every device that installed this root will reject
+the impostor at chain validation. The blast radius of a key compromise is the
+operator's domain set, not the public internet.
+
+Trade-off: a handful of older or embedded TLS stacks don't support Name Constraints
+and will reject the leaf chain entirely. Known unsupported clients:
+
+- Android < 7
+- Java < 8u101
+- Several embedded TLS stacks (consult device docs)
+
+Modern curl, browsers, OpenSSL ≥ 1.0.1, and .NET ≥ 6 handle Name Constraints
+correctly. There is no opt-out: the constraint is critical so a non-supporting client
+would otherwise silently treat the extension as absent, defeating the security
+property entirely.
+
+### Rotation
+
+`bootstrap rotate-certs` regenerates the root CA, leaf, and fingerprint. Operator
+consequences:
+
+1. Every client device that previously installed the old root must install the new
+   one. `CertificatePhase` prints a prominent two-line warning to that effect when it
+   runs in rotate mode, immediately after the trust-info block so the new fingerprint
+   is right above the call-to-action.
+2. Cached `.well-known` responses pick up the new bytes on the next conditional
+   request because the ETag changes with the fingerprint.
+3. The CA private key permissions (0600) are re-applied even on idempotent reruns,
+   so upgrading from a pre-hardening install backfills the lockdown without needing
+   an explicit rotate. `rootCA.sha256.txt` is similarly backfilled on first run after
+   upgrading, with no regeneration of the CA.
 
 ## Layer 4 — `internal.secrets`
 

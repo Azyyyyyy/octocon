@@ -31,4 +31,12 @@ public enum BootstrapCommand
     Up,
     RotateSecrets,
     RotateCerts,
+    /// <summary>
+    /// Read-only command: prints the root CA's path, SHA-256 fingerprint, expiry, and the
+    /// distribute/verify recipe to stdout. Does NOT regenerate the CA or touch any other
+    /// phase — Orchestrator short-circuits before prereqs/config/secrets. Operators run this
+    /// to fetch the fingerprint they need to broadcast out-of-band so end-user devices can
+    /// verify the cert they download from <c>/.well-known/interfold-root-ca.crt</c>.
+    /// </summary>
+    ShowTrust,
 }

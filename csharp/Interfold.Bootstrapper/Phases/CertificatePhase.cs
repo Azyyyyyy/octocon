@@ -1,6 +1,9 @@
+using System.Formats.Asn1;
+using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
+using System.Text;
 using Interfold.Bootstrapper.Cli;
 using Interfold.Bootstrapper.Configuration;
 using Interfold.Bootstrapper.Util;
@@ -31,39 +34,52 @@ internal static partial class CertificatePhase
 
         var certsDir = Path.Combine(options.OutputDir, CertsRelativeDir);
         var rootCrtPath = Path.Combine(certsDir, "rootCA.crt");
+        var rootKeyPath = Path.Combine(certsDir, "rootCA.key");
+        var rootFingerprintPath = Path.Combine(certsDir, "rootCA.sha256.txt");
         var leafCrtPath = Path.Combine(certsDir, "leaf.crt");
         var leafKeyPath = Path.Combine(certsDir, "leaf.key");
         var leafPfxPath = Path.Combine(certsDir, "leaf.pfx");
 
-        var allPresent = File.Exists(rootCrtPath) && File.Exists(leafCrtPath)
-                         && File.Exists(leafKeyPath) && File.Exists(leafPfxPath);
-        if (allPresent && !options.RotateCerts)
+        // Idempotency contract: the original four-file presence check stays the trigger for
+        // "skip the regeneration"; the new rootCA.sha256.txt is treated as derived metadata
+        // that EnsureUpgradeArtefacts can backfill in-place. Older installs that predate the
+        // trust-distribution work upgrade without forcing --rotate-certs.
+        var allPresentBeforeRun = File.Exists(rootCrtPath) && File.Exists(leafCrtPath)
+                                  && File.Exists(leafKeyPath) && File.Exists(leafPfxPath);
+        if (allPresentBeforeRun && !options.RotateCerts)
         {
+            EnsureUpgradeArtefacts(rootCrtPath, rootKeyPath, rootFingerprintPath, logger);
+            PrintTrustInfo(rootCrtPath, rootFingerprintPath, logger);
             logger.PhaseSkip(Phase, "already-present");
             return;
         }
 
-        if (allPresent)
+        if (allPresentBeforeRun)
         {
             logger.Info("    --rotate-certs set: regenerating root CA + leaf");
         }
 
         Directory.CreateDirectory(certsDir);
 
-        var (rootCert, rootKey) = GenerateRootCa(config.Deployment.RootCaName, config.Deployment.CertYears);
+        var (rootCert, rootKey) = GenerateRootCa(config.Deployment.RootCaName, config.Deployment.CertYears, config.Deployment.Domains);
         var (leafCert, leafKey) = GenerateLeaf(rootCert, rootKey, config.Deployment.Domains, config.Deployment.CertYears);
 
         await PersistAsync(rootCert, rootKey, leafCert, leafKey, secrets.LeafPfxPassword,
-            rootCrtPath, certsDir, leafCrtPath, leafKeyPath, leafPfxPath, ct).ConfigureAwait(false);
+            rootCrtPath, rootKeyPath, leafCrtPath, leafKeyPath, leafPfxPath, ct).ConfigureAwait(false);
+
+        WriteFingerprintFile(rootFingerprintPath, rootCert);
 
         // The published API container reads `/certs/leaf.pfx` through a read-only bind mount as a
         // non-root user (the .NET SDK container builds default to UID 64198). Without world-read
         // bits the container process gets EACCES on startup, so we mark the bind-mounted files
-        // 0644. The PFX is password-protected, the root key never leaves the host, and the
-        // directory itself should be locked down at the OS level.
+        // 0644. The PFX is password-protected; rootCA.key never leaves the host and is locked
+        // down to 0600 below as defence-in-depth against an API-side path-traversal regression
+        // (TrustController only serves the public artefacts by explicit allowlist).
         ChmodReadable(leafPfxPath, logger);
         ChmodReadable(leafCrtPath, logger);
         ChmodReadable(rootCrtPath, logger);
+        ChmodReadable(rootFingerprintPath, logger);
+        ChmodOwnerOnly(rootKeyPath, logger);
 
         rootCert.Dispose();
         leafCert.Dispose();
@@ -79,10 +95,21 @@ internal static partial class CertificatePhase
             logger.Info("    skipping trust-store install (trustStoreInstall=false or non-Linux host)");
         }
 
+        PrintTrustInfo(rootCrtPath, rootFingerprintPath, logger);
+
+        // Operator-facing warning: rotating an already-distributed CA invalidates trust on every
+        // client device. The fingerprint above is what users compare their re-downloaded copy
+        // against; surface the consequence prominently rather than buried in docs.
+        if (allPresentBeforeRun && options.RotateCerts)
+        {
+            logger.Warn("All previously-trusted client devices must re-install the new root CA.");
+            logger.Warn("Distribute the SHA-256 above out-of-band so users can verify their download.");
+        }
+
         logger.PhaseDone(Phase);
     }
 
-    private static (X509Certificate2 Cert, RSA Key) GenerateRootCa(string rootCaName, int years)
+    private static (X509Certificate2 Cert, RSA Key) GenerateRootCa(string rootCaName, int years, IReadOnlyList<string> domains)
     {
         var key = RSA.Create(2048);
         var subject = new X500DistinguishedName($"CN={rootCaName}");
@@ -91,6 +118,15 @@ internal static partial class CertificatePhase
 
         // CA with pathlen:0 — can sign leaves but not intermediates.
         req.CertificateExtensions.Add(new X509BasicConstraintsExtension(certificateAuthority: true, hasPathLengthConstraint: true, pathLengthConstraint: 0, critical: true));
+        // Name Constraints (RFC 5280 §4.2.1.10). MUST be critical. Limits this CA to issuing
+        // leaves whose dNSName SANs sit within the configured deployment domains. Blast-radius
+        // cap: even a full leak of rootCA.key cannot mint a trusted cert for google.com,
+        // paypal.com, etc. — every device that installed this root rejects out-of-permitted
+        // names at chain validation. The leaf doesn't carry IP SANs so the absence of an IP
+        // permitted entry is itself an implicit "no IP SANs ever validate" denial. Compatibility
+        // trade-off: rejects on Android <7, Java <8u101, and a handful of embedded TLS stacks;
+        // modern curl / browsers / OpenSSL / .NET handle it cleanly.
+        req.CertificateExtensions.Add(BuildNameConstraintsExtension(domains));
         req.CertificateExtensions.Add(new X509KeyUsageExtension(X509KeyUsageFlags.KeyCertSign, critical: true));
         req.CertificateExtensions.Add(new X509SubjectKeyIdentifierExtension(req.PublicKey, critical: false));
 
@@ -159,19 +195,23 @@ internal static partial class CertificatePhase
         RSA leafKey,
         string pfxPassword,
         string rootCrtPath,
-        string certsDir,
+        string rootKeyPath,
         string leafCrtPath,
         string leafKeyPath,
         string leafPfxPath,
         CancellationToken ct)
     {
         await File.WriteAllTextAsync(rootCrtPath, rootCert.ExportCertificatePem(), ct).ConfigureAwait(false);
-        await File.WriteAllTextAsync(Path.Combine(certsDir, "rootCA.key"), rootKey.ExportPkcs8PrivateKeyPem(), ct).ConfigureAwait(false);
+        await File.WriteAllTextAsync(rootKeyPath, rootKey.ExportPkcs8PrivateKeyPem(), ct).ConfigureAwait(false);
         await File.WriteAllTextAsync(leafCrtPath, leafCert.ExportCertificatePem(), ct).ConfigureAwait(false);
         await File.WriteAllTextAsync(leafKeyPath, leafKey.ExportPkcs8PrivateKeyPem(), ct).ConfigureAwait(false);
 
-        // Export the leaf as PFX bundled with the root for full chain. AES-256 + SHA-256 matches modern
-        // PFX defaults (older OpenSSL 1.x produced 3DES PFXs that some platforms now reject).
+        // Single-cert PFX: leaf certificate + its RSA private key only. X509Certificate2.Export
+        // does not walk the issuer chain, so the root CA is deliberately NOT bundled here -
+        // clients fetch the root out-of-band via TrustController (/.well-known/interfold-root-ca.crt)
+        // and verify it against the operator-distributed SHA-256 fingerprint. The MAC + encryption
+        // algorithms come from the .NET runtime defaults (AES-256-CBC + HMAC-SHA-256 on the
+        // OpenSSL backend used in the API container); modern Kestrel + clients accept this happily.
         var pfxBytes = leafCert.Export(X509ContentType.Pfx, pfxPassword);
         await File.WriteAllBytesAsync(leafPfxPath, pfxBytes, ct).ConfigureAwait(false);
     }
@@ -195,6 +235,187 @@ internal static partial class CertificatePhase
         {
             var err = Marshal.GetLastPInvokeError();
             logger.Warn($"chmod({path}, 0644) failed: errno={err} (cert file written but permissions not adjusted)");
+        }
+    }
+
+    /// <summary>
+    /// 0600 - readable / writable only by the file owner. Applied to <c>rootCA.key</c> so a
+    /// shell user other than the bootstrapper invoker (and the non-root API container UID
+    /// 64198 that bind-mounts the same directory read-only) cannot read the CA private key.
+    /// The host umask typically lands at 0644 which is too permissive for signing material.
+    /// </summary>
+    internal static void ChmodOwnerOnly(string path, PhaseLogger logger)
+    {
+        if (!RuntimeInformation.IsOSPlatform(OSPlatform.Linux) &&
+            !RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+        {
+            return;
+        }
+
+        const int s_600 = 0x180; // 0o600
+        var rc = NativeMethods.chmod(path, s_600);
+        if (rc != 0)
+        {
+            var err = Marshal.GetLastPInvokeError();
+            logger.Warn($"chmod({path}, 0600) failed: errno={err} (key file written but permissions not adjusted)");
+        }
+    }
+
+    /// <summary>
+    /// Encodes an X.509 v3 Name Constraints extension (OID 2.5.29.30, critical) with one
+    /// dNSName GeneralName per supplied domain in the <c>permittedSubtrees</c> set. No
+    /// <c>excludedSubtrees</c>: RFC 5280 §4.2.1.10 already treats names outside the permitted
+    /// set as implicitly denied. Wildcard entries (<c>*.example.com</c>) collapse to their
+    /// suffix because dNSName subtree semantics already match every sub-label of the suffix
+    /// and the literal <c>*</c> character is not a valid IA5String constraint value.
+    ///
+    /// ASN.1 shape:
+    /// <code>
+    /// NameConstraints ::= SEQUENCE { permittedSubtrees [0] IMPLICIT GeneralSubtrees }
+    /// GeneralSubtrees ::= SEQUENCE OF GeneralSubtree
+    /// GeneralSubtree ::= SEQUENCE { base GeneralName }
+    /// GeneralName ::= CHOICE { dNSName [2] IMPLICIT IA5String, ... }
+    /// </code>
+    /// </summary>
+    internal static X509Extension BuildNameConstraintsExtension(IReadOnlyList<string> domains)
+    {
+        if (domains is null || domains.Count == 0)
+        {
+            throw new ArgumentException(
+                "Name Constraints require at least one permitted dNSName. ConfigPhase.Validate " +
+                "rejects an empty deployment.domains list before this method runs.",
+                nameof(domains));
+        }
+
+        var writer = new AsnWriter(AsnEncodingRules.DER);
+
+        using (writer.PushSequence())
+        {
+            // permittedSubtrees [0] IMPLICIT GeneralSubtrees
+            using (writer.PushSequence(new Asn1Tag(TagClass.ContextSpecific, 0)))
+            {
+                foreach (var domain in domains)
+                {
+                    var dnsName = StripWildcardPrefix(domain);
+
+                    using (writer.PushSequence())
+                    {
+                        // dNSName [2] IMPLICIT IA5String
+                        writer.WriteCharacterString(
+                            UniversalTagNumber.IA5String,
+                            dnsName,
+                            new Asn1Tag(TagClass.ContextSpecific, 2));
+                    }
+                }
+            }
+        }
+
+        return new X509Extension(new Oid("2.5.29.30"), writer.Encode(), critical: true);
+    }
+
+    /// <summary>
+    /// Strips a leading <c>*.</c> from a wildcard domain so the result is a valid dNSName for
+    /// a Name Constraints permittedSubtree entry. RFC 5280 dNSName subtrees match every host
+    /// under the suffix (e.g. <c>example.com</c> permits <c>api.example.com</c> and
+    /// <c>admin.example.com</c>) without needing the literal wildcard character — which is
+    /// not a legal IA5String constraint value.
+    /// </summary>
+    internal static string StripWildcardPrefix(string domain) =>
+        domain.StartsWith("*.", StringComparison.Ordinal) ? domain[2..] : domain;
+
+    /// <summary>
+    /// Persists <c>SHA-256(rootCert.RawData)</c> formatted as colon-separated uppercase hex
+    /// (matching the output of <c>openssl x509 -fingerprint -sha256</c>) to
+    /// <paramref name="path"/>. The file is the API container's source for the
+    /// <c>/.well-known/interfold-root-ca.sha256</c> response and the runtime ETag for the
+    /// cert routes — rotating the CA changes the file contents which invalidates downstream
+    /// caches automatically.
+    /// </summary>
+    internal static void WriteFingerprintFile(string path, X509Certificate2 cert)
+    {
+        var hash = SHA256.HashData(cert.RawData);
+        var formatted = FormatSha256Fingerprint(hash);
+        File.WriteAllText(path, formatted + Environment.NewLine);
+    }
+
+    /// <summary>
+    /// Formats a SHA-256 byte hash as the canonical colon-separated uppercase hex string
+    /// (<c>AA:BB:CC:...</c>). Matches the format that <c>openssl x509 -fingerprint -sha256</c>
+    /// emits and that browsers show in cert info dialogs, so OOB verification by a human is
+    /// a straight character-by-character compare.
+    /// </summary>
+    internal static string FormatSha256Fingerprint(byte[] hash)
+    {
+        var sb = new StringBuilder(hash.Length * 3);
+        for (var i = 0; i < hash.Length; i++)
+        {
+            if (i > 0) sb.Append(':');
+            sb.Append(hash[i].ToString("X2", CultureInfo.InvariantCulture));
+        }
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// Emits the operator-facing trust-distribution block: CA name, on-disk path, SHA-256
+    /// fingerprint, expiry, and a copy-pasteable distribute/verify recipe. Called from
+    /// <see cref="RunAsync"/> at the end of certificate generation (always; covers the
+    /// skip-because-already-present branch via <see cref="EnsureUpgradeArtefacts"/>) and
+    /// from <c>show-trust</c> for read-only re-prints after the fact.
+    /// </summary>
+    internal static void PrintTrustInfo(string rootCrtPath, string rootFingerprintPath, PhaseLogger logger)
+    {
+        if (!File.Exists(rootCrtPath))
+        {
+            logger.Warn($"trust info: rootCA.crt missing at {rootCrtPath}");
+            return;
+        }
+
+        using var cert = X509CertificateLoader.LoadCertificateFromFile(rootCrtPath);
+
+        var fingerprint = File.Exists(rootFingerprintPath)
+            ? File.ReadAllText(rootFingerprintPath).Trim()
+            : FormatSha256Fingerprint(SHA256.HashData(cert.RawData));
+
+        // Cert Subject is "CN=Interfold Root CA, ..."; render just the CN for friendlier output.
+        var caName = cert.Subject;
+        if (caName.StartsWith("CN=", StringComparison.Ordinal))
+        {
+            caName = caName[3..];
+            var comma = caName.IndexOf(',');
+            if (comma > 0) caName = caName[..comma];
+        }
+
+        logger.Info("");
+        logger.Info($"    Root CA:     {caName}");
+        logger.Info($"      Path:        {rootCrtPath}");
+        logger.Info($"      SHA-256:     {fingerprint}");
+        logger.Info($"      Not after:   {cert.NotAfter.ToUniversalTime():yyyy-MM-dd HH:mm:ss} UTC");
+        logger.Info($"      Distribute:  curl -fSL http://<host>:5000/.well-known/interfold-root-ca.crt -o rootCA.crt");
+        logger.Info($"      Verify:      openssl x509 -in rootCA.crt -noout -fingerprint -sha256");
+        logger.Info($"                   (compare the printed SHA256 Fingerprint to the value above)");
+        logger.Info("");
+    }
+
+    /// <summary>
+    /// Brings an older install up to the current on-disk contract without forcing the
+    /// operator to run <c>--rotate-certs</c>: backfills the SHA-256 fingerprint file when
+    /// missing, and tightens <c>rootCA.key</c> permissions to 0600 if the previous bootstrap
+    /// (which only relied on the process umask) left it world-readable. Both operations are
+    /// idempotent and safe to re-run.
+    /// </summary>
+    internal static void EnsureUpgradeArtefacts(string rootCrtPath, string rootKeyPath, string rootFingerprintPath, PhaseLogger logger)
+    {
+        if (!File.Exists(rootFingerprintPath) && File.Exists(rootCrtPath))
+        {
+            using var cert = X509CertificateLoader.LoadCertificateFromFile(rootCrtPath);
+            WriteFingerprintFile(rootFingerprintPath, cert);
+            ChmodReadable(rootFingerprintPath, logger);
+            logger.Info($"    fingerprint backfilled at {rootFingerprintPath}");
+        }
+
+        if (File.Exists(rootKeyPath))
+        {
+            ChmodOwnerOnly(rootKeyPath, logger);
         }
     }
 

@@ -57,6 +57,13 @@ public static class ConfigurationServiceCollectionExtensions
         services.AddOptions<ObservabilityConfiguration>()
             .Configure<IConfiguration>(ApplyObservability);
 
+        // Trust-distribution paths read by TrustController. The values are filesystem paths
+        // pointing into the read-only /certs bind mount; they change only on
+        // bootstrap --rotate-certs (which restarts the API container), so an
+        // IOptions<T> snapshot taken at startup is correct.
+        services.AddOptions<TrustOptions>()
+            .Configure<IConfiguration>(ApplyTrust);
+
         // Live-reloadable: avatar storage paths can be updated via appsettings.json.
         AddLiveReloadable<StorageConfiguration>(services, ApplyStorage);
 
@@ -233,6 +240,18 @@ public static class ConfigurationServiceCollectionExtensions
         // OTLP exporter SDK (it would attempt to connect to ""). Normalise to null so the
         // not-configured branch in the telemetry registration still fires.
         opts.OtlpEndpoint = NullIfEmpty(config["OCTOCON_OTLP_ENDPOINT"]);
+    }
+
+    /// <summary>
+    /// Binds the OCTOCON_TRUST_* env vars onto <see cref="TrustOptions"/>. Empty strings
+    /// (the bootstrapper always emits these env vars, even in dev where the values are
+    /// blank) are normalised to <c>null</c> so TrustController's "trust artefacts not
+    /// configured" 404 branch fires correctly instead of treating "" as a usable path.
+    /// </summary>
+    private static void ApplyTrust(TrustOptions opts, IConfiguration config)
+    {
+        opts.RootCaPath = NullIfEmpty(config["OCTOCON_TRUST_ROOT_CA_PATH"]);
+        opts.RootCaFingerprintPath = NullIfEmpty(config["OCTOCON_TRUST_ROOT_CA_FINGERPRINT_PATH"]);
     }
 
     private static void ApplyStorage(StorageConfiguration opts, IConfiguration config)

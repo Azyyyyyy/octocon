@@ -98,6 +98,87 @@ public sealed class CliParsingTests
         await Assert.That(combined).Contains("up");
         await Assert.That(combined).Contains("rotate-secrets");
         await Assert.That(combined).Contains("rotate-certs");
+        await Assert.That(combined).Contains("show-trust");
+    }
+
+    [Test]
+    [NotInParallel("CliParsing.ConsoleStreams")]
+    public async Task ShowTrustReadsExistingCertWithoutRegenerating()
+    {
+        // End-to-end behavioural check: pre-stage a certs/ directory with a known rootCA.crt
+        // (and matching rootCA.sha256.txt), invoke `bootstrap show-trust`, and confirm the
+        // command (a) succeeds, (b) does NOT rewrite the cert (mtime unchanged), and
+        // (c) prints the recorded fingerprint exactly. This is the load-bearing assertion
+        // that the Orchestrator short-circuit doesn't accidentally fall through to
+        // CertificatePhase.RunAsync and regenerate the CA.
+        var tmpDir = Path.Combine(Path.GetTempPath(), "interfold-cli-showtrust-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tmpDir);
+        var certsDir = Path.Combine(tmpDir, "certs");
+        Directory.CreateDirectory(certsDir);
+        try
+        {
+            using var key = System.Security.Cryptography.RSA.Create(2048);
+            var req = new System.Security.Cryptography.X509Certificates.CertificateRequest(
+                new System.Security.Cryptography.X509Certificates.X500DistinguishedName("CN=Test Root"),
+                key,
+                System.Security.Cryptography.HashAlgorithmName.SHA256,
+                System.Security.Cryptography.RSASignaturePadding.Pkcs1);
+            using var cert = req.CreateSelfSigned(DateTimeOffset.UtcNow.AddMinutes(-1), DateTimeOffset.UtcNow.AddYears(1));
+            var rootCrtPath = Path.Combine(certsDir, "rootCA.crt");
+            var rootFpPath = Path.Combine(certsDir, "rootCA.sha256.txt");
+            await File.WriteAllTextAsync(rootCrtPath, cert.ExportCertificatePem());
+
+            var expectedFingerprint = Interfold.Bootstrapper.Phases.CertificatePhase.FormatSha256Fingerprint(
+                System.Security.Cryptography.SHA256.HashData(cert.RawData));
+            await File.WriteAllTextAsync(rootFpPath, expectedFingerprint + Environment.NewLine);
+
+            var preCertMtime = File.GetLastWriteTimeUtc(rootCrtPath);
+            var preFpMtime = File.GetLastWriteTimeUtc(rootFpPath);
+
+            // Force a measurable mtime delta so an accidental rewrite would be visible even on
+            // file systems whose timestamp resolution is in tens of milliseconds (ext4, APFS).
+            await Task.Delay(100);
+
+            var run = await InvokeInProcessAsync("show-trust", "--output-dir", tmpDir, "--non-interactive");
+
+            await Assert.That(run.ExitCode).IsEqualTo(0)
+                .Because($"show-trust must succeed on a pre-staged certs dir. stderr: {run.Stderr}");
+            await Assert.That(run.Stdout + run.Stderr).Contains(expectedFingerprint)
+                .Because("show-trust must print the recorded fingerprint verbatim");
+            await Assert.That(File.GetLastWriteTimeUtc(rootCrtPath)).IsEqualTo(preCertMtime)
+                .Because("show-trust must not rewrite rootCA.crt");
+            await Assert.That(File.GetLastWriteTimeUtc(rootFpPath)).IsEqualTo(preFpMtime)
+                .Because("show-trust must not rewrite rootCA.sha256.txt");
+        }
+        finally
+        {
+            try { Directory.Delete(tmpDir, recursive: true); } catch { /* best effort */ }
+        }
+    }
+
+    [Test]
+    [NotInParallel("CliParsing.ConsoleStreams")]
+    public async Task ShowTrustFailsWhenRootCaMissing()
+    {
+        // Diagnostic UX check: running show-trust against a directory that has no rootCA.crt
+        // must fail with a non-zero exit and an actionable error message that points the
+        // operator at `bootstrap` / `bootstrap rotate-certs`.
+        var tmpDir = Path.Combine(Path.GetTempPath(), "interfold-cli-showtrust-missing-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tmpDir);
+        try
+        {
+            var run = await InvokeInProcessAsync("show-trust", "--output-dir", tmpDir, "--non-interactive");
+
+            await Assert.That(run.ExitCode).IsNotEqualTo(0)
+                .Because("show-trust must exit non-zero when rootCA.crt is missing");
+            var combined = run.Stdout + run.Stderr;
+            await Assert.That(combined).Contains("rootCA.crt")
+                .Because("the error message should name the missing file so operators know what to look for");
+        }
+        finally
+        {
+            try { Directory.Delete(tmpDir, recursive: true); } catch { /* best effort */ }
+        }
     }
 
     [Test]
@@ -123,6 +204,7 @@ public sealed class CliParsingTests
     }
 
     [Test]
+    [NotInParallel("CliParsing.ConsoleStreams")]
     public async Task ShortOptionsMatchLongOptions()
     {
         // Compare two parser invocations of the `publish` command — one with --config, one
@@ -150,6 +232,7 @@ public sealed class CliParsingTests
     }
 
     [Test]
+    [NotInParallel("CliParsing.ConsoleStreams")]
     public async Task NonInteractiveWithoutConfigExitsNonZero()
     {
         // ConfigPhase aborts when --non-interactive is set and no config file is present at the

@@ -88,6 +88,15 @@ public static class RootCli
             rotateSecrets: false, rotateCerts: true, ct));
         root.Subcommands.Add(rotateCertsCmd);
 
+        // ---------- show-trust ----------
+        var showTrustCmd = new Command("show-trust",
+            "Print the root CA path, SHA-256 fingerprint, expiry, and fetch/verify snippet. Read-only.");
+        AddSharedOptions(showTrustCmd, configOpt, outputDirOpt, skipPrereqsOpt, nonInteractiveOpt, faultInjectOpt, printPhaseStatusOpt);
+        showTrustCmd.SetAction((parse, ct) => InvokeAsync(BootstrapCommand.ShowTrust, parse,
+            configOpt, outputDirOpt, skipPrereqsOpt, nonInteractiveOpt, faultInjectOpt, printPhaseStatusOpt,
+            rotateSecrets: false, rotateCerts: false, ct));
+        root.Subcommands.Add(showTrustCmd);
+
         // No subcommand -> default to `bootstrap`.
         AddSharedOptions(root, configOpt, outputDirOpt, skipPrereqsOpt, nonInteractiveOpt, faultInjectOpt, printPhaseStatusOpt);
         root.SetAction((parse, ct) => InvokeAsync(BootstrapCommand.Bootstrap, parse,

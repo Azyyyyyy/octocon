@@ -20,6 +20,27 @@ internal static class Orchestrator
         // Util/EmbeddedSupportFiles.cs for the manifest discovery rules.
         EmbeddedSupportFiles.EnsureExtracted(AppContext.BaseDirectory, logger);
 
+        // --- show-trust short-circuit ---
+        // Pure read: load rootCA.crt / rootCA.sha256.txt and emit the operator-facing trust
+        // block. Deliberately bypasses prereqs/config/secrets/certs/publish so the command is
+        // safe to run anywhere (including against a sealed deploy/ tree on an ops jumphost),
+        // and so it succeeds even when interfold.bootstrap.json is unavailable.
+        if (options.Command == BootstrapCommand.ShowTrust)
+        {
+            var certsDir = Path.Combine(options.OutputDir, "certs");
+            var rootCrtPath = Path.Combine(certsDir, "rootCA.crt");
+            var rootFingerprintPath = Path.Combine(certsDir, "rootCA.sha256.txt");
+
+            if (!File.Exists(rootCrtPath))
+            {
+                logger.Error($"rootCA.crt not found at {rootCrtPath}. Run `bootstrap` (or `bootstrap rotate-certs`) first.");
+                return 1;
+            }
+
+            CertificatePhase.PrintTrustInfo(rootCrtPath, rootFingerprintPath, logger);
+            return 0;
+        }
+
         // Phase sequence per command:
         //   bootstrap       prereqs -> config -> secrets -> certs -> publish -> db-init -> launch
         //   publish         config  -> secrets -> certs -> publish

@@ -56,3 +56,4 @@ scripts/keys/**
 
 # Launch settings (contains OAuth secrets, credentials)
 csharp/**/Properties/launchSettings.json
+artifacts/lifecycle-probe.ndjson
