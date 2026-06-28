@@ -1,0 +1,18 @@
+{
+  "deployment": {
+    "outputDir": "/opt/deploy",
+    "hosts": ["web.test.local"],
+    "rootCaName": "Interfold Test Root CA",
+    "certYears": 2,
+    "trustStoreInstall": false,
+    "includeWeb": true,
+    "webHttps": false
+  },
+  "ports": { "apiHttp": 5000, "apiHttps": 5001, "webHttp": 8080, "webHttps": 8081 },
+  "databaseMode": "single",
+  "apiImage": "interfold-api:test",
+  "oauth": {
+    "googleClientSecret": "",
+    "discordClientSecret": ""
+  }
+}

@@ -464,6 +464,7 @@ public sealed class PublishEnvPostProcessingTests
     public async Task WebHttpsOffDoesNotAddOctoconWebBindMounts()
     {
         var (config, secrets) = MakeInputs();
+        config.Deployment.IncludeWeb = false;
         config.Deployment.WebHttps = false;
         var replacements = PublishPhase.BuildEnvReplacements(config, secrets, "/base", "/out");
 
@@ -472,6 +473,46 @@ public sealed class PublishEnvPostProcessingTests
         await Assert.That(replacements.BindMounts.ContainsKey(
             "octocon-web:/etc/nginx/templates/default.conf.template")).IsFalse()
             .Because("nginx template bind mount must only appear when deployment.webHttps=true");
+    }
+
+    [Test]
+    public async Task IncludeWebOnlyDoesNotAddOctoconWebBindMounts()
+    {
+        // includeWeb=true, webHttps=false is the HTTP-only debug variant: the wasm container
+        // ships in the compose stack but nginx never reads a leaf cert, so neither the /certs
+        // bind mount nor the nginx envsubst template bind mount belong in the .env. (The
+        // include-vs-TLS-mount asymmetry is the whole point of decoupling these two toggles.)
+        var (config, secrets) = MakeInputs();
+        config.Deployment.IncludeWeb = true;
+        config.Deployment.WebHttps = false;
+        var replacements = PublishPhase.BuildEnvReplacements(config, secrets, "/base", "/out");
+
+        await Assert.That(replacements.BindMounts.ContainsKey("octocon-web:/certs")).IsFalse()
+            .Because("HTTP-only web container does not read leaf certs — /certs bind mount must stay off");
+        await Assert.That(replacements.BindMounts.ContainsKey(
+            "octocon-web:/etc/nginx/templates/default.conf.template")).IsFalse()
+            .Because("HTTP-only web container does not render the TLS template — nginx mount must stay off");
+    }
+
+    [Test]
+    public async Task IncludeWebAndWebHttpsBothOnAddsCertsAndNginxTemplateBindMounts()
+    {
+        // The explicit "both flags on" combination — operator opts in to both the container and
+        // TLS termination at it. Same wiring as the webHttps-only-on path (the includeWeb=true
+        // doesn't change the bind-mount set), just locking the contract down so a future
+        // refactor that gates the mounts on the OR of the two flags doesn't accidentally drop
+        // them in either input shape.
+        var (config, secrets) = MakeInputs();
+        config.Deployment.IncludeWeb = true;
+        config.Deployment.WebHttps = true;
+        var baseDir = Path.Combine(Path.GetTempPath(), "interfold-basedir");
+        var outputDir = Path.Combine(Path.GetTempPath(), "interfold-outdir");
+
+        var replacements = PublishPhase.BuildEnvReplacements(config, secrets, baseDir, outputDir);
+
+        await Assert.That(replacements.BindMounts.ContainsKey("octocon-web:/certs")).IsTrue();
+        await Assert.That(replacements.BindMounts.ContainsKey(
+            "octocon-web:/etc/nginx/templates/default.conf.template")).IsTrue();
     }
 
     [Test]

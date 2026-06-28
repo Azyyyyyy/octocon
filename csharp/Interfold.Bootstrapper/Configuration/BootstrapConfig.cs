@@ -230,11 +230,25 @@ public sealed class DeploymentSection
     public bool TrustStoreInstall { get; set; } = true;
 
     /// <summary>
+    /// Whether the generated compose stack includes the <c>octocon-web</c> (Kotlin/Wasm UI)
+    /// container at all. Defaults to <c>false</c> so a stock bootstrap ships an API-only stack;
+    /// operators who want the wasm UI shipped alongside flip this to <c>true</c>. Independent
+    /// from <see cref="WebHttps"/> — set <c>includeWeb=true</c> with <c>webHttps=false</c> to
+    /// ship the wasm container in HTTP-only mode (useful for local debugging and for stacks
+    /// fronted by an external TLS-terminating proxy). Setting <c>webHttps=true</c>
+    /// automatically pulls the container in even when this toggle is left at its default,
+    /// because TLS termination is meaningless without the container that terminates it.
+    /// </summary>
+    [JsonPropertyName("includeWeb")]
+    public bool IncludeWeb { get; set; } = false;
+
+    /// <summary>
     /// Opt-in HTTPS termination for the <c>octocon-web</c> container. When <c>true</c>, the
     /// generated compose:
     /// <list type="bullet">
-    ///   <item>Includes the <c>octocon-web</c> service unconditionally (overrides the default-off
-    ///         <c>Parameters:include-web</c>).</item>
+    ///   <item>Forces the <c>octocon-web</c> service into the output even when
+    ///         <see cref="IncludeWeb"/> is <c>false</c> — TLS termination requires the
+    ///         container that performs it.</item>
     ///   <item>Bind-mounts the bootstrapper-issued <c>certs/</c> directory into the container at
     ///         <c>/certs</c> (read-only) so nginx can read <c>leaf.crt</c> and <c>leaf.key</c>.</item>
     ///   <item>Bind-mounts a generated nginx template into

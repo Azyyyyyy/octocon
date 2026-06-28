@@ -460,11 +460,14 @@ internal static class PublishPhase
             // Self-hosting stacks don't need the Aspire dev dashboard - it would pull an MCR-nightly
             // image at compose-up time which is inappropriate for production deployments.
             ["Parameters:include-dashboard"] = "false",
-            // The web container is opt-in: off by default, force-on whenever the operator
-            // opted into TLS termination at the web tier (it makes no sense to ship the cert
-            // wiring without the container that needs it). Operators that want HTTP-only web
-            // can still drop the toggle in interfold.bootstrap.json after generation.
-            ["Parameters:include-web"] = config.Deployment.WebHttps ? "true" : "false",
+            // The web container is opt-in via either of two independent toggles:
+            //   * `deployment.includeWeb=true` → ship the octocon-web container HTTP-only.
+            //   * `deployment.webHttps=true` → ship the container AND terminate TLS at it.
+            // The second implies the first (cert wiring is useless without the container that
+            // reads it), so we OR the two flags into Parameters:include-web. Parameters:web-tls
+            // remains driven by webHttps alone — operators who only flip includeWeb get an
+            // HTTP-only octocon-web for debugging / external-TLS-proxy stacks.
+            ["Parameters:include-web"] = (config.Deployment.IncludeWeb || config.Deployment.WebHttps) ? "true" : "false",
             ["Parameters:web-tls"] = config.Deployment.WebHttps ? "true" : "false",
             // Server name baked into the rendered nginx config. nginx accepts DNS names and bare
             // IP literals as server_name but does NOT accept CIDR notation, so we use the first

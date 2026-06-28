@@ -203,6 +203,13 @@ internal static class ConfigPhase
                                                 () => c.Deployment.CertYears = PromptInt("Leaf cert validity (years)", c.Deployment.CertYears, 1, 30)),
             ("Install root CA in trust store",  () => c.Deployment.TrustStoreInstall.ToString(),
                                                 () => c.Deployment.TrustStoreInstall = PromptBool("Install root CA into system trust store", c.Deployment.TrustStoreInstall)),
+            // Independent from the TLS toggle below: operators can ship octocon-web HTTP-only
+            // (useful for local debugging and stacks fronted by an external TLS proxy). The
+            // publish wiring auto-promotes this to true when webHttps=true, so leaving it at
+            // its default false alongside webHttps=true still ships the container — the
+            // implicit promotion mirrors the long-standing behaviour.
+            ("Include octocon-web container",   () => c.Deployment.IncludeWeb.ToString(),
+                                                () => c.Deployment.IncludeWeb = PromptBool("Include the octocon-web (Kotlin/Wasm UI) container", c.Deployment.IncludeWeb)),
             ("Terminate HTTPS at octocon-web",  () => c.Deployment.WebHttps.ToString(),
                                                 () => c.Deployment.WebHttps = PromptBool("Terminate HTTPS at octocon-web", c.Deployment.WebHttps)),
 

@@ -820,6 +820,15 @@ public static class InterfoldAppHost
                     .WithEnvironment("NGINX_SERVER_NAME", serverName)
                     .WithEnvironment("NGINX_SSL_CERT_FILE", "/certs/leaf.crt")
                     .WithEnvironment("NGINX_SSL_KEY_FILE", "/certs/leaf.key")
+                    // Without this, the 301 from the :80 server block would emit
+                    // `Location: https://$host$request_uri` with no port. Browsers resolve the
+                    // missing port to 443, but the bootstrapper binds the container's :443 onto
+                    // `ports.webHttps` (default 8081) — so the redirect lands on a port that
+                    // isn't bound. Pre-compute the `:<port>` suffix here (or empty when the
+                    // operator chose 443) and let the template stitch it into the Location.
+                    .WithEnvironment(
+                        "NGINX_HTTPS_PORT_SUFFIX",
+                        webHttpsPort == 443 ? string.Empty : $":{webHttpsPort}")
                     // The default envsubst step in the upstream nginx image substitutes every
                     // env var it can resolve, which would clobber nginx's own runtime
                     // variables (`$host`, `$uri`, ...). Restrict it to the NGINX_* names we
@@ -849,8 +858,15 @@ public static class InterfoldAppHost
             }
             else
             {
+                // The upstream `ghcr.io/azyyyyyy/octocon-wasm:latest` image listens ONLY on
+                // :8080 (its Dockerfile.wasm bakes `listen 8080;` into /etc/nginx/conf.d/default.conf
+                // and EXPOSEs 8080). When we don't bind-mount our own template over the top of
+                // it (the webHttps=false path here), there's no listener on :80 or :443 — both
+                // endpoint mappings have to land on the container's :8080. The "http" / "https"
+                // endpoint names are kept for symmetry with the webTls branch's resource-graph
+                // shape; both serve plaintext HTTP in this mode.
                 web = web
-                    .WithHttpEndpoint(port: webHttpPort, targetPort: 80, name: "http")
+                    .WithHttpEndpoint(port: webHttpPort, targetPort: 8080, name: "http")
                     .WithHttpEndpoint(port: webHttpsPort, targetPort: 8080, name: "https")
                     .WithHttpHealthCheck("/", endpointName: "http")
                     .WithExternalHttpEndpoints()
@@ -859,7 +875,7 @@ public static class InterfoldAppHost
                         service.Networks = ["api"];
                         service.                    Healthcheck = new Healthcheck
                         {
-                            Test = ["CMD", "curl", "-f", "http://localhost:80/"],
+                            Test = ["CMD", "curl", "-f", "http://localhost:8080/"],
                             Interval = "15s",
                             Timeout = "5s",
                             Retries = 5,

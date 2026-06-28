@@ -15,7 +15,7 @@ namespace Interfold.Bootstrapper.UnitTests;
 ///
 /// Interaction model after the form-only redesign:
 /// <list type="bullet">
-///   <item>The form is a single <c>SelectionPrompt&lt;int&gt;</c> with 36 field rows grouped
+///   <item>The form is a single <c>SelectionPrompt&lt;int&gt;</c> with 37 field rows grouped
 ///         under 8 section headers + a trailing <c>Confirm and save</c> entry. Section headers
 ///         are inert (not selectable); arrow-key navigation skips them.</item>
 ///   <item>Cursor starts at field index 0 (<c>Output directory</c>) — <see cref="SelectionPrompt{T}.DefaultValue"/>
@@ -32,39 +32,40 @@ namespace Interfold.Bootstrapper.UnitTests;
 ///   <item>2  Root CA subject                        (Deployment)</item>
 ///   <item>3  Leaf cert validity (years)             (Deployment)</item>
 ///   <item>4  Install root CA into trust store       (Deployment)</item>
-///   <item>5  Terminate HTTPS at octocon-web         (Deployment)</item>
-///   <item>6  API HTTP port                          (Ports)</item>
-///   <item>7  API HTTPS port                         (Ports)</item>
-///   <item>8  Web HTTP port                          (Ports)</item>
-///   <item>9  Web HTTPS port                         (Ports)</item>
-///   <item>10 Postgres host port                     (Ports)</item>
-///   <item>11 Scylla/Cassandra host port             (Ports)</item>
-///   <item>12 Database mode                          (Database)</item>
-///   <item>13 Postgres application DB name           (Database)</item>
-///   <item>14 Cluster name                           (Database)</item>
-///   <item>15 Scylla keyspace (region)               (Database)</item>
-///   <item>16 OAuth callback base URL                (API)</item>
-///   <item>17 JWT authority (iss claim)              (API)</item>
-///   <item>18 JWT audience (aud claim)               (API)</item>
-///   <item>19 CORS allowed origins                   (API)</item>
-///   <item>20 Pre-built Interfold API image          (API)</item>
-///   <item>21 Cluster node group                     (Cluster &amp; telemetry)</item>
-///   <item>22 OTLP endpoint                          (Cluster &amp; telemetry)</item>
-///   <item>23 Avatar storage root (container path)   (Storage)</item>
-///   <item>24 Avatar public base URL                 (Storage)</item>
-///   <item>25 Socket batch flush threshold (bytes)   (Performance tuning)</item>
-///   <item>26 DB retry attempts                      (Performance tuning)</item>
-///   <item>27 DB retry initial delay (ms)            (Performance tuning)</item>
-///   <item>28 DB retry max delay (ms)                (Performance tuning)</item>
-///   <item>29 Hydration max concurrency              (Performance tuning)</item>
-///   <item>30 Google OAuth client ID                 (OAuth credentials)</item>
-///   <item>31 Google OAuth client secret             (OAuth credentials)</item>
-///   <item>32 Discord OAuth client ID                (OAuth credentials)</item>
-///   <item>33 Discord OAuth client secret            (OAuth credentials)</item>
-///   <item>34 Apple OAuth client ID                  (OAuth credentials)</item>
-///   <item>35 Apple OAuth client secret              (OAuth credentials)</item>
+///   <item>5  Include octocon-web container          (Deployment)</item>
+///   <item>6  Terminate HTTPS at octocon-web         (Deployment)</item>
+///   <item>7  API HTTP port                          (Ports)</item>
+///   <item>8  API HTTPS port                         (Ports)</item>
+///   <item>9  Web HTTP port                          (Ports)</item>
+///   <item>10 Web HTTPS port                         (Ports)</item>
+///   <item>11 Postgres host port                     (Ports)</item>
+///   <item>12 Scylla/Cassandra host port             (Ports)</item>
+///   <item>13 Database mode                          (Database)</item>
+///   <item>14 Postgres application DB name           (Database)</item>
+///   <item>15 Cluster name                           (Database)</item>
+///   <item>16 Scylla keyspace (region)               (Database)</item>
+///   <item>17 OAuth callback base URL                (API)</item>
+///   <item>18 JWT authority (iss claim)              (API)</item>
+///   <item>19 JWT audience (aud claim)               (API)</item>
+///   <item>20 CORS allowed origins                   (API)</item>
+///   <item>21 Pre-built Interfold API image          (API)</item>
+///   <item>22 Cluster node group                     (Cluster &amp; telemetry)</item>
+///   <item>23 OTLP endpoint                          (Cluster &amp; telemetry)</item>
+///   <item>24 Avatar storage root (container path)   (Storage)</item>
+///   <item>25 Avatar public base URL                 (Storage)</item>
+///   <item>26 Socket batch flush threshold (bytes)   (Performance tuning)</item>
+///   <item>27 DB retry attempts                      (Performance tuning)</item>
+///   <item>28 DB retry initial delay (ms)            (Performance tuning)</item>
+///   <item>29 DB retry max delay (ms)                (Performance tuning)</item>
+///   <item>30 Hydration max concurrency              (Performance tuning)</item>
+///   <item>31 Google OAuth client ID                 (OAuth credentials)</item>
+///   <item>32 Google OAuth client secret             (OAuth credentials)</item>
+///   <item>33 Discord OAuth client ID                (OAuth credentials)</item>
+///   <item>34 Discord OAuth client secret            (OAuth credentials)</item>
+///   <item>35 Apple OAuth client ID                  (OAuth credentials)</item>
+///   <item>36 Apple OAuth client secret              (OAuth credentials)</item>
 /// </list>
-/// Navigate(36) lands on the trailing <c>Confirm and save</c> entry (one DownArrow per
+/// Navigate(37) lands on the trailing <c>Confirm and save</c> entry (one DownArrow per
 /// selectable row past field 0). Helpers <see cref="Navigate"/> / <see cref="ConfirmForm"/> /
 /// <see cref="EditField"/> below wrap the key sequences so the test bodies stay focused on
 /// "what is being edited", not "how many DownArrows that takes".
@@ -72,7 +73,7 @@ namespace Interfold.Bootstrapper.UnitTests;
 public sealed class ConfigInteractivePromptTests
 {
     /// <summary>Number of selectable field rows in the navigable form.</summary>
-    private const int FieldCount = 36;
+    private const int FieldCount = 37;
 
     /// <summary>
     /// Builds a fresh interactive <see cref="TestConsole"/> tall enough to render the entire
@@ -158,6 +159,7 @@ public sealed class ConfigInteractivePromptTests
         await Assert.That(config.Deployment.RootCaName).IsEqualTo("Interfold Root CA");
         await Assert.That(config.Deployment.CertYears).IsEqualTo(5);
         await Assert.That(config.Deployment.TrustStoreInstall).IsTrue();
+        await Assert.That(config.Deployment.IncludeWeb).IsFalse();
         await Assert.That(config.Deployment.WebHttps).IsFalse();
         // Hosts has no shipped default placeholder — confirming the form without editing the
         // Hosts row leaves Hosts as []. Validate fails fast on this state downstream, which is
@@ -362,11 +364,11 @@ public sealed class ConfigInteractivePromptTests
     public async Task EditingOAuthSecretsCapturesValues()
     {
         // OAuth rows are paired per provider (ID then secret) - the secret rows therefore sit at
-        // 31 / 33 / 35 (immediately after each provider's matching ID row at 30 / 32 / 34).
+        // 32 / 34 / 36 (immediately after each provider's matching ID row at 31 / 33 / 35).
         var console = NewConsole();
-        EditField(console, fieldIndex: 31, "google-secret-xyz");
-        EditField(console, fieldIndex: 33, "discord-secret-abc");
-        EditField(console, fieldIndex: 35, "apple-secret-jwt");
+        EditField(console, fieldIndex: 32, "google-secret-xyz");
+        EditField(console, fieldIndex: 34, "discord-secret-abc");
+        EditField(console, fieldIndex: 36, "apple-secret-jwt");
         ConfirmForm(console);
 
         // maskSecrets:false (the default) keeps the prompt off the ReadKey path so PushTextWithEnter
@@ -383,11 +385,11 @@ public sealed class ConfigInteractivePromptTests
     {
         // Client IDs are public per-provider identifiers - paired with the matching secrets but
         // sourced via the plain PromptStr path (no masking, no <set>/<empty> indirection on the
-        // menu row). The three ID rows sit at the start of each provider's pair: 30 / 32 / 34.
+        // menu row). The three ID rows sit at the start of each provider's pair: 31 / 33 / 35.
         var console = NewConsole();
-        EditField(console, fieldIndex: 30, "1234.apps.googleusercontent.com");
-        EditField(console, fieldIndex: 32, "9876543210");
-        EditField(console, fieldIndex: 34, "com.example.interfold.signin");
+        EditField(console, fieldIndex: 31, "1234.apps.googleusercontent.com");
+        EditField(console, fieldIndex: 33, "9876543210");
+        EditField(console, fieldIndex: 35, "com.example.interfold.signin");
         ConfirmForm(console);
 
         var config = PromptWithoutDetection(console);
@@ -429,7 +431,7 @@ public sealed class ConfigInteractivePromptTests
         // literal Google client ID we typed, NOT a "<set>" marker.
         const string googleId = "1234.apps.googleusercontent.com";
         var console = NewConsole();
-        EditField(console, fieldIndex: 30, googleId);
+        EditField(console, fieldIndex: 31, googleId);
         ConfirmForm(console);
 
         PromptWithoutDetection(console);
@@ -441,12 +443,12 @@ public sealed class ConfigInteractivePromptTests
     public async Task EditingPortsCapturesOverrides()
     {
         var console = NewConsole();
-        EditField(console, fieldIndex: 6,  "5100");   // ApiHttp
-        EditField(console, fieldIndex: 7,  "5101");   // ApiHttps
-        EditField(console, fieldIndex: 8,  "8090");   // WebHttp
-        EditField(console, fieldIndex: 9,  "8091");   // WebHttps
-        EditField(console, fieldIndex: 10, "4300");   // Postgres
-        EditField(console, fieldIndex: 11, "9043");   // Scylla
+        EditField(console, fieldIndex: 7,  "5100");   // ApiHttp
+        EditField(console, fieldIndex: 8,  "5101");   // ApiHttps
+        EditField(console, fieldIndex: 9,  "8090");   // WebHttp
+        EditField(console, fieldIndex: 10,  "8091");   // WebHttps
+        EditField(console, fieldIndex: 11, "4300");   // Postgres
+        EditField(console, fieldIndex: 12, "9043");   // Scylla
         ConfirmForm(console);
 
         var config = PromptWithoutDetection(console);
@@ -464,7 +466,7 @@ public sealed class ConfigInteractivePromptTests
     {
         var console = NewConsole();
         EditField(console, fieldIndex: 4, "n");   // TrustStoreInstall := false
-        EditField(console, fieldIndex: 5, "y");   // WebHttps := true
+        EditField(console, fieldIndex: 6, "y");   // WebHttps := true
         ConfirmForm(console);
 
         var config = PromptWithoutDetection(console);
@@ -474,12 +476,30 @@ public sealed class ConfigInteractivePromptTests
     }
 
     [Test]
+    public async Task EditingIncludeWebCapturesOverride()
+    {
+        // IncludeWeb (row 5) is the HTTP-only opt-in for the octocon-web container. Independent
+        // from WebHttps (row 6) — flipping IncludeWeb=true while WebHttps stays false ships the
+        // wasm container in HTTP-only mode (the debugging / external-TLS-proxy variant). This
+        // test pins the prompt round-trips a typed "y" through the form onto the config without
+        // also promoting WebHttps.
+        var console = NewConsole();
+        EditField(console, fieldIndex: 5, "y");   // IncludeWeb := true
+        ConfirmForm(console);
+
+        var config = PromptWithoutDetection(console);
+
+        await Assert.That(config.Deployment.IncludeWeb).IsTrue();
+        await Assert.That(config.Deployment.WebHttps).IsFalse();
+    }
+
+    [Test]
     public async Task PortPromptRePromptsOnInvalidInt()
     {
         // EditField pushes both answers into the same field's editor; the inline ValidationErrorMessage
         // re-prompts after "bad" and the second answer (5005) is what should stick.
         var console = NewConsole();
-        EditField(console, fieldIndex: 6, "bad", "5005");
+        EditField(console, fieldIndex: 7, "bad", "5005");
         ConfirmForm(console);
 
         var config = PromptWithoutDetection(console);
@@ -504,7 +524,7 @@ public sealed class ConfigInteractivePromptTests
     public async Task DatabaseModePromptEnforcesChoices()
     {
         var console = NewConsole();
-        EditField(console, fieldIndex: 12, "invalid", "multi");
+        EditField(console, fieldIndex: 13, "invalid", "multi");
         ConfirmForm(console);
 
         var config = PromptWithoutDetection(console);
@@ -515,11 +535,11 @@ public sealed class ConfigInteractivePromptTests
     [Test]
     public async Task EditingScyllaKeyspaceCapturesValue()
     {
-        // Scylla keyspace (row 15) is the per-instance region identity — operator picks one of
+        // Scylla keyspace (row 16) is the per-instance region identity — operator picks one of
         // the seven valid regional values, defaulted to "nam". The AddChoices restriction is
         // covered by the rejection test below; this one just proves the happy-path edit.
         var console = NewConsole();
-        EditField(console, fieldIndex: 15, "eur");
+        EditField(console, fieldIndex: 16, "eur");
         ConfirmForm(console);
 
         var config = PromptWithoutDetection(console);
@@ -533,7 +553,7 @@ public sealed class ConfigInteractivePromptTests
         // AddChoices on the underlying TextPrompt enforces the seven-value allow-list. Typing
         // anything else re-prompts; the eventually-accepted value is what sticks.
         var console = NewConsole();
-        EditField(console, fieldIndex: 15, "ant", "gdpr");
+        EditField(console, fieldIndex: 16, "ant", "gdpr");
         ConfirmForm(console);
 
         var config = PromptWithoutDetection(console);
@@ -544,15 +564,15 @@ public sealed class ConfigInteractivePromptTests
     [Test]
     public async Task EditingApiRuntimeCapturesValues()
     {
-        // The four ApiRuntime rows: callback URL (16), JWT authority (17), JWT audience (18),
-        // CORS allowed origins (19). Each goes through its dedicated prompt (PromptStr for
+        // The four ApiRuntime rows: callback URL (17), JWT authority (18), JWT audience (19),
+        // CORS allowed origins (20). Each goes through its dedicated prompt (PromptStr for
         // the three single-value fields, PromptCorsAllowedOrigins for the comma-separated
         // list). All four must round-trip through the form and land on the config verbatim.
         var console = NewConsole();
-        EditField(console, fieldIndex: 16, "https://api.custom.example.com");
-        EditField(console, fieldIndex: 17, "https://issuer.custom.example.com");
-        EditField(console, fieldIndex: 18, "custom-aud");
-        EditField(console, fieldIndex: 19, "https://app.example.com,https://admin.example.com");
+        EditField(console, fieldIndex: 17, "https://api.custom.example.com");
+        EditField(console, fieldIndex: 18, "https://issuer.custom.example.com");
+        EditField(console, fieldIndex: 19, "custom-aud");
+        EditField(console, fieldIndex: 20, "https://app.example.com,https://admin.example.com");
         ConfirmForm(console);
 
         var config = PromptWithoutDetection(console);
@@ -597,7 +617,7 @@ public sealed class ConfigInteractivePromptTests
         // parse as an absolute http(s) URI. Typing a bare hostname re-prompts; the second
         // (valid) answer is what sticks.
         var console = NewConsole();
-        EditField(console, fieldIndex: 19,
+        EditField(console, fieldIndex: 20,
             "not-a-url,still-not-a-url",
             "https://app.example.com,https://admin.example.com");
         ConfirmForm(console);
@@ -704,12 +724,12 @@ public sealed class ConfigInteractivePromptTests
     [Test]
     public async Task EditingNodeGroupCapturesValue()
     {
-        // NodeGroup (row 21) is the cluster-role identity. AddChoices on the underlying
+        // NodeGroup (row 22) is the cluster-role identity. AddChoices on the underlying
         // TextPrompt enforces the three-value allow-list (primary / auxiliary / sidecar);
         // this test exercises the happy path. The rejection / re-prompt behaviour is
         // covered by NodeGroupPromptEnforcesChoices below.
         var console = NewConsole();
-        EditField(console, fieldIndex: 21, "primary");
+        EditField(console, fieldIndex: 22, "primary");
         ConfirmForm(console);
 
         var config = PromptWithoutDetection(console);
@@ -724,7 +744,7 @@ public sealed class ConfigInteractivePromptTests
         // value re-prompts and the eventually-accepted value sticks. Matches the
         // ScyllaKeyspace AddChoices behaviour pattern.
         var console = NewConsole();
-        EditField(console, fieldIndex: 21, "guardian", "sidecar");
+        EditField(console, fieldIndex: 22, "guardian", "sidecar");
         ConfirmForm(console);
 
         var config = PromptWithoutDetection(console);
@@ -735,14 +755,14 @@ public sealed class ConfigInteractivePromptTests
     [Test]
     public async Task EditingStorageAndObservabilityCapturesValues()
     {
-        // Storage (rows 23 / 24) and Observability (row 22) are plain PromptStr rows — empty
+        // Storage (rows 24 / 25) and Observability (row 23) are plain PromptStr rows — empty
         // input is allowed (signals "feature disabled" on the API side). This test pins that
         // a non-empty value round-trips through the form verbatim; the empty-state behaviour
         // is locked down by ConfirmingFormImmediatelyUsesDefaults above.
         var console = NewConsole();
-        EditField(console, fieldIndex: 22, "http://otel-collector:4317");
-        EditField(console, fieldIndex: 23, "/var/lib/interfold/avatars");
-        EditField(console, fieldIndex: 24, "https://cdn.example.com/avatars/");
+        EditField(console, fieldIndex: 23, "http://otel-collector:4317");
+        EditField(console, fieldIndex: 24, "/var/lib/interfold/avatars");
+        EditField(console, fieldIndex: 25, "https://cdn.example.com/avatars/");
         ConfirmForm(console);
 
         var config = PromptWithoutDetection(console);
@@ -756,14 +776,14 @@ public sealed class ConfigInteractivePromptTests
     public async Task EditingTuningIntsCapturesValues()
     {
         // The four DB-retry / hydration tuning rows are plain PromptInt rows; the
-        // BatchBytesThreshold row (25) is the nullable PromptNullableInt variant. All five
+        // BatchBytesThreshold row (26) is the nullable PromptNullableInt variant. All five
         // round-trip the typed value through the form.
         var console = NewConsole();
-        EditField(console, fieldIndex: 25, "131072");
-        EditField(console, fieldIndex: 26, "5");
-        EditField(console, fieldIndex: 27, "250");
-        EditField(console, fieldIndex: 28, "3000");
-        EditField(console, fieldIndex: 29, "16");
+        EditField(console, fieldIndex: 26, "131072");
+        EditField(console, fieldIndex: 27, "5");
+        EditField(console, fieldIndex: 28, "250");
+        EditField(console, fieldIndex: 29, "3000");
+        EditField(console, fieldIndex: 30, "16");
         ConfirmForm(console);
 
         var config = PromptWithoutDetection(console);
@@ -779,12 +799,12 @@ public sealed class ConfigInteractivePromptTests
     public async Task BatchBytesThresholdAcceptsBlankAsNull()
     {
         // PromptNullableInt treats blank input as null (the "use the API's compile-time
-        // default" signal). This test pins that contract — typing nothing on row 25 leaves
+        // default" signal). This test pins that contract — typing nothing on row 26 leaves
         // BatchBytesThreshold at null even after an explicit edit invocation. The PromptStr
         // helper used by the other tuning rows would default to the existing value on blank
         // input; the nullable variant explicitly clears.
         var console = NewConsole();
-        EditField(console, fieldIndex: 25, string.Empty);
+        EditField(console, fieldIndex: 26, string.Empty);
         ConfirmForm(console);
 
         var config = PromptWithoutDetection(console);
@@ -795,11 +815,11 @@ public sealed class ConfigInteractivePromptTests
     [Test]
     public async Task DbRetryAttemptsRePromptsOnOutOfRangeInt()
     {
-        // PromptInt's inline validator enforces the 1..100 bound on row 26 — typing 9999
+        // PromptInt's inline validator enforces the 1..100 bound on row 27 — typing 9999
         // re-prompts and the second (valid) answer sticks. Same pattern as the port re-prompt
         // test above; this one pins the new tuning fields use the same validator path.
         var console = NewConsole();
-        EditField(console, fieldIndex: 26, "9999", "5");
+        EditField(console, fieldIndex: 27, "9999", "5");
         ConfirmForm(console);
 
         var config = PromptWithoutDetection(console);
@@ -818,7 +838,7 @@ public sealed class ConfigInteractivePromptTests
         // label. Editing the API HTTP port to 5005 and then confirming gives the form a chance
         // to render twice — the second render must contain the new value.
         var console = NewConsole();
-        EditField(console, fieldIndex: 6, "5005");
+        EditField(console, fieldIndex: 7, "5005");
         ConfirmForm(console);
 
         PromptWithoutDetection(console);
@@ -845,8 +865,8 @@ public sealed class ConfigInteractivePromptTests
         // test pinning the prod-path Secret() behaviour).
         const string secret = "google-secret-xyz";
         var console = NewConsole();
-        // Google OAuth client secret sits at index 31 (immediately after the matching ID at 30).
-        EditField(console, fieldIndex: 31, secret);
+        // Google OAuth client secret sits at index 32 (immediately after the matching ID at 31).
+        EditField(console, fieldIndex: 32, secret);
         ConfirmForm(console);
 
         PromptWithoutDetection(console);
@@ -879,8 +899,8 @@ public sealed class ConfigInteractivePromptTests
         // end-to-end against the in-memory console.
         const string secret = "google-secret-xyz";
         var console = NewConsole();
-        // Google OAuth client secret sits at index 31 (immediately after the matching ID at 30).
-        EditField(console, fieldIndex: 31, secret);
+        // Google OAuth client secret sits at index 32 (immediately after the matching ID at 31).
+        EditField(console, fieldIndex: 32, secret);
         ConfirmForm(console);
 
         var config = PromptWithoutDetection(console, maskSecrets: true);

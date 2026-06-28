@@ -82,14 +82,18 @@ public class WebHttpsTests(UbuntuDinDFixture dinD)
             .Because("octocon-web must receive the NGINX_SSL_CERT_FILE env var (consumed by the template)");
         await Assert.That(compose).Contains("NGINX_SSL_KEY_FILE")
             .Because("octocon-web must receive the NGINX_SSL_KEY_FILE env var (consumed by the template)");
+        await Assert.That(compose).Contains("NGINX_HTTPS_PORT_SUFFIX")
+            .Because("octocon-web must receive the NGINX_HTTPS_PORT_SUFFIX env var so the 301 " +
+                     "redirect from :80 points at the operator's webHttps host port, not the " +
+                     "implicit :443 default");
         await Assert.That(compose).Contains($"\"{scratch.Ports.WebHttps}:443\"")
             .Because($"compose must publish the allocated webHttps host port ({scratch.Ports.WebHttps}) onto the container's :443 listener");
 
         // Negative invariant: the default (HTTP-only) variant of the web service emits a curl
-        // healthcheck on http://localhost:80. When webHttps=true we expect the HTTPS variant of
-        // the healthcheck instead — the literal "http://localhost:80/" must not appear in the
-        // generated compose.
-        await Assert.That(compose).DoesNotContain("http://localhost:80/")
+        // healthcheck against the upstream image's :8080 listener. When webHttps=true we expect
+        // the HTTPS variant of the healthcheck instead — the HTTP-only sentinel
+        // "http://localhost:8080/" must not appear in the generated compose.
+        await Assert.That(compose).DoesNotContain("http://localhost:8080/")
             .Because("the HTTP healthcheck variant must not be emitted when webHttps=true");
         await Assert.That(compose).Contains("https://localhost:443/")
             .Because("the HTTPS healthcheck must point at the in-container 443 listener");
@@ -174,6 +178,34 @@ public class WebHttpsTests(UbuntuDinDFixture dinD)
             .Because("envsubst should have substituted NGINX_SSL_KEY_FILE into ssl_certificate_key");
         await Assert.That(renderedConf.Stdout).Contains("web.test.local")
             .Because("envsubst should have substituted NGINX_SERVER_NAME from the fixture's hosts[0]");
+
+        // The 301 redirect must point at the operator's webHttps host port (the port the
+        // bootstrapper mapped onto the container's :443 listener). Without the port suffix the
+        // browser would resolve `https://$host/...` to port 443, which the bootstrapper does NOT
+        // bind unless the operator picked 443 in interfold.bootstrap.json — sending the user to
+        // a dead port.
+        var expectedRedirect = scratch.Ports.WebHttps == 443
+            ? "return 301 https://$host$request_uri;"
+            : $"return 301 https://$host:{scratch.Ports.WebHttps}$request_uri;";
+        await Assert.That(renderedConf.Stdout).Contains(expectedRedirect)
+            .Because($"the rendered redirect must embed the operator's webHttps host port " +
+                     $"({scratch.Ports.WebHttps}); got conf body:\n{renderedConf.Stdout}");
+
+        // Live probe: hit the :80 listener and confirm nginx replies with a 301 whose Location
+        // header references the operator-mapped HTTPS port (not nginx's implicit :443).
+        var redirectProbe = await dinD.ExecAsync(
+        [
+            "docker", "exec", containerId,
+            "curl", "-s", "-o", "/dev/null", "-D", "-", "http://localhost:80/"
+        ]);
+        await Assert.That(redirectProbe.ExitCode).IsEqualTo(0)
+            .Because($"HTTP probe against octocon-web :80 failed: stdout='{redirectProbe.Stdout}' stderr='{redirectProbe.Stderr}'");
+        var expectedLocationFragment = scratch.Ports.WebHttps == 443
+            ? "Location: https://localhost/"
+            : $"Location: https://localhost:{scratch.Ports.WebHttps}/";
+        await Assert.That(redirectProbe.Stdout).Contains(expectedLocationFragment)
+            .Because($"the 301 Location header must reference the operator-mapped webHttps port " +
+                     $"({scratch.Ports.WebHttps}); got response headers:\n{redirectProbe.Stdout}");
 
         // Final TLS probe — `-k` because the leaf is signed by the bootstrapper's private root
         // CA which the curl invocation inside the container doesn't trust by default. Asserting

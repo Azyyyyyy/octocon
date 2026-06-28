@@ -79,7 +79,16 @@ Shape lives on `[BootstrapConfig](../csharp/Interfold.Bootstrapper/Configuration
                                      //   ["api.example.com","10.0.0.0/8"] (DNS + CIDR scope)
     "rootCaName":"Interfold Root CA",
     "certYears": 5,
-    "trustStoreInstall": true        // add rootCA.crt to system trust store
+    "trustStoreInstall": true,       // add rootCA.crt to system trust store
+    "includeWeb": false,             // ship the octocon-web (Kotlin/Wasm UI) container in
+                                     // the generated compose? Independent from `webHttps`
+                                     // below. Default false ships an API-only stack. Set
+                                     // true with `webHttps:false` to ship the wasm UI in
+                                     // HTTP-only mode (debugging / external-TLS-proxy
+                                     // stacks); `webHttps:true` auto-promotes this to
+                                     // true regardless of what's written here.
+    "webHttps": false                // terminate TLS at octocon-web (see "webHttps and
+                                     // the HTTP->HTTPS redirect" note below)
   },
   "ports": {
     "apiHttp":  5000,
@@ -249,6 +258,42 @@ network address (`192.168.1.0/24`) or pin a single host (`192.168.1.42/32`).
 The leaf cert gets an `iPAddress` SAN for `192.168.1.42`, the root CA's Name Constraints
 pin to the same `/32`, and devices on the LAN that install the root CA validate
 `https://192.168.1.42/` cleanly.
+
+> **Shipping the `octocon-web` (wasm UI) container.** Two independent toggles under
+> `deployment` control whether the wasm UI ends up in the generated compose:
+>
+> - `deployment.includeWeb` (default `false`) — when `true`, ship the `octocon-web`
+>   container in HTTP-only mode. The upstream image (`ghcr.io/azyyyyyy/octocon-wasm:latest`)
+>   listens on `:8080`, so the bootstrapper maps `ports.webHttp` / `ports.webHttps` onto
+>   `:8080` and emits an HTTP healthcheck. No leaf cert or nginx envsubst template gets
+>   bind-mounted in this mode — it's intended for local debugging and for stacks fronted
+>   by an external TLS-terminating proxy.
+> - `deployment.webHttps` (default `false`) — when `true`, terminate TLS at `octocon-web`
+>   itself (the path the rest of this section documents). Setting this implicitly forces
+>   `includeWeb` on (TLS termination requires the container that performs it), so
+>   operators who only want TLS don't need to flip both.
+>
+> Combinations:
+>
+> | `includeWeb` | `webHttps` | Result                                            |
+> | :----------: | :--------: | :------------------------------------------------ |
+> | `false`      | `false`    | API-only stack (default).                         |
+> | `true`       | `false`    | Wasm UI shipped HTTP-only (debug / external TLS). |
+> | `false`      | `true`     | Wasm UI shipped with TLS termination at nginx.    |
+> | `true`       | `true`     | Same as the row above (`includeWeb` is implied).  |
+>
+> **`webHttps` and the HTTP→HTTPS redirect.** When `deployment.webHttps` is `true`, the
+> `octocon-web` container terminates TLS on its internal `:443` listener and answers
+> plaintext `:80` requests with a `301` to the HTTPS variant. The redirect's `Location`
+> header is stitched together inside nginx as `https://$host${NGINX_HTTPS_PORT_SUFFIX}…`,
+> where `NGINX_HTTPS_PORT_SUFFIX` is set by `InterfoldAppHost.Configure` to
+> `:{ports.webHttps}` (or empty when the operator picked `443`). This is the bit that lets
+> the default port pair (`webHttp`/`webHttps` = `8080`/`8081`) actually work end-to-end —
+> without it the browser would follow the 301 to `https://<host>/`, resolve the missing
+> port to `:443`, and hit a port that the bootstrapper hasn't bound. Operators fronting
+> the stack with a reverse proxy that exposes a different public port should override
+> `ports.webHttps` to that public port (or move the reverse proxy off `webHttp`/`webHttps`
+> entirely and skip `octocon-web`'s HTTPS termination).
 
 > **Interactive auto-default.** When the bootstrapper runs interactively on a fresh box
 > (no `interfold.bootstrap.json` yet) it pre-fills the *Public host(s)* row with the

@@ -3,9 +3,15 @@
 # through `envsubst` and written to /etc/nginx/conf.d/ with the `.template` suffix stripped.
 #
 # Variables consumed (all set by InterfoldAppHost.Configure when Parameters:web-tls=true):
-#   NGINX_SERVER_NAME    public domain the leaf cert was issued for
-#   NGINX_SSL_CERT_FILE  path to leaf cert inside the container (defaults to /certs/leaf.crt)
-#   NGINX_SSL_KEY_FILE   path to leaf private key inside the container (defaults to /certs/leaf.key)
+#   NGINX_SERVER_NAME         public domain the leaf cert was issued for
+#   NGINX_SSL_CERT_FILE       path to leaf cert inside the container (defaults to /certs/leaf.crt)
+#   NGINX_SSL_KEY_FILE        path to leaf private key inside the container (defaults to /certs/leaf.key)
+#   NGINX_HTTPS_PORT_SUFFIX   ":<host-port>" the operator mapped to the container's :443 listener,
+#                             or empty when that port is 443. Stitched into the HTTP->HTTPS
+#                             redirect Location so browsers land on the right host port instead
+#                             of nginx's implicit default of 443 (which the bootstrapper does NOT
+#                             bind unless the operator set ports.webHttps to 443 in
+#                             interfold.bootstrap.json).
 #
 # Anything that references nginx's own runtime variables (`$host`, `$uri`, `$request_uri`) is
 # escaped as ${ESC_DOLLAR}<name> via the NGINX_ENVSUBST_TEMPLATE_SUFFIX mechanism would be
@@ -20,8 +26,12 @@ server {
     server_name ${NGINX_SERVER_NAME};
 
     # Permanent redirect to the HTTPS variant. Compose health checks probe HTTPS directly,
-    # so this exists purely for human navigation and bookmarks.
-    return 301 https://$host$request_uri;
+    # so this exists purely for human navigation and bookmarks. The ${NGINX_HTTPS_PORT_SUFFIX}
+    # interpolation makes the redirect land on the operator-mapped host port for :443 (e.g.
+    # `:8081`) instead of nginx's implicit `:443` default — the bootstrapper publishes the
+    # container's :443 onto `ports.webHttps`, which the operator usually leaves at 8081
+    # rather than 443.
+    return 301 https://$host${NGINX_HTTPS_PORT_SUFFIX}$request_uri;
 }
 
 server {
