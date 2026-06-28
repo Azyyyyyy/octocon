@@ -194,6 +194,14 @@ internal static class PublishPhase
             ["HYDRATION_MAX_CONCURRENCY"] = config.Persistence.HydrationMaxConcurrency.ToString(),
         };
 
+        if (CassandraImagePhase.IsCassandraDeployment(config))
+        {
+            // Aspire's compose publisher emits `image: "${CASSANDRA_IMAGE}"` for AddDockerfile
+            // resources. Without this entry the cassandra service starts with an empty image ref
+            // and docker compose fails before DatabaseInitPhase can seed roles.
+            parameters["CASSANDRA_IMAGE"] = CassandraImagePhase.LocalImageTag;
+        }
+
         // Bind-mount source resolution. Aspire emits a comment of the form
         //   # Bind mount source for <service>:<container-target-path>
         // immediately above each bind-mount placeholder. We use that "service:target" key to

@@ -54,6 +54,11 @@ internal static class DatabaseInitPhase
         var scyllaService = ResolveScyllaServiceName(config);
         var scyllaPort = ResolveScyllaPort();
 
+        if (CassandraImagePhase.IsCassandraDeployment(config))
+        {
+            await CassandraImagePhase.EnsureBuiltAsync(logger, ct).ConfigureAwait(false);
+        }
+
         // Bring up only the stateful services first. We deliberately don't start the API or
         // any other services so the API doesn't race against an unconfigured Postgres.
         await DockerComposeStartAsync(composeFile, [PostgresService, scyllaService], logger, ct).ConfigureAwait(false);
