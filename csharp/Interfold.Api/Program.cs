@@ -342,7 +342,17 @@ app.Use(async (ctx, next) =>
 });
 
 app.UseHsts();
-app.UseHttpsRedirection();
+// HttpsRedirection is bypassed for /.well-known/* because TrustController serves the
+// root CA there over plain HTTP. End-user devices fetching the cert haven't yet
+// installed our root, so they have no trust path to HTTPS - a 308-to-HTTPS would
+// break the bootstrap flow with an unauthenticated-cert error and is also wrong
+// directionally (the redirect target uses the container-internal HTTPS port, which is
+// not the same as the externally reachable HTTPS port behind a reverse proxy / port
+// map). Every other path keeps the redirect; clients are expected to speak HTTPS once
+// they've installed the root CA via the .well-known/ fetch-and-verify recipe.
+app.UseWhen(
+    static ctx => !ctx.Request.Path.StartsWithSegments("/.well-known"),
+    static branch => branch.UseHttpsRedirection());
 app.UseCors();
 app.UseAuthentication();
 app.UseMiddleware<InterfoldPrincipalMiddleware>();

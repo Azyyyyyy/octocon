@@ -3,6 +3,7 @@ using System.Net.Http.Headers;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using Interfold.IntegrationTests.TestServices;
+using Microsoft.AspNetCore.Mvc.Testing;
 
 namespace Interfold.IntegrationTests.Controllers;
 
@@ -124,6 +125,60 @@ public class TrustControllerTests : BaseEndpointTest
                 await Assert.That(cacheControl!).Contains("max-age=60");
                 await Assert.That(cacheControl!).Contains("must-revalidate");
             }
+        }
+        finally
+        {
+            cleanup();
+        }
+    }
+
+    [Test]
+    public async Task WellKnownRoutesBypassHttpsRedirect()
+    {
+        // The trust-distribution bootstrap requires plain HTTP at /.well-known/* because
+        // end-user devices fetching the root CA have no trust path to HTTPS yet. A
+        // UseHttpsRedirection 308 to https:// would either (a) fail TLS handshake because
+        // the device doesn't trust the leaf, or (b) redirect to the container-internal
+        // HTTPS port which isn't reachable from external clients - either way the bootstrap
+        // breaks. Program.cs bypasses HttpsRedirection for /.well-known/* exclusively;
+        // this test pins that bypass against the matrix of routes the controller serves
+        // and asserts the rest of the pipeline still redirects (so the bypass stays narrowly
+        // scoped to the trust-bootstrap surface and nothing else).
+        var (certPath, fingerprintPath, _, _, cleanup) = CreateTempCertFiles();
+        try
+        {
+            // HTTPS_PORT activates HttpsRedirectionMiddleware in-test - without it the
+            // middleware logs a warning and lets every request through, so a regression
+            // would slip past the assertion below. The exact port doesn't matter because
+            // we're not following redirects.
+            await using var factory = new InterfoldWebApplicationFactory("inmemory")
+                .WithConfiguration("OCTOCON_TRUST_ROOT_CA_PATH", certPath)
+                .WithConfiguration("OCTOCON_TRUST_ROOT_CA_FINGERPRINT_PATH", fingerprintPath)
+                .WithConfiguration("HTTPS_PORT", "443");
+            using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+            {
+                AllowAutoRedirect = false,
+            });
+
+            foreach (var path in new[]
+                     {
+                         "/.well-known/interfold-root-ca.crt",
+                         "/.well-known/interfold-root-ca.pem",
+                         "/.well-known/interfold-root-ca.sha256",
+                     })
+            {
+                var response = await client.GetAsync(path);
+                await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK)
+                    .Because($"{path} must serve the artefact directly over plain HTTP, not redirect to HTTPS");
+                await Assert.That((int)response.StatusCode is >= 300 and < 400).IsFalse()
+                    .Because($"{path} must NOT issue any 3xx redirect - clients fetching the root CA have no HTTPS trust path");
+            }
+
+            // Negative control: every other path must still redirect, proving the middleware
+            // is wired and the bypass is narrowly scoped to /.well-known/* only.
+            var control = await client.GetAsync("/api/i-do-not-exist");
+            await Assert.That((int)control.StatusCode is >= 300 and < 400).IsTrue()
+                .Because($"non-.well-known paths must still go through HttpsRedirection (got {(int)control.StatusCode})");
         }
         finally
         {
