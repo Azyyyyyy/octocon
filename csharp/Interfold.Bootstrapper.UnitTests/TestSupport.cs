@@ -8,6 +8,21 @@ namespace Interfold.Bootstrapper.UnitTests;
 internal static class TestSupport
 {
     /// <summary>
+    /// True when the test process is running inside a CI environment.
+    ///
+    /// Uses the de-facto standard <c>CI</c> env var (set to <c>true</c> by GitHub Actions,
+    /// GitLab, CircleCI, Travis, Buildkite, etc). Tests that prefer SKIP over FAIL when a
+    /// prerequisite artifact is missing should still FAIL in CI — a silent skip there masks
+    /// a real workflow regression (e.g. a publish/stage step that broke without anyone
+    /// noticing because the test report still says "0 failed").
+    /// </summary>
+    public static bool IsRunningInCi =>
+        string.Equals(
+            Environment.GetEnvironmentVariable("CI"),
+            "true",
+            StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
     /// Returns the path to the bootstrapper assembly (so <c>dotnet &lt;path&gt;</c> can launch it
     /// without needing to publish first). If the build artifact isn't on disk yet, throws a
     /// <see cref="SkipTestException"/> so the test is reported as skipped rather than failed —

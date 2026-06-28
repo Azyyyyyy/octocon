@@ -10,8 +10,16 @@ namespace Interfold.Bootstrapper.UnitTests;
 /// change accidentally pulls in a heavy dependency the size will balloon and this test fails
 /// before the regression ships.
 ///
-/// The test is skipped (not failed) when the published artifact is absent — that's the normal
-/// state during local development; CI publishes before running the test suite.
+/// Behaviour when the published artifact is absent:
+/// <list type="bullet">
+///   <item>Locally (CI env var not set): the test is SKIPPED so contributors aren't forced to
+///         publish before running unit tests.</item>
+///   <item>In CI (<c>CI=true</c>): the test FAILS. The CI workflow is responsible for publishing
+///         the bootstrapper before the test step runs — see <c>Dockerfile.bootstrapper</c> and
+///         the "Tar.gz binaries + stage linux-x64 for binary-size guardrail" step in
+///         <c>.github/workflows/ci-cd.yml</c>. A silent skip in CI would mask a regression in
+///         either of those.</item>
+/// </list>
 /// </summary>
 public sealed class BinarySizeGuardrailTests
 {
@@ -24,11 +32,21 @@ public sealed class BinarySizeGuardrailTests
         var path = LocatePublishedBinary();
         if (path is null || !File.Exists(path))
         {
-            // No artifact on disk — this is the dev workflow. Skip rather than fail so we don't
-            // force every contributor to publish before they can run unit tests.
-            throw new SkipTestException(
-                "Published linux-x64 binary not found; run `dotnet publish csharp/Interfold.Bootstrapper " +
-                "-c Release -r linux-x64 /p:PublishProfile=linux-x64` to generate it.");
+            var message =
+                $"Published linux-x64 binary not found at expected path '{path ?? "<csharp/ root not located>"}'. " +
+                "Run `dotnet publish csharp/Interfold.Bootstrapper -c Release -r linux-x64 " +
+                "/p:PublishProfile=linux-x64` (or build via Dockerfile.bootstrapper) to generate it.";
+
+            if (TestSupport.IsRunningInCi)
+            {
+                // CI is contractually obligated to publish + stage the binary before this
+                // step runs (see ci-cd.yml). Skipping here would let workflow regressions
+                // ride into main with a green build, so we fail loudly instead.
+                throw new InvalidOperationException(
+                    "CI requires the published linux-x64 bootstrapper binary to be present. " + message);
+            }
+
+            throw new SkipTestException(message);
         }
 
         var size = new FileInfo(path).Length;
