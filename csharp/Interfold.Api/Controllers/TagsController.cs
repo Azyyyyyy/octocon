@@ -47,13 +47,18 @@ public sealed class TagsController : InterfoldControllerBase
         CancellationToken cancellationToken)
     {
         var principal = PrincipalId;
+        // CreateTagCommandHandler owns InsertedAtUtc on the public-API path and derives it
+        // from the envelope's OccurredAt right before calling the repo. Passing `default`
+        // here keeps the hashed payload stable across retries with the same idempotency key
+        // (otherwise every call would stamp a fresh DateTime.UtcNow and look like a
+        // different request, triggering ConflictDuplicate on every replay).
         var command = new CommandEnvelope<CreateTagCommand>(
             OperationId: OperationIds.TagCreate,
             CommandId: Guid.NewGuid(),
             PrincipalId: principal,
             IdempotencyKey: GetIdempotencyKey(body.IdempotencyKey),
             OccurredAt: DateTimeOffset.UtcNow,
-            Payload: new CreateTagCommand(body.Name, body.ParentTagId)
+            Payload: new CreateTagCommand(body.Name, body.ParentTagId, InsertedAtUtc: default)
         );
 
         var execution = await _create.HandleAsync(command, cancellationToken);

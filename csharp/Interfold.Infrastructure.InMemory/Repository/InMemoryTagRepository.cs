@@ -50,8 +50,7 @@ public sealed class InMemoryTagRepository : ITagRepository
             return Task.FromResult<string?>(null);
 
         var id = Guid.NewGuid().ToString("N");
-        var now = DateTime.UtcNow;
-        store[id] = new TagState(id, command.ParentTagId, command.Name, now, now);
+        store[id] = new TagState(id, command.ParentTagId, command.Name, command.InsertedAtUtc, DateTime.UtcNow);
         return Task.FromResult<string?>(id);
     }
 

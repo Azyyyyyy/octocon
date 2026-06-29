@@ -59,7 +59,7 @@ public sealed class SpImportTests : BaseEndpointTest
 
         var stub = BuildSp(sysId, alpha, currentFrontersJson: liveFronters);
 
-        var (sp, frontingRepo, _, _) = await RunImportAsync(stub, systemId);
+        var (sp, frontingRepo, _, _, _, _) = await RunImportAsync(stub, systemId);
         await Assert.That(sp).IsNotNull();
 
         var active = await frontingRepo.ListActiveAsync(systemId);
@@ -75,21 +75,26 @@ public sealed class SpImportTests : BaseEndpointTest
     }
 
     [Test]
-    public async Task LiveFronter_StartTimeZero_FallsBackToLastOperationTime()
+    public async Task LiveFronter_StartTimeZero_FallsBackToObjectId()
     {
         var sysId = Uid();
         var systemId = Uid();
         var alpha = MemberUuid();
-        var frontId = MemberUuid();
 
-        // SP omits startTime on some sticky/primary live fronts but still emits
-        // lastOperationTime. The fix should use that as the fallback rather than today.
+        // SP omits startTime on some sticky/primary live fronts. The importer now decodes
+        // the front document's ObjectId for its creation second instead of falling back to
+        // lastOperationTime (which drifts on every edit). Golden 24-hex id 0x671425cd ->
+        // 2024-10-19 21:34:05Z. We set lastOperationTime to a deliberately different date
+        // so this test fails loudly if any future regression starts reading it again.
+        const string spFrontIdHistorical = "671425cd02c63d13c59ba474";
+        var expectedStart = new DateTimeOffset(2024, 10, 19, 21, 34, 5, TimeSpan.Zero);
+
         var liveFronters = JsonSerializer.Serialize(new[]
         {
             new
             {
                 exists = true,
-                id = frontId,
+                id = spFrontIdHistorical,
                 content = new
                 {
                     member = alpha,
@@ -102,15 +107,20 @@ public sealed class SpImportTests : BaseEndpointTest
 
         var stub = BuildSp(sysId, alpha, currentFrontersJson: liveFronters);
 
-        var (_, frontingRepo, _, _) = await RunImportAsync(stub, systemId);
+        var (_, frontingRepo, _, _, _, _) = await RunImportAsync(stub, systemId);
 
         var active = await frontingRepo.ListActiveAsync(systemId);
         await Assert.That(active.Count).IsEqualTo(1);
 
-        var expected = DateTimeOffset.FromUnixTimeMilliseconds(Date_2021_06_10);
-        await Assert.That(active[0].Front.TimeStart).IsEqualTo(expected);
-        await Assert.That(active[0].Front.TimeStart)
-            .IsLessThan(DateTimeOffset.UtcNow.AddDays(-30));
+        using (Assert.Multiple())
+        {
+            await Assert.That(active[0].Front.TimeStart).IsEqualTo(expectedStart);
+            // ObjectId wins over lastOperationTime: the 2021-06-10 value must NOT be used.
+            await Assert.That(active[0].Front.TimeStart)
+                .IsNotEqualTo(DateTimeOffset.FromUnixTimeMilliseconds(Date_2021_06_10));
+            await Assert.That(active[0].Front.TimeStart)
+                .IsLessThan(DateTimeOffset.UtcNow.AddDays(-30));
+        }
     }
 
     [Test]
@@ -140,7 +150,7 @@ public sealed class SpImportTests : BaseEndpointTest
 
         var stub = BuildSp(sysId, alpha, currentFrontersJson: liveFronters);
 
-        var (_, frontingRepo, _, logger) = await RunImportAsync(stub, systemId);
+        var (_, frontingRepo, _, _, _, logger) = await RunImportAsync(stub, systemId);
 
         var active = await frontingRepo.ListActiveAsync(systemId);
         await Assert.That(active.Count).IsEqualTo(0);
@@ -186,7 +196,7 @@ public sealed class SpImportTests : BaseEndpointTest
 
         var stub = BuildSp(sysId, alpha, frontHistoryJson: historyJson, currentFrontersJson: "[]");
 
-        var (_, frontingRepo, _, _) = await RunImportAsync(stub, systemId);
+        var (_, frontingRepo, _, _, _, _) = await RunImportAsync(stub, systemId);
 
         var history = await frontingRepo.ListHistoryBetweenAsync(
             systemId,
@@ -270,7 +280,7 @@ public sealed class SpImportTests : BaseEndpointTest
         });
 
         var stub = BuildSp(sysId, alpha, pollsJson: pollsJson);
-        var (_, _, pollRepo, _) = await RunImportAsync(stub, systemId);
+        var (_, _, pollRepo, _, _, _) = await RunImportAsync(stub, systemId);
 
         var polls = await pollRepo.ListAsync(systemId);
         await Assert.That(polls.Count).IsEqualTo(1);
@@ -307,7 +317,7 @@ public sealed class SpImportTests : BaseEndpointTest
         });
 
         var stub = BuildSp(sysId, alpha, pollsJson: pollsJson);
-        var (_, _, pollRepo, logger) = await RunImportAsync(stub, systemId);
+        var (_, _, pollRepo, _, _, logger) = await RunImportAsync(stub, systemId);
 
         var polls = await pollRepo.ListAsync(systemId);
         await Assert.That(polls.Count).IsEqualTo(0);
@@ -346,7 +356,7 @@ public sealed class SpImportTests : BaseEndpointTest
         });
 
         var stub = BuildSp(sysId, alpha, pollsJson: pollsJson);
-        var (_, _, pollRepo, logger) = await RunImportAsync(stub, systemId);
+        var (_, _, pollRepo, _, _, logger) = await RunImportAsync(stub, systemId);
 
         var polls = await pollRepo.ListAsync(systemId);
         await Assert.That(polls.Count).IsEqualTo(0);
@@ -394,7 +404,7 @@ public sealed class SpImportTests : BaseEndpointTest
         });
 
         var stub = BuildSp(sysId, alpha, pollsJson: pollsJson);
-        var (_, _, pollRepo, logger) = await RunImportAsync(stub, systemId);
+        var (_, _, pollRepo, _, _, logger) = await RunImportAsync(stub, systemId);
 
         var polls = await pollRepo.ListAsync(systemId);
         await Assert.That(polls.Count).IsEqualTo(1);
@@ -448,7 +458,7 @@ public sealed class SpImportTests : BaseEndpointTest
         });
 
         var stub = BuildSp(sysId, alpha, pollsJson: pollsJson);
-        var (_, _, pollRepo, _) = await RunImportAsync(stub, systemId);
+        var (_, _, pollRepo, _, _, _) = await RunImportAsync(stub, systemId);
 
         var polls = await pollRepo.ListAsync(systemId);
         await Assert.That(polls.Count).IsEqualTo(1);
@@ -489,7 +499,7 @@ public sealed class SpImportTests : BaseEndpointTest
         });
 
         var stub = BuildSp(sysId, alpha, pollsJson: pollsJson);
-        var (_, _, pollRepo, _) = await RunImportAsync(stub, systemId);
+        var (_, _, pollRepo, _, _, _) = await RunImportAsync(stub, systemId);
 
         var polls = await pollRepo.ListAsync(systemId);
         await Assert.That(polls.Count).IsEqualTo(1);
@@ -532,7 +542,7 @@ public sealed class SpImportTests : BaseEndpointTest
         });
 
         var stub = BuildSp(sysId, alpha, pollsJson: pollsJson);
-        var (_, _, pollRepo, _) = await RunImportAsync(stub, systemId);
+        var (_, _, pollRepo, _, _, _) = await RunImportAsync(stub, systemId);
 
         var polls = await pollRepo.ListAsync(systemId);
         await Assert.That(polls.Count).IsEqualTo(1);
@@ -588,7 +598,7 @@ public sealed class SpImportTests : BaseEndpointTest
         });
 
         var stub = BuildSp(sysId, alpha, pollsJson: pollsJson);
-        var (_, _, pollRepo, _) = await RunImportAsync(stub, systemId);
+        var (_, _, pollRepo, _, _, _) = await RunImportAsync(stub, systemId);
 
         var polls = await pollRepo.ListAsync(systemId);
         await Assert.That(polls.Count).IsEqualTo(1);
@@ -615,16 +625,17 @@ public sealed class SpImportTests : BaseEndpointTest
         var sysId = Uid();
         var systemId = Uid();
         var alpha = MemberUuid();
+        // 32-hex GUID, deliberately NOT a 24-hex ObjectId, so SpObjectId.TryDecodeTimestamp
+        // fails and the importer falls back to lastOperationTime. This test now covers the
+        // *fallback* branch of the ObjectId-primary cascade.
+        var spPollId = MemberUuid();
 
-        // Synthetic SP "last edit" time in the deep past. Pre-fix the import stamped
-        // `inserted_at` with whatever the repo defaulted to (i.e. "now"); we now propagate
-        // SP's lastOperationTime through CreatePollCommand.InsertedAtUtc.
         var pollsJson = JsonSerializer.Serialize(new[]
         {
             new
             {
                 exists = true,
-                id = MemberUuid(),
+                id = spPollId,
                 content = new
                 {
                     name = "synthetic historical poll",
@@ -637,7 +648,7 @@ public sealed class SpImportTests : BaseEndpointTest
         });
 
         var stub = BuildSp(sysId, alpha, pollsJson: pollsJson);
-        var (_, _, pollRepo, _) = await RunImportAsync(stub, systemId);
+        var (_, _, pollRepo, _, _, logger) = await RunImportAsync(stub, systemId);
 
         var polls = await pollRepo.ListAsync(systemId);
         await Assert.That(polls.Count).IsEqualTo(1);
@@ -647,6 +658,72 @@ public sealed class SpImportTests : BaseEndpointTest
 
         // Defensive: any accidental UtcNow substitution would land within seconds of "now".
         await Assert.That(polls[0].InsertedAt).IsLessThan(DateTime.UtcNow.AddDays(-30));
+
+        // The fallback path must surface a per-row warning so operators can spot polls
+        // whose creation date came from lastOperationTime (drifts on edits) rather than
+        // from a real ObjectId.
+        var warned = logger.Records.Any(r =>
+            r.Level == LogLevel.Warning &&
+            r.Message.Contains(spPollId, StringComparison.Ordinal) &&
+            r.Message.Contains("non-decodable 24-hex id", StringComparison.OrdinalIgnoreCase) &&
+            r.Message.Contains("falling back to lastOperationTime", StringComparison.OrdinalIgnoreCase));
+        await Assert.That(warned).IsTrue();
+    }
+
+    [Test]
+    public async Task Poll_ImportedWithObjectIdTimestamp_PreservesDecodedUtc()
+    {
+        var sysId = Uid();
+        var systemId = Uid();
+        var alpha = MemberUuid();
+
+        // Golden 24-hex ObjectId: 0x671425cd = 1,729,373,645 = 2024-10-19 21:34:05Z. We set
+        // a deliberately *different* lastOperationTime (Date_2020_01_15) so this test fails
+        // loudly if a future regression makes the importer prefer lastOperationTime over
+        // the decoded ObjectId.
+        const string spPollIdHistorical = "671425cd02c63d13c59ba474";
+        var expectedInsertedAt = new DateTime(2024, 10, 19, 21, 34, 5, DateTimeKind.Utc);
+
+        var pollsJson = JsonSerializer.Serialize(new[]
+        {
+            new
+            {
+                exists = true,
+                id = spPollIdHistorical,
+                content = new
+                {
+                    name = "synthetic objectid poll",
+                    desc = "",
+                    custom = false,
+                    endTime = 0L,
+                    lastOperationTime = Date_2020_01_15,
+                },
+            },
+        });
+
+        var stub = BuildSp(sysId, alpha, pollsJson: pollsJson);
+        var (_, _, pollRepo, _, _, logger) = await RunImportAsync(stub, systemId);
+
+        var polls = await pollRepo.ListAsync(systemId);
+        await Assert.That(polls.Count).IsEqualTo(1);
+
+        using (Assert.Multiple())
+        {
+            await Assert.That(polls[0].InsertedAt).IsEqualTo(expectedInsertedAt);
+            // ObjectId wins over lastOperationTime, so we must NOT land on the 2020 date.
+            await Assert.That(polls[0].InsertedAt)
+                .IsNotEqualTo(DateTimeOffset.FromUnixTimeMilliseconds(Date_2020_01_15).UtcDateTime);
+            // Defensive: an accidental UtcNow stamp would land within seconds of "now".
+            await Assert.That(polls[0].InsertedAt).IsLessThan(DateTime.UtcNow.AddDays(-30));
+        }
+
+        // Happy path: no per-row warning should be emitted when the ObjectId decoded cleanly.
+        var fallbackWarned = logger.Records.Any(r =>
+            r.Level == LogLevel.Warning &&
+            r.Message.Contains(spPollIdHistorical, StringComparison.Ordinal) &&
+            (r.Message.Contains("falling back", StringComparison.OrdinalIgnoreCase) ||
+             r.Message.Contains("import time", StringComparison.OrdinalIgnoreCase)));
+        await Assert.That(fallbackWarned).IsFalse();
     }
 
     [Test]
@@ -678,7 +755,7 @@ public sealed class SpImportTests : BaseEndpointTest
 
         var importStarted = DateTime.UtcNow;
         var stub = BuildSp(sysId, alpha, pollsJson: pollsJson);
-        var (_, _, pollRepo, logger) = await RunImportAsync(stub, systemId);
+        var (_, _, pollRepo, _, _, logger) = await RunImportAsync(stub, systemId);
 
         var polls = await pollRepo.ListAsync(systemId);
         await Assert.That(polls.Count).IsEqualTo(1);
@@ -692,6 +769,272 @@ public sealed class SpImportTests : BaseEndpointTest
         await Assert.That(warned).IsTrue();
     }
 
+    [Test]
+    public async Task CustomField_ImportedWithObjectIdTimestamp_PreservesDecodedUtc()
+    {
+        var sysId = Uid();
+        var systemId = Uid();
+        var alpha = MemberUuid();
+
+        // The first 4 bytes of a MongoDB ObjectId are a big-endian Unix-seconds timestamp.
+        // 0x671425cd = 1,729,373,645 = 2024-10-19 21:34:05Z. The remaining 16 hex chars are
+        // synthetic - SP only uses them as machine/process/counter bytes and we ignore them.
+        const string spFieldIdHistorical = "671425cd02c63d13c59ba474";
+        var expectedInsertedAt = new DateTime(2024, 10, 19, 21, 34, 5, DateTimeKind.Utc);
+
+        var customFieldsJson = JsonSerializer.Serialize(new[]
+        {
+            new
+            {
+                exists = true,
+                id = spFieldIdHistorical,
+                content = new
+                {
+                    name = "synthetic-favourite-colour",
+                    type = 0,
+                    supportMarkdown = false,
+                    @private = false,
+                    preventTrusted = false,
+                },
+            },
+        });
+
+        var stub = BuildSp(sysId, alpha, customFieldsJson: customFieldsJson);
+        var (_, _, _, fieldRepo, _, _) = await RunImportAsync(stub, systemId);
+
+        var fields = await fieldRepo.ListAsync(systemId);
+        await Assert.That(fields.Count).IsEqualTo(1);
+
+        var field = fields[0];
+        using (Assert.Multiple())
+        {
+            await Assert.That(field.Name).IsEqualTo("synthetic-favourite-colour");
+            await Assert.That(field.InsertedAt).IsEqualTo(expectedInsertedAt);
+            await Assert.That(field.InsertedAt).IsNotNull();
+            // Defensive: an accidental UtcNow stamp would land within seconds of "now".
+            await Assert.That(field.InsertedAt!.Value).IsLessThan(DateTime.UtcNow.AddDays(-30));
+        }
+    }
+
+    [Test]
+    public async Task CustomField_WithUnparseableSpId_IsSkippedAndWarned()
+    {
+        var sysId = Uid();
+        var systemId = Uid();
+        var alpha = MemberUuid();
+
+        // SP always produces valid 24-hex ObjectIds in practice, but if the API ever returns
+        // anything else we must skip rather than silently stamp UtcNow (which is what the
+        // pre-fix code did for every field). One per-row warning lets operators trace the skip.
+        const string spFieldIdGarbage = "not-an-objectid";
+
+        var customFieldsJson = JsonSerializer.Serialize(new[]
+        {
+            new
+            {
+                exists = true,
+                id = spFieldIdGarbage,
+                content = new
+                {
+                    name = "synthetic-cannot-decode",
+                    type = 0,
+                    supportMarkdown = false,
+                    @private = false,
+                    preventTrusted = false,
+                },
+            },
+        });
+
+        var stub = BuildSp(sysId, alpha, customFieldsJson: customFieldsJson);
+        var (_, _, _, fieldRepo, _, logger) = await RunImportAsync(stub, systemId);
+
+        var fields = await fieldRepo.ListAsync(systemId);
+        await Assert.That(fields.Count).IsEqualTo(0);
+
+        var warned = logger.Records.Any(r =>
+            r.Level == LogLevel.Warning &&
+            r.Message.Contains(spFieldIdGarbage, StringComparison.Ordinal) &&
+            r.Message.Contains("24-hex ObjectId", StringComparison.OrdinalIgnoreCase));
+        await Assert.That(warned).IsTrue();
+    }
+
+    [Test]
+    public async Task Tag_ImportedWithObjectIdTimestamp_PreservesDecodedUtc()
+    {
+        var sysId = Uid();
+        var systemId = Uid();
+        var alpha = MemberUuid();
+
+        // Same golden ObjectId we use in the custom-fields test. 0x671425cd = 1,729,373,645
+        // = 2024-10-19 21:34:05Z. Tags (SP "groups") inherit the same ObjectId-decoding
+        // strategy as fields because SP exposes no per-row creation timestamp for groups.
+        const string spGroupIdHistorical = "671425cd02c63d13c59ba474";
+        var expectedInsertedAt = new DateTime(2024, 10, 19, 21, 34, 5, DateTimeKind.Utc);
+
+        var groupsJson = JsonSerializer.Serialize(new[]
+        {
+            new
+            {
+                exists = true,
+                id = spGroupIdHistorical,
+                content = new
+                {
+                    name = "synthetic-friends-group",
+                    desc = "",
+                    color = "",
+                    parent = "root",
+                    members = Array.Empty<string>(),
+                    @private = false,
+                    preventTrusted = false,
+                },
+            },
+        });
+
+        var stub = BuildSp(sysId, alpha, groupsJson: groupsJson);
+        var (_, _, _, _, tagRepo, _) = await RunImportAsync(stub, systemId);
+
+        var tags = await tagRepo.ListAsync(systemId);
+        await Assert.That(tags.Count).IsEqualTo(1);
+
+        var tag = tags[0];
+        using (Assert.Multiple())
+        {
+            await Assert.That(tag.Name).IsEqualTo("synthetic-friends-group");
+            await Assert.That(tag.InsertedAt).IsEqualTo(expectedInsertedAt);
+            // Defensive: an accidental UtcNow stamp would land within seconds of "now".
+            await Assert.That(tag.InsertedAt).IsLessThan(DateTime.UtcNow.AddDays(-30));
+        }
+    }
+
+    [Test]
+    public async Task Tag_WithUnparseableSpId_IsSkippedAndWarned()
+    {
+        var sysId = Uid();
+        var systemId = Uid();
+        var alpha = MemberUuid();
+
+        // SP always produces valid 24-hex ObjectIds for groups in practice, but if the API
+        // ever returns anything else we must skip rather than silently stamp UtcNow. One
+        // per-row warning lets operators trace the skip.
+        const string spGroupIdGarbage = "not-an-objectid";
+
+        var groupsJson = JsonSerializer.Serialize(new[]
+        {
+            new
+            {
+                exists = true,
+                id = spGroupIdGarbage,
+                content = new
+                {
+                    name = "synthetic-cannot-decode-group",
+                    desc = "",
+                    color = "",
+                    parent = "root",
+                    members = Array.Empty<string>(),
+                    @private = false,
+                    preventTrusted = false,
+                },
+            },
+        });
+
+        var stub = BuildSp(sysId, alpha, groupsJson: groupsJson);
+        var (_, _, _, _, tagRepo, logger) = await RunImportAsync(stub, systemId);
+
+        var tags = await tagRepo.ListAsync(systemId);
+        await Assert.That(tags.Count).IsEqualTo(0);
+
+        var warned = logger.Records.Any(r =>
+            r.Level == LogLevel.Warning &&
+            r.Message.Contains(spGroupIdGarbage, StringComparison.Ordinal) &&
+            r.Message.Contains("24-hex ObjectId", StringComparison.OrdinalIgnoreCase));
+        await Assert.That(warned).IsTrue();
+    }
+
+    [Test]
+    public async Task Alter_NoDate_FallsBackToObjectIdAndWarns()
+    {
+        var sysId = Uid();
+        var systemId = Uid();
+
+        // 24-hex MongoDB ObjectId: 0x671425cd = 1,729,373,645 = 2024-10-19 21:34:05Z.
+        // The importer used to silently stamp 1970-01-01 whenever SP returned date == 0.
+        // We now fall back to the ObjectId-decoded creation second and warn once per row.
+        // We can't assert the resulting CreatedAt directly (AlterReadModel doesn't expose
+        // it), but the warning fired is a sufficient witness that the new cascade took
+        // the ObjectId branch.
+        const string spMemberIdHistorical = "671425cd02c63d13c59ba474";
+
+        var membersJson = JsonSerializer.Serialize(new[]
+        {
+            new
+            {
+                exists = true,
+                id = spMemberIdHistorical,
+                content = new
+                {
+                    name = "synthetic-no-date-alter",
+                    date = 0L,
+                    lastOperationTime = Date_2022_03_05,
+                },
+            },
+        });
+
+        var stub = BuildSp(sysId, alpha: spMemberIdHistorical, membersJson: membersJson);
+        var (_, _, _, _, _, logger) = await RunImportAsync(stub, systemId);
+
+        var warned = logger.Records.Any(r =>
+            r.Level == LogLevel.Warning &&
+            r.Message.Contains(spMemberIdHistorical, StringComparison.Ordinal) &&
+            r.Message.Contains("no date", StringComparison.OrdinalIgnoreCase) &&
+            r.Message.Contains("ObjectId-decoded", StringComparison.OrdinalIgnoreCase));
+        await Assert.That(warned).IsTrue();
+
+        // The UtcNow-fallback warning must NOT also fire: ObjectId decode succeeded so we
+        // shouldn't have walked further down the cascade.
+        var utcNowWarned = logger.Records.Any(r =>
+            r.Level == LogLevel.Warning &&
+            r.Message.Contains(spMemberIdHistorical, StringComparison.Ordinal) &&
+            r.Message.Contains("import time as created date", StringComparison.OrdinalIgnoreCase));
+        await Assert.That(utcNowWarned).IsFalse();
+    }
+
+    [Test]
+    public async Task Alter_NoDateAndNonDecodableId_FallsBackToUtcNowAndWarns()
+    {
+        var sysId = Uid();
+        var systemId = Uid();
+        // 32-hex GUID, deliberately not a 24-hex ObjectId, so SpObjectId.TryDecodeTimestamp
+        // fails and we walk to the terminal UtcNow + warn branch. Alters can't be skipped
+        // (downstream associations depend on them), so the terminal branch must still
+        // create the row.
+        var spMemberIdGarbage = MemberUuid();
+
+        var membersJson = JsonSerializer.Serialize(new[]
+        {
+            new
+            {
+                exists = true,
+                id = spMemberIdGarbage,
+                content = new
+                {
+                    name = "synthetic-garbage-id-alter",
+                    date = 0L,
+                    lastOperationTime = Date_2022_03_05,
+                },
+            },
+        });
+
+        var stub = BuildSp(sysId, alpha: spMemberIdGarbage, membersJson: membersJson);
+        var (_, _, _, _, _, logger) = await RunImportAsync(stub, systemId);
+
+        var warned = logger.Records.Any(r =>
+            r.Level == LogLevel.Warning &&
+            r.Message.Contains(spMemberIdGarbage, StringComparison.Ordinal) &&
+            r.Message.Contains("no date and non-decodable id", StringComparison.OrdinalIgnoreCase) &&
+            r.Message.Contains("import time as created date", StringComparison.OrdinalIgnoreCase));
+        await Assert.That(warned).IsTrue();
+    }
+
     /// <summary>
     /// Builds the canonical "minimal valid SP backend" stub. The single SP member <paramref name="alpha"/>
     /// is wired up so the import creates exactly one alter, which is the only association
@@ -702,7 +1045,10 @@ public sealed class SpImportTests : BaseEndpointTest
         string alpha,
         string? frontHistoryJson = null,
         string? currentFrontersJson = null,
-        string? pollsJson = null)
+        string? pollsJson = null,
+        string? customFieldsJson = null,
+        string? groupsJson = null,
+        string? membersJson = null)
     {
         var meJson = JsonSerializer.Serialize(new
         {
@@ -711,7 +1057,7 @@ public sealed class SpImportTests : BaseEndpointTest
             content = new { desc = "synthetic test system" },
         });
 
-        var membersJson = JsonSerializer.Serialize(new[]
+        var defaultMembersJson = JsonSerializer.Serialize(new[]
         {
             new
             {
@@ -728,16 +1074,16 @@ public sealed class SpImportTests : BaseEndpointTest
 
         return new TestServices.StubSpHandler()
             .OnGet("/v1/me", meJson)
-            .OnGet($"/v1/customFields/{sysId}", "[]")
-            .OnGet($"/v1/members/{sysId}", membersJson)
+            .OnGet($"/v1/customFields/{sysId}", customFieldsJson ?? "[]")
+            .OnGet($"/v1/members/{sysId}", membersJson ?? defaultMembersJson)
             .OnGet($"/v1/customFronts/{sysId}", "[]")
-            .OnGet($"/v1/groups/{sysId}", "[]")
+            .OnGet($"/v1/groups/{sysId}", groupsJson ?? "[]")
             .OnGetPrefix($"/v1/frontHistory/{sysId}", frontHistoryJson ?? "[]")
             .OnGet("/v1/fronters/", currentFrontersJson ?? "[]")
             .OnGet($"/v1/polls/{sysId}", pollsJson ?? "[]");
     }
 
-    private static async Task<(SpImportResult Result, IFrontingRepository FrontingRepo, IPollRepository PollRepo, CapturingLogger Logger)> RunImportAsync(
+    private static async Task<(SpImportResult Result, IFrontingRepository FrontingRepo, IPollRepository PollRepo, ISettingsFieldRepository FieldRepo, ITagRepository TagRepo, CapturingLogger Logger)> RunImportAsync(
         TestServices.StubSpHandler stub,
         string systemId)
     {
@@ -775,7 +1121,9 @@ public sealed class SpImportTests : BaseEndpointTest
 
         var frontingRepo = scope.ServiceProvider.GetRequiredService<IFrontingRepository>();
         var pollRepo = scope.ServiceProvider.GetRequiredService<IPollRepository>();
-        return (result, frontingRepo, pollRepo, logger);
+        var fieldRepo = scope.ServiceProvider.GetRequiredService<ISettingsFieldRepository>();
+        var tagRepo = scope.ServiceProvider.GetRequiredService<ITagRepository>();
+        return (result, frontingRepo, pollRepo, fieldRepo, tagRepo, logger);
     }
 
     private sealed class NullAvatarStorage : IAvatarStorage

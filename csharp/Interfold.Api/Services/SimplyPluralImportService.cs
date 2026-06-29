@@ -185,12 +185,25 @@ public sealed class SimplyPluralImportService : ISimplyPluralImportService
         foreach (var field in customFields)
         {
             var spFieldId = field.Id;
+
+            // SP doesn't return a created/lastOperationTime on custom fields - the only signal
+            // is the MongoDB ObjectId's first 4 bytes (big-endian Unix seconds). If the id
+            // isn't a 24-hex ObjectId we have nothing reliable to stamp, so skip rather than
+            // silently falling back to UtcNow (which is what we used to do for everything).
+            if (!SpObjectId.TryDecodeTimestamp(spFieldId, out var insertedAtUtc))
+            {
+                _logger.LogWarning(
+                    "Skipping SP custom field {SpFieldId} - id is not a 24-hex ObjectId so we cannot derive its created date",
+                    spFieldId);
+                continue;
+            }
+
             var name = field.Content.Name ?? "Unnamed field";
             if (name.Length > 100) name = name[..100];
 
             var fieldType = MapFieldType(field.Content.Type, field.Content.SupportMarkdown);
             var securityLevel = MapSecurityLevel(field.Content.Private, field.Content.PreventTrusted);
-            var createdId = await _fieldRepository.CreateAsync(systemId, name, fieldType, securityLevel, false, ct);
+            var createdId = await _fieldRepository.CreateAsync(systemId, name, fieldType, securityLevel, false, insertedAtUtc, ct);
             if (createdId is not null)
             {
                 fieldMapping[spFieldId] = createdId;
@@ -234,7 +247,31 @@ public sealed class SimplyPluralImportService : ISimplyPluralImportService
             if (name.Length > 80) name = name[..80];
             if (string.IsNullOrWhiteSpace(name)) name = "Unnamed alter";
 
-            var createdAt = UnixTimestampToDateTimeOffset(content.Date);
+            // SP's `date` field is the real created-date when present; if it's 0 (older
+            // rows, occasional schema gaps) we previously stamped 1970-01-01 silently.
+            // Fall back to the SP member id's ObjectId-encoded creation second, then to
+            // import time (alter creation can't be skipped: downstream fronts/polls/notes
+            // look the alter up by SP uuid via alterAssociations).
+            DateTimeOffset createdAt;
+            if (content.Date > 0)
+            {
+                createdAt = UnixTimestampToDateTimeOffset(content.Date);
+            }
+            else if (SpObjectId.TryDecodeTimestamp(uuid, out var decodedAlterAt))
+            {
+                createdAt = new DateTimeOffset(decodedAlterAt, TimeSpan.Zero);
+                _logger.LogWarning(
+                    "SP alter {SpMemberId} for system {SystemId} has no date; falling back to ObjectId-decoded creation timestamp.",
+                    uuid, systemId);
+            }
+            else
+            {
+                createdAt = DateTimeOffset.UtcNow;
+                _logger.LogWarning(
+                    "SP alter {SpMemberId} for system {SystemId} has no date and non-decodable id; using import time as created date.",
+                    uuid, systemId);
+            }
+
             var updatedAt = UnixTimestampToDateTimeOffset(content.LastOperationTime);
 
             var alterId = await _alterRepository.CreateAsync(systemId, new CreateAlterCommand(name, createdAt), ct);
@@ -352,7 +389,15 @@ public sealed class SimplyPluralImportService : ISimplyPluralImportService
             if (name.Length > 100) name = name[..100];
             if (string.IsNullOrWhiteSpace(name)) name = "Unnamed tag";
 
-            var createdTagId = await _tagRepository.CreateAsync(systemId, new CreateTagCommand(name, null), ct);
+            if (!SpObjectId.TryDecodeTimestamp(spId, out var insertedAtUtc))
+            {
+                _logger.LogWarning(
+                    "Skipping SP group (tag) {SpGroupId} - id is not a 24-hex ObjectId so we cannot derive its created date",
+                    spId);
+                continue;
+            }
+
+            var createdTagId = await _tagRepository.CreateAsync(systemId, new CreateTagCommand(name, null, insertedAtUtc), ct);
             if (createdTagId is not null)
             {
                 tagAssociations[spId] = createdTagId;
@@ -480,22 +525,28 @@ public sealed class SimplyPluralImportService : ISimplyPluralImportService
                 if (comment?.Length > 50) comment = comment[..50];
 
                 // Prefer the front's own startTime; if SP didn't emit one (sticky/primary
-                // live fronters can omit it), fall back to lastOperationTime. Only if both
-                // are missing do we skip — silently stamping DateTimeOffset.UtcNow here is
-                // what caused the historical "today date" import bug.
-                var spStartMs = fronter.Content.StartTime > 0
-                    ? fronter.Content.StartTime
-                    : fronter.Content.LastOperationTime;
-
-                if (spStartMs <= 0)
+                // live fronters can omit it), fall back to the SP MongoDB ObjectId's
+                // encoded creation second. ObjectId is the doc's birth moment which for a
+                // live front is when the user switched — better than lastOperationTime,
+                // which drifts on every edit. Skip+warn if neither is available rather
+                // than silently stamping UtcNow (the original "today date" bug).
+                DateTimeOffset spStart;
+                if (fronter.Content.StartTime > 0)
+                {
+                    spStart = DateTimeOffset.FromUnixTimeMilliseconds(fronter.Content.StartTime);
+                }
+                else if (SpObjectId.TryDecodeTimestamp(fronter.Id, out var decodedFrontAt))
+                {
+                    spStart = new DateTimeOffset(decodedFrontAt, TimeSpan.Zero);
+                }
+                else
                 {
                     _logger.LogWarning(
-                        "Skipping live SP fronter for system {SystemId} member {MemberId}: no startTime or lastOperationTime.",
+                        "Skipping live SP fronter for system {SystemId} member {MemberId}: no startTime and SP front id is not a 24-hex ObjectId.",
                         systemId, memberId);
                     continue;
                 }
 
-                var spStart = DateTimeOffset.FromUnixTimeMilliseconds(spStartMs);
                 await _frontingRepository.StartAsync(systemId, alterId, comment, spStart, ct);
             }
         }
@@ -538,19 +589,27 @@ public sealed class SimplyPluralImportService : ISimplyPluralImportService
                 ? DateTimeOffset.FromUnixTimeMilliseconds(poll.Content.EndTime).UtcDateTime
                 : null;
 
-            // Preserve SP's lastOperationTime as our inserted_at so historical polls don't
-            // all bunch up under today's date in time-ordered views. Fall back to import
-            // time only when SP genuinely didn't give us one (very old rows pre-SP v1.x).
+            // SP's poll id is a MongoDB ObjectId whose first 4 bytes encode the doc's
+            // creation second. That's a true created-date; lastOperationTime drifts forward
+            // on every edit and isn't what we want as inserted_at. Fall back to
+            // lastOperationTime (then UtcNow) only when the id isn't a 24-hex ObjectId.
             DateTime insertedAt;
-            if (poll.Content.LastOperationTime > 0)
+            if (SpObjectId.TryDecodeTimestamp(poll.Id, out var decodedPollAt))
+            {
+                insertedAt = decodedPollAt;
+            }
+            else if (poll.Content.LastOperationTime > 0)
             {
                 insertedAt = DateTimeOffset.FromUnixTimeMilliseconds(poll.Content.LastOperationTime).UtcDateTime;
+                _logger.LogWarning(
+                    "SP poll {PollId} for system {SystemId} has non-decodable 24-hex id; falling back to lastOperationTime for inserted_at.",
+                    poll.Id, systemId);
             }
             else
             {
                 insertedAt = DateTime.UtcNow;
                 _logger.LogWarning(
-                    "SP poll {PollId} for system {SystemId} has no lastOperationTime; using import time as inserted_at.",
+                    "SP poll {PollId} for system {SystemId} has non-decodable id and no lastOperationTime; using import time as inserted_at.",
                     poll.Id, systemId);
             }
 
@@ -596,8 +655,31 @@ public sealed class SimplyPluralImportService : ISimplyPluralImportService
                 if (title.Length > 100) title = title[..100];
                 if (string.IsNullOrWhiteSpace(title)) title = "Imported note";
 
-                // Convert SP timestamps (Unix milliseconds) to DateTimeOffset for audit preservation
-                var createdAt = UnixTimestampToDateTimeOffset(note.Content.Date);
+                // SP's `date` is the real created-date when present; same silent-1970 trap as
+                // alters when it's 0. Cascade Date -> ObjectId -> UtcNow + warn so we never
+                // silently land on the epoch and operators see a trace of any degraded row.
+                DateTimeOffset createdAt;
+                if (note.Content.Date > 0)
+                {
+                    createdAt = UnixTimestampToDateTimeOffset(note.Content.Date);
+                }
+                else if (SpObjectId.TryDecodeTimestamp(note.Id, out var decodedNoteAt))
+                {
+                    createdAt = new DateTimeOffset(decodedNoteAt, TimeSpan.Zero);
+                    _logger.LogWarning(
+                        "SP note {SpNoteId} for system {SystemId} alter {AlterId} has no date; falling back to ObjectId-decoded creation timestamp.",
+                        note.Id, systemId, alterId);
+                }
+                else
+                {
+                    createdAt = DateTimeOffset.UtcNow;
+                    _logger.LogWarning(
+                        "SP note {SpNoteId} for system {SystemId} alter {AlterId} has no date and non-decodable id; using import time as created date.",
+                        note.Id, systemId, alterId);
+                }
+
+                // lastOperationTime is the right source for updated_at - it's SP's last-edit
+                // timestamp, which is exactly what UpdatedAt means here.
                 var updatedAt = UnixTimestampToDateTimeOffset(note.Content.LastOperationTime);
 
                 var entryId = await _journalRepository.CreateAlterAsync(systemId, new CreateAlterJournalEntryCommand(

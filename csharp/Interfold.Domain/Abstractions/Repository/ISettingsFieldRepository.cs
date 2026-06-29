@@ -12,6 +12,7 @@ public interface ISettingsFieldRepository
         string type,
         string securityLevel,
         bool locked,
+        DateTime insertedAtUtc,
         CancellationToken cancellationToken = default);
 
     Task<bool> UpdateAsync(

@@ -553,13 +553,18 @@ public sealed class SettingsController : InterfoldControllerBase
     [HttpPost("fields")]
     public async Task<Response<FieldCreatedResponse>> CreateField([FromBody] SettingsCreateFieldRequest req, CancellationToken ct)
     {
+        // CreateFieldCommandHandler owns InsertedAtUtc on the public-API path and derives it
+        // from the envelope's OccurredAt right before calling the repo. Passing `default`
+        // here keeps the hashed payload stable across retries with the same idempotency key
+        // (otherwise every call would stamp a fresh DateTime.UtcNow and look like a
+        // different request, triggering ConflictDuplicate on every replay).
         var envelope = new CommandEnvelope<CreateFieldCommand>(
             OperationIds.SettingsFieldCreate,
             Guid.NewGuid(),
             PrincipalId: PrincipalId,
             IdempotencyKey: GetIdempotencyKey(req.IdempotencyKey),
             OccurredAt: DateTimeOffset.UtcNow,
-            Payload: new CreateFieldCommand(req.Name, req.Type ?? string.Empty, req.SecurityLevel ?? "private", req.Locked ?? false)
+            Payload: new CreateFieldCommand(req.Name, req.Type ?? string.Empty, req.SecurityLevel ?? "private", req.Locked ?? false, InsertedAtUtc: default)
         );
 
         var execution = await _createFieldHandler.HandleAsync(envelope, ct);

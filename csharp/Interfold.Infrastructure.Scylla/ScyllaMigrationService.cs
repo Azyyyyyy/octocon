@@ -47,6 +47,7 @@ public sealed partial class ScyllaMigrationService(
     private const string SingletonsMigration = "000_create_singleton_keyspaces.cql";
     private const string KeyspacesMigration = "001_create_interfold_keyspaces.cql";
     private const string SchemaMigration = "002_create_interfold_schema.templated.cql";
+    private const string FieldTimestampsMigration = "003_field_udt_timestamps.templated.cql";
     private const string GrantsVersion = "grants_v1";
 
     // Stable template hashed for grant tracking. Bump GrantsVersion whenever this string
@@ -138,6 +139,7 @@ public sealed partial class ScyllaMigrationService(
 
             await ApplyKeyspaces(session, visibleDcs, isScylla, applied);
             await ApplySchema(session, applied);
+            await ApplyTemplatedMigrationPerKeyspace(session, applied, FieldTimestampsMigration);
             await GrantPermissions(session, applied);
         }
         finally
@@ -380,6 +382,44 @@ public sealed partial class ScyllaMigrationService(
             stopwatch.Stop();
 
             await RecordMigrationAsync(session, keyspace, SchemaMigration, checksum,
+                (int)stopwatch.ElapsedMilliseconds);
+        }
+    }
+
+    // --- Templated Per-Keyspace Migrations ---
+
+    /// <summary>
+    /// Applies a templated <c>.cql</c> migration to every regional keyspace, tracked individually
+    /// in the ledger so it runs exactly once per keyspace. Used for post-002 schema additions
+    /// such as UDT extensions where re-running the bootstrap schema isn't acceptable.
+    /// </summary>
+    private async Task ApplyTemplatedMigrationPerKeyspace(
+        ISession session,
+        Dictionary<(string Scope, string Version), string> applied,
+        string migrationFilename)
+    {
+        var cqlTemplate = GetEmbeddedResource(migrationFilename);
+        var checksum = ComputeChecksum(cqlTemplate);
+
+        var keyspaces = TargetKeyspaces();
+
+        foreach (var keyspace in keyspaces)
+        {
+            if (ShouldSkip(applied, keyspace, migrationFilename, checksum))
+            {
+                logger.LogDebug("[scylla-migrate] Skipping {Migration} for '{Keyspace}', already applied.",
+                    migrationFilename, keyspace);
+                continue;
+            }
+
+            var rendered = cqlTemplate.Replace("{{KEYSPACE}}", keyspace);
+            logger.LogInformation("[scylla-migrate] Applying {Migration} to keyspace '{Keyspace}'...",
+                migrationFilename, keyspace);
+            var stopwatch = Stopwatch.StartNew();
+            await ExecuteStatements(session, rendered);
+            stopwatch.Stop();
+
+            await RecordMigrationAsync(session, keyspace, migrationFilename, checksum,
                 (int)stopwatch.ElapsedMilliseconds);
         }
     }

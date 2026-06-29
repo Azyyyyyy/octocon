@@ -63,7 +63,8 @@ public sealed class ScyllaSettingsFieldRepository : ISettingsFieldRepository
                     ToDomainType(field.Type),
                     ToDomainSecurityLevel(field.SecurityLevel),
                     field.Locked,
-                    index))
+                    index,
+                    field.InsertedAt?.UtcDateTime))
                 .ToArray();
 
             return (IReadOnlyList<SettingsFieldReadModel>)result;
@@ -76,6 +77,7 @@ public sealed class ScyllaSettingsFieldRepository : ISettingsFieldRepository
         string type,
         string securityLevel,
         bool locked,
+        DateTime insertedAtUtc,
         CancellationToken cancellationToken = default)
     {
         return await DatabaseTransientRetry.ExecuteScyllaAsync(async () =>
@@ -88,7 +90,7 @@ public sealed class ScyllaSettingsFieldRepository : ISettingsFieldRepository
             var fields = await LoadFieldsAsync(session, keyspace, normalizedSystemId) ?? [];
 
             var fieldId = Guid.NewGuid();
-            fields.Add(CreateFieldUdt(session, keyspace, fieldId, name, type, securityLevel, locked));
+            fields.Add(CreateFieldUdt(session, keyspace, fieldId, name, type, securityLevel, locked, insertedAtUtc));
 
             await session.ExecuteAsync(new SimpleStatement(
                 $"UPDATE {keyspace}.users SET fields = ?, updated_at = toTimestamp(now()) WHERE id = ?",
@@ -148,6 +150,7 @@ public sealed class ScyllaSettingsFieldRepository : ISettingsFieldRepository
                     fields[i].Locked = locked.Value;
                 }
 
+                fields[i].UpdatedAt = DateTimeOffset.UtcNow;
                 updated = true;
                 break;
             }
@@ -272,6 +275,7 @@ public sealed class ScyllaSettingsFieldRepository : ISettingsFieldRepository
             }
 
             var field = fields[currentIndex];
+            field.UpdatedAt = DateTimeOffset.UtcNow;
             fields.RemoveAt(currentIndex);
 
             var boundedIndex = Math.Max(0, Math.Min(index, fields.Count));
@@ -308,16 +312,24 @@ public sealed class ScyllaSettingsFieldRepository : ISettingsFieldRepository
         string name,
         string type,
         string securityLevel,
-        bool locked)
+        bool locked,
+        DateTime insertedAtUtc)
     {
         EnsureFieldUdtMapping(session, keyspace);
+        // Force Utc kind so we never construct a DateTimeOffset from a Local DateTime (which
+        // would silently apply the host's offset). Callers all hand us UTC values today
+        // (importer: ObjectId-derived; handler: OccurredAt.UtcDateTime), but SpecifyKind
+        // makes the contract explicit and defensive against future producers.
+        var insertedAtOffset = new DateTimeOffset(DateTime.SpecifyKind(insertedAtUtc, DateTimeKind.Utc), TimeSpan.Zero);
         return new UserFieldUdt
         {
             Id = id,
             Name = name,
             Type = ParseType(type),
             Locked = locked,
-            SecurityLevel = ParseSecurityLevel(securityLevel)
+            SecurityLevel = ParseSecurityLevel(securityLevel),
+            InsertedAt = insertedAtOffset,
+            UpdatedAt = insertedAtOffset
         };
     }
 
@@ -336,7 +348,9 @@ public sealed class ScyllaSettingsFieldRepository : ISettingsFieldRepository
                 .Map(f => f.Name, "name")
                 .Map(f => f.Type, "type")
                 .Map(f => f.Locked, "locked")
-                .Map(f => f.SecurityLevel, "security_level"));
+                .Map(f => f.SecurityLevel, "security_level")
+                .Map(f => f.InsertedAt, "inserted_at")
+                .Map(f => f.UpdatedAt, "updated_at"));
 
         UdtMappings.TryAdd(key, 0);
     }
@@ -410,6 +424,11 @@ public sealed class ScyllaSettingsFieldRepository : ISettingsFieldRepository
         return Guid.TryParse(value, out guid);
     }
 
+    // The Cassandra C# driver's UDT serializer routes `timestamp` columns through
+    // DateTimeOffset; nullable DateTime properties throw `InvalidTypeException: No converter
+    // is available from Nullable<DateTime> is not convertible to type DateTimeOffset` on
+    // write. We keep the public API on `DateTime`/`DateTime?` (matching every other repo)
+    // and only carry DateTimeOffset across the UDT boundary.
     private sealed class UserFieldUdt
     {
         public Guid Id { get; set; }
@@ -417,5 +436,7 @@ public sealed class ScyllaSettingsFieldRepository : ISettingsFieldRepository
         public short Type { get; set; }
         public bool Locked { get; set; }
         public short SecurityLevel { get; set; }
+        public DateTimeOffset? InsertedAt { get; set; }
+        public DateTimeOffset? UpdatedAt { get; set; }
     }
 }

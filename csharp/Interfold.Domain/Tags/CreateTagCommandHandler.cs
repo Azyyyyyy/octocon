@@ -68,7 +68,15 @@ public sealed class CreateTagCommandHandler : ICommandHandler<CreateTagCommand, 
                 return RejectInvariant(command, "tag:parent_not_found");
         }
 
-        var tagId = await _tagRepository.CreateAsync(command.PrincipalId, command.Payload, cancellationToken);
+        // See CreateTagCommand XML-doc: public-API callers send `default(DateTime)` so the
+        // idempotency hash stays stable across retries. We stamp the real value here from
+        // the envelope just before the repo call. The SP import bypasses this handler and
+        // sets InsertedAtUtc itself from the decoded ObjectId, so it isn't affected here.
+        var insertedAtUtc = (command.OccurredAt ?? DateTimeOffset.UtcNow).UtcDateTime;
+        var tagId = await _tagRepository.CreateAsync(
+            command.PrincipalId,
+            command.Payload with { InsertedAtUtc = insertedAtUtc },
+            cancellationToken);
         if (tagId is null)
             return RejectInvariant(command, "tag:create_failed");
 

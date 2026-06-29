@@ -6,7 +6,8 @@ public sealed record SettingsFieldReadModel(
     string Type,
     string SecurityLevel,
     bool Locked,
-    int Index);
+    int Index,
+    DateTime? InsertedAt);
     
 public sealed record SettingsUsernameRequest(
     string Username,

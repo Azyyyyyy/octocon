@@ -42,6 +42,7 @@ public sealed class InMemorySettingsFieldRepository : ISettingsFieldRepository
         string type,
         string securityLevel,
         bool locked,
+        DateTime insertedAtUtc,
         CancellationToken cancellationToken = default)
     {
         var systemKey = GetSystemKey(systemId);
@@ -52,7 +53,7 @@ public sealed class InMemorySettingsFieldRepository : ISettingsFieldRepository
         {
             var normalizedType = NormalizeType(type);
             var normalizedSecurity = NormalizeSecurityLevel(securityLevel);
-            store.Add(new SettingsFieldReadModel(fieldId, name, normalizedType, normalizedSecurity, locked, store.Count));
+            store.Add(new SettingsFieldReadModel(fieldId, name, normalizedType, normalizedSecurity, locked, store.Count, insertedAtUtc));
         }
 
         return Task.FromResult<string?>(fieldId);

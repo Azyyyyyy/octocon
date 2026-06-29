@@ -67,14 +67,15 @@ public sealed class ScyllaTagRepository : ITagRepository
             var tagGuid = Guid.NewGuid();
 
             var insert = new SimpleStatement(
-                $"INSERT INTO {keyspace}.tags (user_id, id, parent_tag_id, name, description, color, security_level, inserted_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, toTimestamp(now()), toTimestamp(now()))",
+                $"INSERT INTO {keyspace}.tags (user_id, id, parent_tag_id, name, description, color, security_level, inserted_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, toTimestamp(now()))",
                 normalizedSystemId,
                 tagGuid,
                 parentTagId,
                 command.Name,
                 null,
                 null,
-                null
+                null,
+                command.InsertedAtUtc
             );
 
             await session.ExecuteAsync(insert);

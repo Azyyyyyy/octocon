@@ -61,12 +61,21 @@ public sealed class CreateFieldCommandHandler : ICommandHandler<CreateFieldComma
                 return CommandExecutionResult<SettingsFieldCommandResult>.Success(replay with { Replay = true });
         }
 
+        // Stamp the row with the envelope's OccurredAt rather than honouring whatever
+        // InsertedAtUtc the caller put on the payload. The caller (SettingsController) sends
+        // `default(DateTime)` precisely so the idempotency hash stays stable across retries
+        // - see SettingsController.CreateField. The SP import bypasses this handler entirely
+        // and sets InsertedAtUtc itself from the decoded ObjectId, so it isn't affected here.
+        // OccurredAt is nullable on the envelope; fall back to UtcNow if missing.
+        var insertedAtUtc = (command.OccurredAt ?? DateTimeOffset.UtcNow).UtcDateTime;
+
         var fieldId = await _fieldRepository.CreateAsync(
             command.PrincipalId,
             command.Payload.Name,
             normalizedType,
             command.Payload.SecurityLevel,
             command.Payload.Locked,
+            insertedAtUtc,
             cancellationToken);
 
         if (fieldId is null)
