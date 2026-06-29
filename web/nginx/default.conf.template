@@ -1,37 +1,52 @@
-# Rendered by /docker-entrypoint.d/20-envsubst-on-templates.sh in the official `nginx` image:
-# at container startup, files in /etc/nginx/templates/ ending in `.template` are processed
-# through `envsubst` and written to /etc/nginx/conf.d/ with the `.template` suffix stripped.
+# Processed by the nginx image's /docker-entrypoint.d/20-envsubst-on-templates.sh
+# at container startup. `NGINX_ENVSUBST_FILTER=^NGINX_` (set by the AppHost) limits
+# substitution to NGINX_* vars so nginx's own `$host` / `$uri` / `$request_uri` stay
+# literal. Every NGINX_* var referenced below MUST be defined on the container
+# (empty string is fine, UNSET makes nginx abort with `unknown "<var>" variable`
+# because the placeholder is left literal in the rendered conf).
 #
-# Variables consumed (all set by InterfoldAppHost.Configure when Parameters:web-tls=true):
-#   NGINX_SERVER_NAME         public domain the leaf cert was issued for
-#   NGINX_SSL_CERT_FILE       path to leaf cert inside the container (defaults to /certs/leaf.crt)
-#   NGINX_SSL_KEY_FILE        path to leaf private key inside the container (defaults to /certs/leaf.key)
-#   NGINX_HTTPS_PORT_SUFFIX   ":<host-port>" the operator mapped to the container's :443 listener,
-#                             or empty when that port is 443. Stitched into the HTTP->HTTPS
-#                             redirect Location so browsers land on the right host port instead
-#                             of nginx's implicit default of 443 (which the bootstrapper does NOT
-#                             bind unless the operator set ports.webHttps to 443 in
-#                             interfold.bootstrap.json).
-#
-# Anything that references nginx's own runtime variables (`$host`, `$uri`, `$request_uri`) is
-# escaped as ${ESC_DOLLAR}<name> via the NGINX_ENVSUBST_TEMPLATE_SUFFIX mechanism would be
-# cleaner, but the simpler approach is to enumerate the env vars we want substituted via
-# NGINX_ENVSUBST_FILTER on the container; without that filter set, the entrypoint substitutes
-# every $VAR it can resolve in the process env. To keep nginx variables intact, we list only
-# the NGINX_* names below — anything else stays literal because envsubst leaves unset vars
-# alone (and the entrypoint passes -v "$NGINX_*" by default when the filter env var is set).
+# Vars (all set by InterfoldAppHost.Configure when Parameters:web-tls=true):
+#   NGINX_SERVER_NAME         public DNS / IP the leaf cert was issued for
+#   NGINX_SSL_CERT_FILE       leaf cert path inside the container
+#   NGINX_SSL_KEY_FILE        leaf key path inside the container
+#   NGINX_HTTPS_PORT_SUFFIX   ":<port>" the operator mapped to :443, OR empty to
+#                             disable the HTTP->HTTPS redirect on :80 (operator
+#                             chose 443, dropped the HTTPS port post-hoc, or
+#                             webHttps=false). Empty -> :80 serves plaintext.
 
 server {
     listen 80;
     server_name ${NGINX_SERVER_NAME};
 
-    # Permanent redirect to the HTTPS variant. Compose health checks probe HTTPS directly,
-    # so this exists purely for human navigation and bookmarks. The ${NGINX_HTTPS_PORT_SUFFIX}
-    # interpolation makes the redirect land on the operator-mapped host port for :443 (e.g.
-    # `:8081`) instead of nginx's implicit `:443` default — the bootstrapper publishes the
-    # container's :443 onto `ports.webHttps`, which the operator usually leaves at 8081
-    # rather than 443.
-    return 301 https://$host${NGINX_HTTPS_PORT_SUFFIX}$request_uri;
+    # Conditional 301 -> HTTPS. The `set` captures the envsubsted suffix into an
+    # nginx variable so the `if` can test it; the `return` uses ${NGINX_*} directly
+    # so WebHttpsTests can grep the rendered conf for the literal port. Empty
+    # suffix falls through to the static-serving block below — avoids 301-ing to
+    # a dead port when the HTTPS endpoint isn't actually reachable.
+    set $https_port_suffix "${NGINX_HTTPS_PORT_SUFFIX}";
+    if ($https_port_suffix != "") {
+        return 301 https://$host${NGINX_HTTPS_PORT_SUFFIX}$request_uri;
+    }
+
+    # Plaintext fallback. KEEP IN SYNC with the :443 block below (intentional
+    # duplication to avoid a second bind-mount).
+    root /usr/share/nginx/html;
+    index index.html;
+    include /etc/nginx/mime.types;
+    types {
+        application/wasm wasm;
+        text/javascript  mjs;
+    }
+    default_type application/octet-stream;
+
+    location ~* \.(?:js|mjs|wasm|css|woff2?)$ {
+        try_files $uri =404;
+        add_header Cache-Control "public, max-age=31536000, immutable";
+    }
+    location / {
+        try_files $uri $uri/ /index.html;
+        add_header Cache-Control "no-cache";
+    }
 }
 
 server {
@@ -49,8 +64,21 @@ server {
     root /usr/share/nginx/html;
     index index.html;
 
-    # Blazor WASM needs the right MIME type or the browser refuses to compile the module.
-    types { application/wasm wasm; }
+    # `include` MUST come before the supplemental `types` block. A bare
+    # `types { ... }` at server scope REPLACES the inherited http-level map (from
+    # the upstream image's nginx.conf), it doesn't merge — without the include
+    # only `.wasm` would be recognised and `index.html` would be served as
+    # `application/octet-stream`, which browsers treat as a file download.
+    include /etc/nginx/mime.types;
+    # Supplemental types (a second `types` block at the SAME scope merges).
+    # `.wasm` is in mime.types since 1.21.4, restated for older base images.
+    # `.mjs` is NOT in mime.types as of 1.30.x; needed for unbundled K/Wasm
+    # builds (the current octocon-wasm image is Webpack-bundled and ships no
+    # .mjs, so this is defensive).
+    types {
+        application/wasm wasm;
+        text/javascript  mjs;
+    }
     default_type application/octet-stream;
 
     gzip on;
@@ -66,14 +94,14 @@ server {
         application/octet-stream
         image/svg+xml;
 
-    # Long-cache hashed assets; the Blazor publish pipeline emits content-hashed filenames
-    # for JS/WASM/CSS, so they're safe to cache for a year.
-    location ~* \.(?:js|wasm|css|woff2?)$ {
+    # Kotlin/Wasm Gradle pipeline emits content-hashed JS/MJS/WASM/CSS — safe
+    # to cache for a year.
+    location ~* \.(?:js|mjs|wasm|css|woff2?)$ {
         try_files $uri =404;
         add_header Cache-Control "public, max-age=31536000, immutable";
     }
 
-    # SPA fallback - any unmatched path serves the app shell so client-side routing works.
+    # SPA fallback — unmatched paths serve the app shell for client-side routing.
     location / {
         try_files $uri $uri/ /index.html;
         add_header Cache-Control "no-cache";

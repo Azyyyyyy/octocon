@@ -860,14 +860,14 @@ public static class InterfoldAppHost
             {
                 // The upstream `ghcr.io/azyyyyyy/octocon-wasm:latest` image listens ONLY on
                 // :8080 (its Dockerfile.wasm bakes `listen 8080;` into /etc/nginx/conf.d/default.conf
-                // and EXPOSEs 8080). When we don't bind-mount our own template over the top of
-                // it (the webHttps=false path here), there's no listener on :80 or :443 — both
-                // endpoint mappings have to land on the container's :8080. The "http" / "https"
-                // endpoint names are kept for symmetry with the webTls branch's resource-graph
-                // shape; both serve plaintext HTTP in this mode.
+                // and EXPOSEs 8080). With no template bind-mounted there's no listener on :80 or
+                // :443, so we publish ONLY the operator's webHttp host port onto the container's
+                // :8080. `Ports:web-https` is intentionally unused in this mode — surfacing it
+                // would bind a second host port that just shadows the first (same container
+                // target), confusing operators who configured `webHttps=false` expecting "no
+                // HTTPS at all" rather than "two ports both serving plaintext".
                 web = web
                     .WithHttpEndpoint(port: webHttpPort, targetPort: 8080, name: "http")
-                    .WithHttpEndpoint(port: webHttpsPort, targetPort: 8080, name: "https")
                     .WithHttpHealthCheck("/", endpointName: "http")
                     .WithExternalHttpEndpoints()
                     .PublishAsDockerComposeService((_, service) =>

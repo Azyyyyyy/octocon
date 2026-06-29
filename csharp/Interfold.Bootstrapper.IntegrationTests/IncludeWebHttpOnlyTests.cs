@@ -78,10 +78,16 @@ public class IncludeWebHttpOnlyTests(UbuntuDinDFixture dinD)
         await Assert.That(compose).DoesNotContain("https://localhost:443/")
             .Because("HTTP-only variant must NOT emit the HTTPS healthcheck variant");
 
-        // Operator host ports map onto the upstream image's :8080 listener. The webHttps host
-        // port stays bound (for symmetry with the webTls branch's resource-graph shape) but
-        // also lands on :8080 — both endpoint names serve plaintext HTTP in this mode.
+        // Operator host port maps onto the upstream image's :8080 listener.
         await Assert.That(compose).Contains($"\"{scratch.Ports.WebHttp}:8080\"")
             .Because($"compose must publish the allocated webHttp host port ({scratch.Ports.WebHttp}) onto the upstream image's :8080");
+
+        // The webHttps host port must NOT appear in the compose: with no TLS termination there
+        // is no second listener inside the container to map it onto, and binding it anyway just
+        // shadows webHttp on a second port and confuses operators who configured webHttps=false
+        // expecting "no HTTPS at all". Match by `"<port>:` so we catch any target on the RHS.
+        await Assert.That(compose).DoesNotContain($"\"{scratch.Ports.WebHttps}:")
+            .Because($"HTTP-only variant must NOT bind webHttps host port ({scratch.Ports.WebHttps}); " +
+                     "Ports:web-https is unused when webHttps=false");
     }
 }

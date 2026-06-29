@@ -638,7 +638,7 @@ public sealed class ScyllaFrontingRepository : IFrontingRepository
         }, _options, cancellationToken, _logger);
     }
 
-    private static async Task<CurrentFrontRow?> GetActiveFrontReferenceByFrontIdAsync(
+    private async Task<CurrentFrontRow?> GetActiveFrontReferenceByFrontIdAsync(
         ISession session,
         string keyspace,
         string normalizedSystemId,
@@ -664,7 +664,7 @@ public sealed class ScyllaFrontingRepository : IFrontingRepository
         return current;
     }
 
-    private static async Task<CurrentFrontRow?> GetCurrentFrontRowAsync(
+    private async Task<CurrentFrontRow?> GetCurrentFrontRowAsync(
         ISession session,
         string keyspace,
         string normalizedSystemId,
@@ -681,10 +681,23 @@ public sealed class ScyllaFrontingRepository : IFrontingRepository
             return null;
         }
 
+        var timeStart = row.GetValue<DateTimeOffset?>("time_start");
+        if (timeStart is null)
+        {
+            // Corrupt current_fronts row (no time_start). Refuse to silently stamp
+            // today's date into fronts_by_time on the next EndAsync; surface a
+            // warning so we notice if this ever fires in production and let the
+            // caller treat the row as if the front weren't current.
+            _logger.LogWarning(
+                "current_fronts row for user {SystemId} alter {AlterId} has null time_start; treating as not-current.",
+                normalizedSystemId, alterId);
+            return null;
+        }
+
         return new CurrentFrontRow(
             row.GetValue<Guid>("id"),
             row.GetValue<short>("alter_id"),
-            row.GetValue<DateTimeOffset?>("time_start") ?? DateTimeOffset.UtcNow,
+            timeStart.Value,
             row.GetValue<string?>("comment"));
     }
 

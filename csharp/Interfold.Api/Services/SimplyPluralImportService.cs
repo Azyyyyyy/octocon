@@ -31,6 +31,23 @@ public sealed class SimplyPluralImportService : ISimplyPluralImportService
 {
     private const string SpApiBase = "https://api.apparyllis.com/v1";
     private const string SpCdnBase = "https://spaces.apparyllis.com";
+
+    // Every public host that SP currently serves the same `avatars/{uid}/{uuid}` bucket over —
+    // checked in IsSpCdnUrl so a pre-existing avatarUrl on any of them is recognised as
+    // "needs rehost before sunset" rather than being misclassified as a third-party URL.
+    // Sources (SimplyPluralApi):
+    //   * spaces.apparyllis.com — src/api/base/user/generateReports.ts:24 (SP's own report generator)
+    //   * serve.apparyllis.com  — src/api/v1/storage.ts:63, src/api/v2/storage/storage.utils.ts:46
+    //                             (canonical URL the upload endpoints return to clients post-v1.12)
+    //   * simply-plural.sfo3.digitaloceanspaces.com — src/api/base/user.ts:11 (legacy v1 report base)
+    // All three CNAME the same DigitalOcean Spaces bucket; new entries here must be SP-owned too.
+    internal static readonly string[] SpCdnHosts =
+    {
+        SpCdnBase,
+        "https://serve.apparyllis.com",
+        "https://simply-plural.sfo3.digitaloceanspaces.com",
+    };
+
     private const int MaxJournalContentLength = 30_000;
 
     private readonly IHttpClientFactory _httpClientFactory;
@@ -401,7 +418,6 @@ public sealed class SimplyPluralImportService : ISimplyPluralImportService
         HttpClient httpClient, string spSystemId, string systemId,
         Dictionary<string, int> alterAssociations, CancellationToken ct)
     {
-        //TODO: There is a small issue with some being put into todays date
         // Fetch front history in chunks (SP epoch: Jan 1, 2015)
         const long startEpoch = 1_420_070_400_000;
         const int monthInterval = 6;
@@ -411,7 +427,7 @@ public sealed class SimplyPluralImportService : ISimplyPluralImportService
 
         var seenFrontIds = new HashSet<string>();
 
-        for (var i = 0; i <= numberOfChunks; i++)
+        for (var i = 0; i < numberOfChunks; i++)
         {
             var chunkStart = startEpoch + i * chunkSizeMs;
             var chunkEnd = Math.Min(startEpoch + (i + 1) * chunkSizeMs, endTimeMs);
@@ -463,10 +479,23 @@ public sealed class SimplyPluralImportService : ISimplyPluralImportService
                 var comment = fronter.Content.CustomStatus;
                 if (comment?.Length > 50) comment = comment[..50];
 
-                var spStart = fronter.Content.StartTime > 0
-                    ? DateTimeOffset.FromUnixTimeMilliseconds(fronter.Content.StartTime)
-                    : DateTimeOffset.UtcNow;
+                // Prefer the front's own startTime; if SP didn't emit one (sticky/primary
+                // live fronters can omit it), fall back to lastOperationTime. Only if both
+                // are missing do we skip — silently stamping DateTimeOffset.UtcNow here is
+                // what caused the historical "today date" import bug.
+                var spStartMs = fronter.Content.StartTime > 0
+                    ? fronter.Content.StartTime
+                    : fronter.Content.LastOperationTime;
 
+                if (spStartMs <= 0)
+                {
+                    _logger.LogWarning(
+                        "Skipping live SP fronter for system {SystemId} member {MemberId}: no startTime or lastOperationTime.",
+                        systemId, memberId);
+                    continue;
+                }
+
+                var spStart = DateTimeOffset.FromUnixTimeMilliseconds(spStartMs);
                 await _frontingRepository.StartAsync(systemId, alterId, comment, spStart, ct);
             }
         }
@@ -770,9 +799,23 @@ public sealed class SimplyPluralImportService : ISimplyPluralImportService
     /// True when <paramref name="url"/> is an absolute URL hosted on the Simply Plural CDN.
     /// Used to decide between rehost (SP CDN, will go away soon) and passthrough (everything else).
     /// </summary>
-    private static bool IsSpCdnUrl(string? url)
-        => !string.IsNullOrWhiteSpace(url)
-           && url.StartsWith(SpCdnBase, StringComparison.OrdinalIgnoreCase);
+    internal static bool IsSpCdnUrl(string? url)
+    {
+        if (string.IsNullOrWhiteSpace(url))
+        {
+            return false;
+        }
+
+        foreach (var host in SpCdnHosts)
+        {
+            if (url.StartsWith(host, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
 
 
     private static async Task<T?> FetchAsync<T>(HttpClient httpClient, string url, CancellationToken ct)

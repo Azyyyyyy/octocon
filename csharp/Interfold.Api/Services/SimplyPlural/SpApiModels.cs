@@ -135,6 +135,9 @@ internal sealed class SpFrontContent
 
     [JsonPropertyName("customStatus")]
     public string? CustomStatus { get; set; }
+
+    [JsonPropertyName("lastOperationTime")]
+    public long LastOperationTime { get; set; }
 }
 
 // --- /polls/{id} ---
