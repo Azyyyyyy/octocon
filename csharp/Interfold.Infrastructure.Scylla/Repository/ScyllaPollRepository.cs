@@ -87,14 +87,15 @@ public sealed class ScyllaPollRepository : IPollRepository
             var pollGuid = Guid.NewGuid();
 
             var insert = new SimpleStatement(
-                $"INSERT INTO {keyspace}.polls (user_id, id, title, description, type, data, time_end, inserted_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, toTimestamp(now()), toTimestamp(now()))",
+                $"INSERT INTO {keyspace}.polls (user_id, id, title, description, type, data, time_end, inserted_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, toTimestamp(now()))",
                 normalizedSystemId,
                 pollGuid,
                 command.Title,
                 command.Description,
                 ToPollCode(command.Type),
                 "{}",
-                command.TimeEnd
+                command.TimeEnd,
+                command.InsertedAtUtc
             );
 
             await session.ExecuteAsync(insert);

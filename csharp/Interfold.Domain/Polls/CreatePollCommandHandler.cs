@@ -57,7 +57,15 @@ public sealed class CreatePollCommandHandler : ICommandHandler<CreatePollCommand
                 return CommandExecutionResult<PollCommandResult>.Success(replay with { Replay = true });
         }
 
-        var pollId = await _pollRepository.CreateAsync(command.PrincipalId, command.Payload, cancellationToken);
+        // Stamp the row with the envelope's OccurredAt rather than honouring whatever
+        // InsertedAtUtc the caller put on the payload. The caller (PollsController) sends
+        // `default(DateTime)` precisely so the idempotency hash stays stable across retries
+        // — see PollsController.Create. The SP import bypasses this handler entirely and
+        // sets InsertedAtUtc itself from lastOperationTime, so it isn't affected here.
+        // OccurredAt is nullable on the envelope; fall back to UtcNow if missing.
+        var insertedAtUtc = (command.OccurredAt ?? DateTimeOffset.UtcNow).UtcDateTime;
+        var enrichedPayload = command.Payload with { InsertedAtUtc = insertedAtUtc };
+        var pollId = await _pollRepository.CreateAsync(command.PrincipalId, enrichedPayload, cancellationToken);
         if (pollId is null)
             return RejectInvariant(command, "poll:create_failed");
 

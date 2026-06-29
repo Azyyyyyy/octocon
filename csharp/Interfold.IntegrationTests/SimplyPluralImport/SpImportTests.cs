@@ -59,7 +59,7 @@ public sealed class SpImportTests : BaseEndpointTest
 
         var stub = BuildSp(sysId, alpha, currentFrontersJson: liveFronters);
 
-        var (sp, frontingRepo, _) = await RunImportAsync(stub, systemId);
+        var (sp, frontingRepo, _, _) = await RunImportAsync(stub, systemId);
         await Assert.That(sp).IsNotNull();
 
         var active = await frontingRepo.ListActiveAsync(systemId);
@@ -102,7 +102,7 @@ public sealed class SpImportTests : BaseEndpointTest
 
         var stub = BuildSp(sysId, alpha, currentFrontersJson: liveFronters);
 
-        var (_, frontingRepo, _) = await RunImportAsync(stub, systemId);
+        var (_, frontingRepo, _, _) = await RunImportAsync(stub, systemId);
 
         var active = await frontingRepo.ListActiveAsync(systemId);
         await Assert.That(active.Count).IsEqualTo(1);
@@ -140,7 +140,7 @@ public sealed class SpImportTests : BaseEndpointTest
 
         var stub = BuildSp(sysId, alpha, currentFrontersJson: liveFronters);
 
-        var (_, frontingRepo, logger) = await RunImportAsync(stub, systemId);
+        var (_, frontingRepo, _, logger) = await RunImportAsync(stub, systemId);
 
         var active = await frontingRepo.ListActiveAsync(systemId);
         await Assert.That(active.Count).IsEqualTo(0);
@@ -186,7 +186,7 @@ public sealed class SpImportTests : BaseEndpointTest
 
         var stub = BuildSp(sysId, alpha, frontHistoryJson: historyJson, currentFrontersJson: "[]");
 
-        var (_, frontingRepo, _) = await RunImportAsync(stub, systemId);
+        var (_, frontingRepo, _, _) = await RunImportAsync(stub, systemId);
 
         var history = await frontingRepo.ListHistoryBetweenAsync(
             systemId,
@@ -241,6 +241,457 @@ public sealed class SpImportTests : BaseEndpointTest
         }
     }
 
+    [Test]
+    public async Task Poll_TitleAndDescriptionTooLong_TruncatedToHandlerLimits()
+    {
+        var sysId = Uid();
+        var systemId = Uid();
+        var alpha = MemberUuid();
+
+        // SP has no length limits server-side; Interfold's CreatePollCommandHandler enforces
+        // title <= 100 and desc <= 2000. The import path bypasses the handler and previously
+        // truncated to 200/3000, leaving rows that the public API would reject on next edit.
+        var longTitle = new string('t', 250);
+        var longDesc = new string('d', 4000);
+        var pollsJson = JsonSerializer.Serialize(new[]
+        {
+            new
+            {
+                exists = true,
+                id = MemberUuid(),
+                content = new
+                {
+                    name = longTitle,
+                    desc = longDesc,
+                    custom = false,
+                    endTime = 0L,
+                },
+            },
+        });
+
+        var stub = BuildSp(sysId, alpha, pollsJson: pollsJson);
+        var (_, _, pollRepo, _) = await RunImportAsync(stub, systemId);
+
+        var polls = await pollRepo.ListAsync(systemId);
+        await Assert.That(polls.Count).IsEqualTo(1);
+        await Assert.That(polls[0].Title.Length).IsEqualTo(100);
+        await Assert.That(polls[0].Description).IsNotNull();
+        await Assert.That(polls[0].Description!.Length).IsEqualTo(2000);
+    }
+
+    [Test]
+    public async Task CustomPoll_WithEmptyOptionsArray_IsSkippedAndWarned()
+    {
+        var sysId = Uid();
+        var systemId = Uid();
+        var alpha = MemberUuid();
+        var spPollId = MemberUuid();
+
+        // SP's v1 schema marks `options` as optional. Importing a custom poll with no options
+        // would create a "choice" row that users can't vote on, so the importer should bail.
+        var pollsJson = JsonSerializer.Serialize(new[]
+        {
+            new
+            {
+                exists = true,
+                id = spPollId,
+                content = new
+                {
+                    name = "synthetic choice",
+                    desc = "",
+                    custom = true,
+                    endTime = 0L,
+                    options = Array.Empty<object>(),
+                },
+            },
+        });
+
+        var stub = BuildSp(sysId, alpha, pollsJson: pollsJson);
+        var (_, _, pollRepo, logger) = await RunImportAsync(stub, systemId);
+
+        var polls = await pollRepo.ListAsync(systemId);
+        await Assert.That(polls.Count).IsEqualTo(0);
+
+        var warned = logger.Records.Any(r =>
+            r.Level == LogLevel.Warning &&
+            r.Message.Contains(spPollId, StringComparison.Ordinal) &&
+            r.Message.Contains("no options", StringComparison.OrdinalIgnoreCase));
+        await Assert.That(warned).IsTrue();
+    }
+
+    [Test]
+    public async Task CustomPoll_WithMissingOptionsKey_IsSkippedAndWarned()
+    {
+        var sysId = Uid();
+        var systemId = Uid();
+        var alpha = MemberUuid();
+        var spPollId = MemberUuid();
+
+        // Same as the empty-array case but `options` is omitted entirely. SpPollContent maps
+        // both shapes to a null `Options`, and the importer should treat them identically.
+        var pollsJson = JsonSerializer.Serialize(new[]
+        {
+            new
+            {
+                exists = true,
+                id = spPollId,
+                content = new
+                {
+                    name = "synthetic choice no key",
+                    desc = "",
+                    custom = true,
+                    endTime = 0L,
+                },
+            },
+        });
+
+        var stub = BuildSp(sysId, alpha, pollsJson: pollsJson);
+        var (_, _, pollRepo, logger) = await RunImportAsync(stub, systemId);
+
+        var polls = await pollRepo.ListAsync(systemId);
+        await Assert.That(polls.Count).IsEqualTo(0);
+
+        var warned = logger.Records.Any(r =>
+            r.Level == LogLevel.Warning &&
+            r.Message.Contains(spPollId, StringComparison.Ordinal) &&
+            r.Message.Contains("no options", StringComparison.OrdinalIgnoreCase));
+        await Assert.That(warned).IsTrue();
+    }
+
+    [Test]
+    public async Task Poll_VoteWithUnmappedMemberId_IsSkippedAndWarned()
+    {
+        var sysId = Uid();
+        var systemId = Uid();
+        var alpha = MemberUuid();
+        var spPollId = MemberUuid();
+        var unmappedVoter = MemberUuid();
+
+        // Two votes: one from the imported member (mapped → alter), one from a member uuid we
+        // never imported. The unmapped vote previously slipped through as a raw 24-char SP id
+        // in the `votes[i].id` field; we now drop it and surface a per-poll warning.
+        var pollsJson = JsonSerializer.Serialize(new[]
+        {
+            new
+            {
+                exists = true,
+                id = spPollId,
+                content = new
+                {
+                    name = "synthetic vote",
+                    desc = "",
+                    custom = false,
+                    endTime = 0L,
+                    allowAbstain = true,
+                    allowVeto = false,
+                    votes = new[]
+                    {
+                        new { id = alpha, vote = "yes", comment = "synthetic-mapped" },
+                        new { id = unmappedVoter, vote = "no", comment = "synthetic-unmapped" },
+                    },
+                },
+            },
+        });
+
+        var stub = BuildSp(sysId, alpha, pollsJson: pollsJson);
+        var (_, _, pollRepo, logger) = await RunImportAsync(stub, systemId);
+
+        var polls = await pollRepo.ListAsync(systemId);
+        await Assert.That(polls.Count).IsEqualTo(1);
+
+        var votes = polls[0].Data.GetProperty("votes");
+        await Assert.That(votes.GetArrayLength()).IsEqualTo(1);
+
+        var onlyVote = votes[0];
+        // The mapped vote's id is the numeric alter id stringified, never the SP uuid.
+        await Assert.That(onlyVote.GetProperty("id").GetString()).IsNotEqualTo(alpha);
+        await Assert.That(onlyVote.GetProperty("id").GetString()).IsNotEqualTo(unmappedVoter);
+        await Assert.That(onlyVote.GetProperty("vote").GetString()).IsEqualTo("yes");
+
+        var warned = logger.Records.Any(r =>
+            r.Level == LogLevel.Warning &&
+            r.Message.Contains(spPollId, StringComparison.Ordinal) &&
+            r.Message.Contains("unmappable votes", StringComparison.OrdinalIgnoreCase));
+        await Assert.That(warned).IsTrue();
+    }
+
+    [Test]
+    public async Task Poll_VoteWithEmptyOrWhitespaceId_IsSkipped()
+    {
+        var sysId = Uid();
+        var systemId = Uid();
+        var alpha = MemberUuid();
+        var spPollId = MemberUuid();
+
+        // Defensive coverage: SP's voteType only declares `id: string` without a minLength,
+        // so blank ids could theoretically appear. They should never become rows in our data.
+        var pollsJson = JsonSerializer.Serialize(new[]
+        {
+            new
+            {
+                exists = true,
+                id = spPollId,
+                content = new
+                {
+                    name = "synthetic blank-id votes",
+                    desc = "",
+                    custom = false,
+                    endTime = 0L,
+                    votes = new[]
+                    {
+                        new { id = "", vote = "yes", comment = "" },
+                        new { id = "   ", vote = "no", comment = "" },
+                        new { id = alpha, vote = "abstain", comment = "synthetic" },
+                    },
+                },
+            },
+        });
+
+        var stub = BuildSp(sysId, alpha, pollsJson: pollsJson);
+        var (_, _, pollRepo, _) = await RunImportAsync(stub, systemId);
+
+        var polls = await pollRepo.ListAsync(systemId);
+        await Assert.That(polls.Count).IsEqualTo(1);
+
+        var votes = polls[0].Data.GetProperty("votes");
+        await Assert.That(votes.GetArrayLength()).IsEqualTo(1);
+        await Assert.That(votes[0].GetProperty("vote").GetString()).IsEqualTo("abstain");
+    }
+
+    [Test]
+    public async Task Poll_VoteWithNullOrEmptyVoteString_IsSkipped()
+    {
+        var sysId = Uid();
+        var systemId = Uid();
+        var alpha = MemberUuid();
+        var spPollId = MemberUuid();
+
+        // An empty `vote` string is meaningless — SP wouldn't render it anywhere — so we
+        // refuse to import it even when the voter id is otherwise valid.
+        var pollsJson = JsonSerializer.Serialize(new[]
+        {
+            new
+            {
+                exists = true,
+                id = spPollId,
+                content = new
+                {
+                    name = "synthetic blank-vote",
+                    desc = "",
+                    custom = false,
+                    endTime = 0L,
+                    votes = new[]
+                    {
+                        new { id = alpha, vote = "", comment = "synthetic-blank" },
+                    },
+                },
+            },
+        });
+
+        var stub = BuildSp(sysId, alpha, pollsJson: pollsJson);
+        var (_, _, pollRepo, _) = await RunImportAsync(stub, systemId);
+
+        var polls = await pollRepo.ListAsync(systemId);
+        await Assert.That(polls.Count).IsEqualTo(1);
+
+        var data = polls[0].Data;
+        if (data.TryGetProperty("votes", out var votes))
+        {
+            await Assert.That(votes.GetArrayLength()).IsEqualTo(0);
+        }
+    }
+
+    [Test]
+    public async Task NormalPoll_RoundTrips()
+    {
+        var sysId = Uid();
+        var systemId = Uid();
+        var alpha = MemberUuid();
+        var spPollId = MemberUuid();
+
+        var pollsJson = JsonSerializer.Serialize(new[]
+        {
+            new
+            {
+                exists = true,
+                id = spPollId,
+                content = new
+                {
+                    name = "synthetic abstain vote",
+                    desc = "synthetic desc",
+                    custom = false,
+                    endTime = Date_2021_06_10_End,
+                    allowAbstain = true,
+                    allowVeto = true,
+                    votes = new[]
+                    {
+                        new { id = alpha, vote = "abstain", comment = "synthetic" },
+                    },
+                },
+            },
+        });
+
+        var stub = BuildSp(sysId, alpha, pollsJson: pollsJson);
+        var (_, _, pollRepo, _) = await RunImportAsync(stub, systemId);
+
+        var polls = await pollRepo.ListAsync(systemId);
+        await Assert.That(polls.Count).IsEqualTo(1);
+
+        var poll = polls[0];
+        await Assert.That(poll.Title).IsEqualTo("synthetic abstain vote");
+        await Assert.That(poll.Description).IsEqualTo("synthetic desc");
+        await Assert.That(poll.Type).IsEqualTo("vote");
+        await Assert.That(poll.TimeEnd).IsNotNull();
+        await Assert.That(poll.TimeEnd!.Value)
+            .IsEqualTo(DateTimeOffset.FromUnixTimeMilliseconds(Date_2021_06_10_End).UtcDateTime);
+
+        var votes = poll.Data.GetProperty("votes");
+        await Assert.That(votes.GetArrayLength()).IsEqualTo(1);
+        await Assert.That(votes[0].GetProperty("vote").GetString()).IsEqualTo("abstain");
+        await Assert.That(votes[0].GetProperty("comment").GetString()).IsEqualTo("synthetic");
+        // Id is the numeric alter id stringified, never the raw SP member uuid.
+        await Assert.That(votes[0].GetProperty("id").GetString()).IsNotEqualTo(alpha);
+    }
+
+    [Test]
+    public async Task CustomPoll_RoundTrips()
+    {
+        var sysId = Uid();
+        var systemId = Uid();
+        var alpha = MemberUuid();
+        var spPollId = MemberUuid();
+
+        var pollsJson = JsonSerializer.Serialize(new[]
+        {
+            new
+            {
+                exists = true,
+                id = spPollId,
+                content = new
+                {
+                    name = "synthetic choice",
+                    desc = "",
+                    custom = true,
+                    endTime = 0L,
+                    options = new object[]
+                    {
+                        new { name = "One", color = "#111111" },
+                        new { name = "Two", color = "#222222" },
+                        new { name = "Three", color = "#333333" },
+                    },
+                    votes = new[]
+                    {
+                        new { id = alpha, vote = "Two", comment = "synthetic" },
+                    },
+                },
+            },
+        });
+
+        var stub = BuildSp(sysId, alpha, pollsJson: pollsJson);
+        var (_, _, pollRepo, _) = await RunImportAsync(stub, systemId);
+
+        var polls = await pollRepo.ListAsync(systemId);
+        await Assert.That(polls.Count).IsEqualTo(1);
+
+        var poll = polls[0];
+        await Assert.That(poll.Title).IsEqualTo("synthetic choice");
+        await Assert.That(poll.Type).IsEqualTo("choice");
+
+        var options = poll.Data.GetProperty("options");
+        await Assert.That(options.GetArrayLength()).IsEqualTo(3);
+        await Assert.That(options[0].GetProperty("name").GetString()).IsEqualTo("One");
+        await Assert.That(options[1].GetProperty("name").GetString()).IsEqualTo("Two");
+        await Assert.That(options[2].GetProperty("name").GetString()).IsEqualTo("Three");
+
+        var votes = poll.Data.GetProperty("votes");
+        await Assert.That(votes.GetArrayLength()).IsEqualTo(1);
+        await Assert.That(votes[0].GetProperty("vote").GetString()).IsEqualTo("Two");
+        await Assert.That(votes[0].GetProperty("id").GetString()).IsNotEqualTo(alpha);
+    }
+
+    [Test]
+    public async Task Poll_LastOperationTime_PreservedAsInsertedAt()
+    {
+        var sysId = Uid();
+        var systemId = Uid();
+        var alpha = MemberUuid();
+
+        // Synthetic SP "last edit" time in the deep past. Pre-fix the import stamped
+        // `inserted_at` with whatever the repo defaulted to (i.e. "now"); we now propagate
+        // SP's lastOperationTime through CreatePollCommand.InsertedAtUtc.
+        var pollsJson = JsonSerializer.Serialize(new[]
+        {
+            new
+            {
+                exists = true,
+                id = MemberUuid(),
+                content = new
+                {
+                    name = "synthetic historical poll",
+                    desc = "",
+                    custom = false,
+                    endTime = 0L,
+                    lastOperationTime = Date_2020_01_15,
+                },
+            },
+        });
+
+        var stub = BuildSp(sysId, alpha, pollsJson: pollsJson);
+        var (_, _, pollRepo, _) = await RunImportAsync(stub, systemId);
+
+        var polls = await pollRepo.ListAsync(systemId);
+        await Assert.That(polls.Count).IsEqualTo(1);
+
+        var expected = DateTimeOffset.FromUnixTimeMilliseconds(Date_2020_01_15).UtcDateTime;
+        await Assert.That(polls[0].InsertedAt).IsEqualTo(expected);
+
+        // Defensive: any accidental UtcNow substitution would land within seconds of "now".
+        await Assert.That(polls[0].InsertedAt).IsLessThan(DateTime.UtcNow.AddDays(-30));
+    }
+
+    [Test]
+    public async Task Poll_LastOperationTimeMissing_FallsBackToImportTimeAndWarns()
+    {
+        var sysId = Uid();
+        var systemId = Uid();
+        var alpha = MemberUuid();
+        var spPollId = MemberUuid();
+
+        // SP either omits `lastOperationTime` or sends 0 on very old rows. We accept those
+        // but log a warning so we can spot polls that lost their creation timestamp.
+        var pollsJson = JsonSerializer.Serialize(new[]
+        {
+            new
+            {
+                exists = true,
+                id = spPollId,
+                content = new
+                {
+                    name = "synthetic missing-lastop poll",
+                    desc = "",
+                    custom = false,
+                    endTime = 0L,
+                    lastOperationTime = 0L,
+                },
+            },
+        });
+
+        var importStarted = DateTime.UtcNow;
+        var stub = BuildSp(sysId, alpha, pollsJson: pollsJson);
+        var (_, _, pollRepo, logger) = await RunImportAsync(stub, systemId);
+
+        var polls = await pollRepo.ListAsync(systemId);
+        await Assert.That(polls.Count).IsEqualTo(1);
+        await Assert.That(polls[0].InsertedAt).IsGreaterThanOrEqualTo(importStarted.AddSeconds(-5));
+        await Assert.That(polls[0].InsertedAt).IsLessThanOrEqualTo(DateTime.UtcNow.AddSeconds(5));
+
+        var warned = logger.Records.Any(r =>
+            r.Level == LogLevel.Warning &&
+            r.Message.Contains(spPollId, StringComparison.Ordinal) &&
+            r.Message.Contains("no lastOperationTime", StringComparison.OrdinalIgnoreCase));
+        await Assert.That(warned).IsTrue();
+    }
+
     /// <summary>
     /// Builds the canonical "minimal valid SP backend" stub. The single SP member <paramref name="alpha"/>
     /// is wired up so the import creates exactly one alter, which is the only association
@@ -250,7 +701,8 @@ public sealed class SpImportTests : BaseEndpointTest
         string sysId,
         string alpha,
         string? frontHistoryJson = null,
-        string? currentFrontersJson = null)
+        string? currentFrontersJson = null,
+        string? pollsJson = null)
     {
         var meJson = JsonSerializer.Serialize(new
         {
@@ -282,10 +734,10 @@ public sealed class SpImportTests : BaseEndpointTest
             .OnGet($"/v1/groups/{sysId}", "[]")
             .OnGetPrefix($"/v1/frontHistory/{sysId}", frontHistoryJson ?? "[]")
             .OnGet("/v1/fronters/", currentFrontersJson ?? "[]")
-            .OnGet($"/v1/polls/{sysId}", "[]");
+            .OnGet($"/v1/polls/{sysId}", pollsJson ?? "[]");
     }
 
-    private static async Task<(SpImportResult Result, IFrontingRepository FrontingRepo, CapturingLogger Logger)> RunImportAsync(
+    private static async Task<(SpImportResult Result, IFrontingRepository FrontingRepo, IPollRepository PollRepo, CapturingLogger Logger)> RunImportAsync(
         TestServices.StubSpHandler stub,
         string systemId)
     {
@@ -322,7 +774,8 @@ public sealed class SpImportTests : BaseEndpointTest
         var result = await importService.ImportAsync(systemId, "synthetic-token", encryptionKey: null);
 
         var frontingRepo = scope.ServiceProvider.GetRequiredService<IFrontingRepository>();
-        return (result, frontingRepo, logger);
+        var pollRepo = scope.ServiceProvider.GetRequiredService<IPollRepository>();
+        return (result, frontingRepo, pollRepo, logger);
     }
 
     private sealed class NullAvatarStorage : IAvatarStorage

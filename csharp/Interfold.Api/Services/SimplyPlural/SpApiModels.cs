@@ -167,6 +167,9 @@ internal sealed class SpPollContent
 
     [JsonPropertyName("votes")]
     public List<SpPollVote>? Votes { get; set; }
+
+    [JsonPropertyName("lastOperationTime")]
+    public long LastOperationTime { get; set; }
 }
 
 internal sealed class SpPollOption

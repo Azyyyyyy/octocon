@@ -501,7 +501,6 @@ public sealed class SimplyPluralImportService : ISimplyPluralImportService
         }
     }
 
-    //TODO: Test, not use if this actually works lmao
     private async Task ImportPollsAsync(
         HttpClient httpClient, string spSystemId, string systemId,
         Dictionary<string, int> alterAssociations, CancellationToken ct)
@@ -512,12 +511,25 @@ public sealed class SimplyPluralImportService : ISimplyPluralImportService
 
         foreach (var poll in polls)
         {
+            // Custom polls without options would land as zero-choice "choice" rows that users
+            // can't vote on. SP marks `options` as optional in its v1 poll schema, so this is
+            // a real shape that turns up in the wild.
+            if (poll.Content.Custom && (poll.Content.Options is null || poll.Content.Options.Count == 0))
+            {
+                _logger.LogWarning(
+                    "Skipping custom SP poll {PollId} for system {SystemId}: custom poll has no options.",
+                    poll.Id, systemId);
+                continue;
+            }
+
+            // Match the CreatePollCommandHandler invariants (title <= 100, desc <= 2000) so
+            // every imported row could also be edited through the public API later.
             var title = poll.Content.Name ?? "Unnamed poll";
-            if (title.Length > 200) title = title[..200];
+            if (title.Length > 100) title = title[..100];
             if (string.IsNullOrWhiteSpace(title)) title = "Unnamed poll";
 
             var desc = poll.Content.Desc;
-            if (desc?.Length > 3000) desc = desc[..3000];
+            if (desc?.Length > 2000) desc = desc[..2000];
 
             // SP custom=false → "vote" (yes/no/abstain/veto), custom=true → "choice" (multiple options)
             var type = poll.Content.Custom ? "choice" : "vote";
@@ -526,12 +538,34 @@ public sealed class SimplyPluralImportService : ISimplyPluralImportService
                 ? DateTimeOffset.FromUnixTimeMilliseconds(poll.Content.EndTime).UtcDateTime
                 : null;
 
-            var pollId = await _pollRepository.CreateAsync(systemId, new CreatePollCommand(title, desc, type, timeEnd), ct);
+            // Preserve SP's lastOperationTime as our inserted_at so historical polls don't
+            // all bunch up under today's date in time-ordered views. Fall back to import
+            // time only when SP genuinely didn't give us one (very old rows pre-SP v1.x).
+            DateTime insertedAt;
+            if (poll.Content.LastOperationTime > 0)
+            {
+                insertedAt = DateTimeOffset.FromUnixTimeMilliseconds(poll.Content.LastOperationTime).UtcDateTime;
+            }
+            else
+            {
+                insertedAt = DateTime.UtcNow;
+                _logger.LogWarning(
+                    "SP poll {PollId} for system {SystemId} has no lastOperationTime; using import time as inserted_at.",
+                    poll.Id, systemId);
+            }
+
+            var pollId = await _pollRepository.CreateAsync(systemId, new CreatePollCommand(title, desc, type, timeEnd, insertedAt), ct);
             if (pollId is null)
                 continue;
 
-            // Build the data payload with votes and (for custom polls) options, remapping SP member IDs to our alter IDs
-            var data = BuildPollData(poll.Content, alterAssociations);
+            var (data, skippedVotes) = BuildPollData(poll.Content, alterAssociations);
+            if (skippedVotes > 0)
+            {
+                _logger.LogWarning(
+                    "Dropped {Count} unmappable votes from SP poll {PollId} in system {SystemId} during import.",
+                    skippedVotes, poll.Id, systemId);
+            }
+
             if (data.ValueKind != JsonValueKind.Undefined)
             {
                 await _pollRepository.UpdateAsync(systemId, new UpdatePollCommand(
@@ -657,14 +691,22 @@ public sealed class SimplyPluralImportService : ISimplyPluralImportService
         return (new SpImportResult(true, 0), key);
     }
 
-    private static JsonElement BuildPollData(SpPollContent poll, Dictionary<string, int> alterAssociations)
+    /// <summary>
+    /// Builds the JSON `data` blob for an imported poll. Returns the blob plus the number of
+    /// SP-side votes we refused to import because they referenced a voter we don't know about
+    /// (unmapped member uuid, blank id, or blank vote string). The caller surfaces that count
+    /// as a single warning per poll rather than spamming one log line per dropped vote.
+    /// </summary>
+    private static (JsonElement Data, int SkippedUnmappableVotes) BuildPollData(
+        SpPollContent poll, Dictionary<string, int> alterAssociations)
     {
+        var skippedUnmappableVotes = 0;
+
         using var stream = new MemoryStream();
         using (var writer = new Utf8JsonWriter(stream))
         {
             writer.WriteStartObject();
 
-            // Write options for custom polls
             if (poll.Custom && poll.Options is { Count: > 0 })
             {
                 writer.WriteStartArray("options");
@@ -679,21 +721,29 @@ public sealed class SimplyPluralImportService : ISimplyPluralImportService
                 writer.WriteEndArray();
             }
 
-            // Write votes, remapping SP member IDs to our alter IDs
             if (poll.Votes is { Count: > 0 })
             {
                 writer.WriteStartArray("votes");
                 foreach (var vote in poll.Votes)
                 {
-                    if (vote.Id is null)
+                    // A vote without a voter or an opinion is meaningless. Importing the raw SP
+                    // uuid would also leak a 24-char hex string into a field downstream code
+                    // expects to be a stringified alter id, so we drop the row entirely.
+                    if (string.IsNullOrWhiteSpace(vote.Id) || string.IsNullOrWhiteSpace(vote.Vote))
+                    {
+                        skippedUnmappableVotes++;
                         continue;
+                    }
 
-                    // Remap SP member ID to our alter ID
-                    var alterId = alterAssociations.TryGetValue(vote.Id, out var id) ? id.ToString() : vote.Id;
+                    if (!alterAssociations.TryGetValue(vote.Id, out var alterId))
+                    {
+                        skippedUnmappableVotes++;
+                        continue;
+                    }
 
                     writer.WriteStartObject();
-                    writer.WriteString("id", alterId);
-                    writer.WriteString("vote", vote.Vote ?? "");
+                    writer.WriteString("id", alterId.ToString());
+                    writer.WriteString("vote", vote.Vote);
                     if (vote.Comment is not null)
                         writer.WriteString("comment", vote.Comment);
                     writer.WriteEndObject();
@@ -704,7 +754,8 @@ public sealed class SimplyPluralImportService : ISimplyPluralImportService
             writer.WriteEndObject();
         }
 
-        return JsonDocument.Parse(stream.ToArray()).RootElement.Clone();
+        var data = JsonDocument.Parse(stream.ToArray()).RootElement.Clone();
+        return (data, skippedUnmappableVotes);
     }
 
     private async Task DownloadAvatarsAsync(string systemId, List<AvatarDownload> downloads, CancellationToken cancellationToken)

@@ -67,7 +67,7 @@ public sealed class InMemoryPollRepository : IPollRepository
             Description = command.Description,
             Type = command.Type,
             TimeEnd = command.TimeEnd,
-            InsertedAt = DateTime.Now,
+            InsertedAt = command.InsertedAtUtc,
             UpdatedAt = DateTime.Now
         };
 

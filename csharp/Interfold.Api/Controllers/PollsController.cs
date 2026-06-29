@@ -50,13 +50,18 @@ public sealed class PollsController : InterfoldControllerBase
     public async Task<Response<PollReadModel>> Create([FromBody] CreatePollRequest req, CancellationToken ct)
     {
         var principal = PrincipalId;
+        // CreatePollCommandHandler owns InsertedAtUtc on the public-API path and derives it
+        // from the envelope's OccurredAt right before calling the repo. Passing `default`
+        // here keeps the hashed payload stable across retries with the same idempotency key
+        // (otherwise every call would stamp a fresh DateTime.UtcNow and look like a
+        // different request, triggering ConflictDuplicate on every replay).
         var envelope = new CommandEnvelope<CreatePollCommand>(
             OperationIds.PollCreate,
             Guid.NewGuid(),
             PrincipalId: principal,
             IdempotencyKey: GetIdempotencyKey(req.IdempotencyKey),
             OccurredAt: DateTimeOffset.UtcNow,
-            Payload: new CreatePollCommand(req.Title, req.Description, req.Type ?? "vote", req.TimeEnd)
+            Payload: new CreatePollCommand(req.Title, req.Description, req.Type ?? "vote", req.TimeEnd, InsertedAtUtc: default)
         );
 
         var execution = await _create.HandleAsync(envelope, ct);
