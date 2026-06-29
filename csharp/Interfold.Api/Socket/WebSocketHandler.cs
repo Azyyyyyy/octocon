@@ -3,6 +3,8 @@ using System.IdentityModel.Tokens.Jwt;
 using Interfold.Domain.Abstractions;
 using System.Text.Json;
 using System.Text;
+using Microsoft.AspNetCore.Hosting.Server;
+using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.IdentityModel.Tokens;
 using System.Security.Claims;
 using System.Security.Cryptography;
@@ -441,7 +443,20 @@ static async Task<SocketEndpointProxyResponse> HandleEndpointProxyAsync(
                 System.Net.HttpStatusCode.Forbidden)));
     }
 
-    var targetUri = $"{websocketContext.Request.Scheme}://{websocketContext.Request.Host}{path}";
+    // Self-call the API's own Kestrel listener rather than dialing back through
+    // `Request.Scheme`/`Request.Host`. In the published docker compose stack the
+    // request arrives via the operator-facing hostname + host-mapped port (e.g.
+    // `https://api.example.com:5001`), but neither is reachable from inside the
+    // container: the hostname is rarely in the container's DNS namespace, and the
+    // host-side port is the OUTSIDE of the compose port mapping (the container
+    // itself listens on `ASPNETCORE_HTTP_PORTS` / `ASPNETCORE_HTTPS_PORTS`,
+    // default 5100/5101, configurable via `Ports:api-container-http(s)`).
+    // Resolving via IServerAddressesFeature picks up whatever Kestrel actually
+    // bound to in this process, regardless of the deployment topology in front
+    // of it.
+    var server = websocketContext.RequestServices.GetRequiredService<IServer>();
+    var baseUri = ResolveLoopbackBaseUri(server.Features.Get<IServerAddressesFeature>()?.Addresses);
+    var targetUri = $"{baseUri}{path}";
     using var request = new HttpRequestMessage(new HttpMethod(method), targetUri);
     request.Headers.TryAddWithoutValidation("Authorization", $"Bearer {socketToken}");
     request.Headers.TryAddWithoutValidation("Accept", "application/json");
@@ -479,6 +494,39 @@ static async Task<SocketEndpointProxyResponse> HandleEndpointProxyAsync(
 
 static string ToJsonString<T>(T value)
     => JsonSerializer.Serialize(value, SocketJson.Options);
+
+/// <summary>
+/// Picks a loopback-safe base URL from Kestrel's bound addresses for the
+/// socket endpoint relay's self-call. Prefers http:// over https:// because
+/// the leaf PFX served by Kestrel in self-host carries SANs for the
+/// operator-facing hostname (e.g. api.example.com), not 127.0.0.1, so
+/// HTTPS loopback would fail TLS hostname validation. Wildcard hosts
+/// (`0.0.0.0`, `[::]`, `+`, `*`) are rewritten to 127.0.0.1 so the URL
+/// actually dials the local listener instead of trying to resolve a
+/// wildcard literal. Falls back to <c>http://localhost</c> when no bound
+/// addresses are reported — that branch is unreachable in production
+/// (Kestrel always reports its actual bindings) but keeps the proxy
+/// functional under <c>Microsoft.AspNetCore.TestHost.TestServer</c>,
+/// whose no-op <see cref="IServerAddressesFeature"/> exposes an empty
+/// address list because requests are routed in-memory rather than over
+/// a real socket.
+/// </summary>
+internal static string ResolveLoopbackBaseUri(ICollection<string>? addresses)
+{
+    const string testServerFallback = "http://localhost";
+    if (addresses is null || addresses.Count == 0) return testServerFallback;
+
+    var preferred = addresses
+        .OrderBy(static addr => addr.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ? 0 : 1)
+        .FirstOrDefault();
+    if (preferred is null) return testServerFallback;
+
+    return preferred.TrimEnd('/')
+        .Replace("://0.0.0.0", "://127.0.0.1", StringComparison.Ordinal)
+        .Replace("://[::]",    "://127.0.0.1", StringComparison.Ordinal)
+        .Replace("://+",       "://127.0.0.1", StringComparison.Ordinal)
+        .Replace("://*",       "://127.0.0.1", StringComparison.Ordinal);
+}
 
 static async Task<(bool IsAuthorized, string? FailureReason)> IsSocketJoinTokenAuthorizedAsync(
     HttpContext context,

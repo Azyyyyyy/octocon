@@ -1,0 +1,34 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    Pure-C# unit tests for the Interfold.Api project. Runs without spinning a host,
+    TestServer, or any external dependency — keep it that way. Anything that needs
+    a live WebApplicationFactory<Program> / Aspire-driven services / Postgres /
+    Scylla / Cassandra belongs in Interfold.IntegrationTests instead.
+
+    Whenever you add a test here, ask:
+      * Does this need a TestServer, host, or external dependency? -> goes in Interfold.IntegrationTests
+      * Is the asserted behaviour pure C# logic? -> belongs here
+
+    Local: `dotnet test csharp/Interfold.Api.UnitTests` (fast — sub-second per case).
+    CI: this project is included in the standard `dotnet test Interfold.slnx` glob.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <IsPackable>false</IsPackable>
+    <TestingPlatformDotnetTestSupport>true</TestingPlatformDotnetTestSupport>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>Interfold.Api.UnitTests</RootNamespace>
+    <!-- Interfold.Api internals (e.g. WebSocketHandler.ResolveLoopbackBaseUri) require InternalsVisibleTo
+         on Interfold.Api.csproj — kept in sync with Interfold.IntegrationTests' existing entry. -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Same TUnit pin as the other test projects so the three stay in sync. -->
+    <PackageReference Include="TUnit" Version="1.50.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Interfold.Api\Interfold.Api.csproj" />
+  </ItemGroup>
+</Project>

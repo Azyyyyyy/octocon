@@ -133,11 +133,13 @@ public sealed class BootstrapConfig
 /// Every field maps 1:1 to an <c>OCTOCON_*</c> env var the API consumes (see
 /// <see cref="Interfold.Contracts.Configuration.AuthenticationConfiguration"/> and the CORS
 /// startup block in <c>Program.cs</c>). Three of the four are deliberately derivable from
-/// <see cref="DeploymentSection"/> so a fresh bootstrap doesn't require the operator to type
-/// them: <see cref="Phases.ConfigPhase.ResolveDerivedDefaults"/> fills empties with values
-/// computed from <see cref="DeploymentSection.Hosts"/> + <see cref="DeploymentSection.WebHttps"/>.
-/// Operators that want different values type them in the interactive form (or set them in the
-/// JSON for non-interactive runs) and the stored value wins over the derived one.
+/// <see cref="DeploymentSection"/> + <see cref="PortsSection"/> so a fresh bootstrap doesn't
+/// require the operator to type them: <see cref="Phases.ConfigPhase.ResolveDerivedDefaults"/>
+/// fills empties with values computed from <see cref="DeploymentSection.Hosts"/>,
+/// <see cref="DeploymentSection.WebHttps"/>, and the matching port entries on
+/// <see cref="PortsSection"/>. Operators that want different values type them in the
+/// interactive form (or set them in the JSON for non-interactive runs) and the stored value
+/// wins over the derived one.
 /// </summary>
 public sealed class ApiRuntimeSection
 {
@@ -145,10 +147,14 @@ public sealed class ApiRuntimeSection
     /// Base URL the API's OAuth callback handlers redirect to after completing the provider
     /// handshake. Lands on <c>OCTOCON_AUTH_CALLBACK_BASE_URL</c>; bound into
     /// <see cref="Interfold.Contracts.Configuration.AuthenticationConfiguration.CallbackBaseUrl"/>.
-    /// When empty, derived as <c>{scheme}://{primary host}</c> where <c>primary host</c> is the
-    /// first non-CIDR entry in <see cref="DeploymentSection.Hosts"/> (IPv6 literals are
-    /// bracket-wrapped per RFC 3986 §3.2.2) and <c>scheme</c> follows
-    /// <see cref="DeploymentSection.WebHttps"/>.
+    /// When empty, derived as <c>https://{primary host}[:{Ports.apiHttps}]</c> — scheme is
+    /// always <c>https</c> because the API container's Kestrel default endpoint binds to the
+    /// bootstrapper-issued leaf PFX unconditionally in self-host (independent of
+    /// <see cref="DeploymentSection.WebHttps"/>, which only governs the <em>web</em>
+    /// container), and the port suffix is dropped when <see cref="PortsSection.ApiHttps"/>
+    /// is 443. <c>primary host</c> is the first non-CIDR entry in
+    /// <see cref="DeploymentSection.Hosts"/> (IPv6 literals are bracket-wrapped per RFC 3986
+    /// §3.2.2).
     /// </summary>
     [JsonPropertyName("callbackBaseUrl")]
     public string CallbackBaseUrl { get; set; } = string.Empty;
@@ -157,7 +163,7 @@ public sealed class ApiRuntimeSection
     /// JWT <c>iss</c> claim the API signs into issued tokens and validates inbound tokens
     /// against. Lands on <c>OCTOCON_JWT_AUTHORITY</c>; bound into
     /// <see cref="Interfold.Contracts.Configuration.AuthenticationConfiguration.JwtAuthority"/>.
-    /// When empty, derived as <c>{scheme}://{primary host}</c> (same as
+    /// When empty, derived as <c>https://{primary host}[:{Ports.apiHttps}]</c> (same as
     /// <see cref="CallbackBaseUrl"/>) — operator usually wants "this API is its own issuer".
     /// </summary>
     [JsonPropertyName("jwtAuthority")]
@@ -175,11 +181,15 @@ public sealed class ApiRuntimeSection
     /// <summary>
     /// Allow-list of origins the API's CORS middleware accepts cross-origin requests from.
     /// Lands on <c>OCTOCON_CORS_ALLOWED_ORIGINS</c> as a comma-separated string. When empty,
-    /// derived as one entry per non-CIDR <see cref="DeploymentSection.Hosts"/> entry (each
-    /// with the scheme from <see cref="DeploymentSection.WebHttps"/>; IPv6 literals are
-    /// bracket-wrapped). Production stacks should always have a non-empty list — an empty /
-    /// unset value falls back to "allow any origin" in the API startup block, which is fine
-    /// for solo dev but a foot-gun in production.
+    /// derived as one entry per non-CIDR <see cref="DeploymentSection.Hosts"/> entry of the
+    /// form <c>{webScheme}://{host}[:{webPort}]</c> where <c>webScheme</c> follows
+    /// <see cref="DeploymentSection.WebHttps"/> and <c>webPort</c> is the matching
+    /// <see cref="PortsSection.WebHttps"/> (or <see cref="PortsSection.WebHttp"/>) — the port
+    /// suffix is dropped when the operator picked the scheme's default port (80 for http,
+    /// 443 for https). IPv6 literals are bracket-wrapped per RFC 3986 §3.2.2. Production
+    /// stacks should always have a non-empty list — an empty / unset value falls back to
+    /// "allow any origin" in the API startup block, which is fine for solo dev but a
+    /// foot-gun in production.
     /// </summary>
     [JsonPropertyName("corsAllowedOrigins")]
     public List<string> CorsAllowedOrigins { get; set; } = [];

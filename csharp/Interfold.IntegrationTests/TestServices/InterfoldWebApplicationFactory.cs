@@ -6,6 +6,7 @@ using Interfold.Infrastructure.Coordination;
 using Interfold.Infrastructure.Postgres;
 using Interfold.Infrastructure.Scylla;
 using Microsoft.AspNetCore.Hosting;
+using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
 using Interfold.Contracts.Configuration;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -41,6 +42,24 @@ public class InterfoldWebApplicationFactory : WebApplicationFactory<Program>
     public FakeTimeProvider TimeProvider { get; } = new();
     public string DisplayName { get; private set; }
     private readonly string _persistenceType;
+
+    /// <summary>
+    /// Test-only hook: when non-null, every <see cref="HttpClient"/> manufactured by
+    /// <see cref="TestHttpClientFactory"/> chains a recording <see cref="DelegatingHandler"/>
+    /// in front of TestServer's handler. That handler enqueues each outbound
+    /// <see cref="HttpRequestMessage.RequestUri"/> into this queue before the request
+    /// is dispatched, so individual tests can assert what the API actually tried to dial
+    /// (rather than what TestServer routed it to — TestServer ignores the URI authority
+    /// when routing by path).
+    /// </summary>
+    /// <remarks>
+    /// The factory is shared <c>PerTestSession</c>, so any test that sets this MUST run
+    /// non-parallel against any other test that also reads/writes it. Use TUnit's
+    /// <c>[NotInParallel]</c> with a shared key on every test that touches this property.
+    /// Default is null (no recording, zero overhead, observable behaviour identical to
+    /// the pre-recorder shape).
+    /// </remarks>
+    public ConcurrentQueue<Uri>? OutboundHttpUriRecorder { get; set; }
 
     public InterfoldWebApplicationFactory(
         string persistenceType,
@@ -245,7 +264,35 @@ public class InterfoldWebApplicationFactory : WebApplicationFactory<Program>
 
         public HttpClient CreateClient(string name)
         {
-            return _factory.CreateDefaultClient();
+            // The recorder hook lets specific tests observe what the in-process code (e.g.
+            // WebSocketHandler's endpoint proxy) is trying to dial — TestServer otherwise
+            // routes by path so the URI authority is unobservable from the response side.
+            // When the hook is unset (the default), the original zero-handler behaviour is
+            // preserved so unrelated tests pay no cost.
+            var recorder = _factory.OutboundHttpUriRecorder;
+            return recorder is null
+                ? _factory.CreateDefaultClient()
+                : _factory.CreateDefaultClient(new RecordingDelegatingHandler(recorder));
+        }
+    }
+
+    /// <summary>
+    /// Records every outbound <see cref="HttpRequestMessage.RequestUri"/> into a sink before
+    /// passing the request to TestServer's handler. Used by regression tests for the WebSocket
+    /// endpoint proxy that need to observe what URL the proxy is dialing (not just whether
+    /// the request succeeded — TestServer routes successfully regardless of authority because
+    /// it ignores host:port and matches by path).
+    /// </summary>
+    private sealed class RecordingDelegatingHandler(ConcurrentQueue<Uri> sink) : DelegatingHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            if (request.RequestUri is not null)
+            {
+                sink.Enqueue(request.RequestUri);
+            }
+            return base.SendAsync(request, cancellationToken);
         }
     }
 

@@ -266,15 +266,20 @@ public sealed class PublishEnvPostProcessingTests
 
         var replacements = PublishPhase.BuildEnvReplacements(config, secrets, "/base", "/out");
 
+        // The API URL is always https + :{Ports.ApiHttps} in self-host because the API
+        // container's Kestrel default endpoint binds to the bootstrapper-issued leaf PFX
+        // unconditionally (independent of Deployment.WebHttps, which only governs the web
+        // container). Default Ports.ApiHttps=5001 here.
         await Assert.That(replacements.Parameters["OAUTH_CALLBACK_BASE_URL"])
-            .IsEqualTo("https://api.example.com");
+            .IsEqualTo("https://api.example.com:5001");
         await Assert.That(replacements.Parameters["JWT_AUTHORITY"])
-            .IsEqualTo("https://api.example.com");
+            .IsEqualTo("https://api.example.com:5001");
         // JwtAudience has a hardcoded property-initialiser default ("octocon"); not derived.
         await Assert.That(replacements.Parameters["JWT_AUDIENCE"]).IsEqualTo("octocon");
-        // CORS derivation emits one entry per domain, each with the WebHttps-derived scheme.
+        // CORS represents the SPA / native-client origins; scheme follows WebHttps and port
+        // follows Ports.WebHttps (8081 default) — one entry per non-CIDR host.
         await Assert.That(replacements.Parameters["CORS_ALLOWED_ORIGINS"])
-            .IsEqualTo("https://api.example.com,https://admin.example.com");
+            .IsEqualTo("https://api.example.com:8081,https://admin.example.com:8081");
         // ScyllaKeyspace's hardcoded default lives on the field itself, not in derivation.
         await Assert.That(replacements.Parameters["SCYLLA_KEYSPACE"]).IsEqualTo("nam");
     }

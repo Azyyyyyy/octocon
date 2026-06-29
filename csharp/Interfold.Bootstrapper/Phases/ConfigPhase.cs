@@ -617,17 +617,41 @@ internal static class ConfigPhase
     /// </summary>
     internal static readonly string[] ValidNodeGroups = ["primary", "auxiliary", "sidecar"];
 
+    /// <summary>The default port for the <c>http</c> URI scheme (RFC 7230 §2.7.1).</summary>
+    private const int DefaultHttpPort = 80;
+
+    /// <summary>The default port for the <c>https</c> URI scheme (RFC 7230 §2.7.2).</summary>
+    private const int DefaultHttpsPort = 443;
+
     /// <summary>
     /// Fills any empty <see cref="ApiRuntimeSection"/> field that has a derivable default from
-    /// <see cref="DeploymentSection"/>: <see cref="ApiRuntimeSection.CallbackBaseUrl"/> and
-    /// <see cref="ApiRuntimeSection.JwtAuthority"/> both default to
-    /// <c>{scheme}://{primary host}</c> (where <c>primary host</c> is the first non-CIDR
-    /// <see cref="DeploymentSection.Hosts"/> entry, with IPv6 literals bracket-wrapped per
-    /// RFC 3986 §3.2.2, and <c>scheme</c> follows <see cref="DeploymentSection.WebHttps"/>),
-    /// and <see cref="ApiRuntimeSection.CorsAllowedOrigins"/> defaults to one entry per
-    /// non-CIDR host. CIDR entries are skipped because they have no canonical URL form.
-    /// Stored non-empty values always win — this method only fills blanks. Idempotent:
-    /// calling it twice has no effect after the first.
+    /// <see cref="DeploymentSection"/> + <see cref="PortsSection"/>.
+    /// <list type="bullet">
+    ///   <item>
+    ///     <see cref="ApiRuntimeSection.CallbackBaseUrl"/> and
+    ///     <see cref="ApiRuntimeSection.JwtAuthority"/> default to
+    ///     <c>https://{primary host}[:{ApiHttps}]</c>. The scheme is always <c>https</c> because
+    ///     the API container terminates HTTPS unconditionally in self-host (Kestrel's default
+    ///     endpoint is wired to the bootstrapper-issued leaf PFX in
+    ///     <c>InterfoldAppHost.ConfigureApiSelfHostEnv</c>, independent of
+    ///     <see cref="DeploymentSection.WebHttps"/>, which only governs the <em>web</em>
+    ///     container). The port suffix is omitted when <see cref="PortsSection.ApiHttps"/> is
+    ///     443 so operators fronting the API with a 443-bound proxy get clean URLs.
+    ///   </item>
+    ///   <item>
+    ///     <see cref="ApiRuntimeSection.CorsAllowedOrigins"/> defaults to one entry per non-CIDR
+    ///     host of the form <c>{webScheme}://{host}[:{webPort}]</c>. CORS represents the
+    ///     <em>client</em> origins (the wasm SPA + native deep-link callers); the SPA lands on
+    ///     the web container, so the scheme follows <see cref="DeploymentSection.WebHttps"/> and
+    ///     the port follows the matching <see cref="PortsSection.WebHttps"/> /
+    ///     <see cref="PortsSection.WebHttp"/> mapping. The port suffix is omitted when the
+    ///     operator picked the scheme's default port (80 for http, 443 for https).
+    ///   </item>
+    /// </list>
+    /// IPv6 literals are bracket-wrapped per RFC 3986 §3.2.2 by <see cref="HostParser.ToUrlHost"/>.
+    /// CIDR entries are skipped because they have no canonical URL form. Stored non-empty values
+    /// always win — this method only fills blanks. Idempotent: calling it twice has no effect
+    /// after the first.
     /// <para>
     /// Called by <see cref="Validate"/> before its invariant checks so non-interactive
     /// JSON-loaded configs go through the same derivation path as freshly-prompted ones (the
@@ -674,24 +698,43 @@ internal static class ConfigPhase
             return;
         }
 
-        var scheme = config.Deployment.WebHttps ? "https" : "http";
-        var derivedBaseUrl = $"{scheme}://{HostParser.ToUrlHost(primary)}";
+        // API-facing URL: scheme is always https (the API container's Kestrel default endpoint
+        // is bound to the bootstrapper-issued leaf PFX unconditionally - see InterfoldAppHost.
+        // ConfigureApiSelfHostEnv, which sets ASPNETCORE_HTTPS_PORTS + Kestrel cert path on
+        // every self-host run independent of DeploymentSection.WebHttps). The port suffix is
+        // omitted when the operator chose 443 so the derived URL stays clean for stacks
+        // fronted by a 443-bound proxy that re-publishes the API on the default https port.
+        var apiPortSuffix = config.Ports.ApiHttps == DefaultHttpsPort
+            ? string.Empty
+            : $":{config.Ports.ApiHttps}";
+        var apiDerivedBaseUrl = $"https://{HostParser.ToUrlHost(primary)}{apiPortSuffix}";
 
         if (string.IsNullOrWhiteSpace(config.ApiRuntime.CallbackBaseUrl))
         {
-            config.ApiRuntime.CallbackBaseUrl = derivedBaseUrl;
+            config.ApiRuntime.CallbackBaseUrl = apiDerivedBaseUrl;
         }
 
         if (string.IsNullOrWhiteSpace(config.ApiRuntime.JwtAuthority))
         {
-            config.ApiRuntime.JwtAuthority = derivedBaseUrl;
+            config.ApiRuntime.JwtAuthority = apiDerivedBaseUrl;
         }
 
         if (config.ApiRuntime.CorsAllowedOrigins.Count == 0)
         {
+            // CORS allow-list represents the *client* origins (the wasm SPA + native deep-link
+            // callers). The SPA lands on the web container, so the scheme follows
+            // DeploymentSection.WebHttps and the port follows the web tier's operator-chosen
+            // mapping. Omit the port suffix when the operator picked the scheme's default port
+            // (80 for http, 443 for https) — those origins are written canonically without it.
+            var webHttps = config.Deployment.WebHttps;
+            var webScheme = webHttps ? "https" : "http";
+            var webPort = webHttps ? config.Ports.WebHttps : config.Ports.WebHttp;
+            var webDefaultPort = webHttps ? DefaultHttpsPort : DefaultHttpPort;
+            var webPortSuffix = webPort == webDefaultPort ? string.Empty : $":{webPort}";
+
             config.ApiRuntime.CorsAllowedOrigins = parsed
                 .Where(h => h.IsLeafEligible)
-                .Select(h => $"{scheme}://{HostParser.ToUrlHost(h)}")
+                .Select(h => $"{webScheme}://{HostParser.ToUrlHost(h)}{webPortSuffix}")
                 .ToList();
         }
     }

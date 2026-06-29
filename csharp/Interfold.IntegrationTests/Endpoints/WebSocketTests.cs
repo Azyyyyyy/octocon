@@ -1,8 +1,10 @@
+using System.Collections.Concurrent;
 using System.Net.WebSockets;
 using System.Text.Json;
 using Interfold.Contracts;
 using Interfold.Contracts.Events;
 using Interfold.IntegrationTests.TestServices;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.TestHost;
 
 namespace Interfold.IntegrationTests.Endpoints;
@@ -1038,6 +1040,161 @@ public class WebSocketTests(IWebFactoryFixture fixture) : BaseEndpointTest
         await Assert.That(failedFrame).IsNotNull().Because("Expected pk_import_failed push after bus publish.");
 
         await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "test done", token);
+    }
+
+    /// <summary>
+    /// Regression test for the docker-deployment crash documented at
+    /// csharp/Interfold.Api/Socket/WebSocketHandler.cs:444 — the WebSocket "endpoint"
+    /// relay used to build its outbound URL from the inbound request's
+    /// <c>Scheme</c> + <c>Host</c>, which in published docker compose stacks crashed
+    /// because the inbound Host is the operator-facing hostname + host-mapped port
+    /// (e.g. <c>shrimp.local:5001</c>) that the container itself can neither resolve
+    /// in DNS nor reach (port 5001 is the docker port-mapping host-side; the
+    /// container listens on <c>ASPNETCORE_HTTP(S)_PORTS</c> internally — default
+    /// 5100/5101, configurable via <c>Ports:api-container-http(s)</c>).
+    ///
+    /// This test pins the proxy's contract by simulating the production topology:
+    /// the WebSocket upgrade arrives with <c>Host: shrimp.local:99999</c>, then an
+    /// <c>endpoint</c> frame is relayed through the proxy. The
+    /// <see cref="InterfoldWebApplicationFactory.OutboundHttpUriRecorder"/> records
+    /// every URI the proxy passes to <c>HttpClient.SendAsync</c>; the assertions
+    /// confirm the recorded URI targets the local Kestrel listener, NOT the operator
+    /// hostname/port from the inbound request. Without this guard, reverting the
+    /// fix at WebSocketHandler.cs:444 to <c>{Request.Scheme}://{Request.Host}{path}</c>
+    /// would pass every other test in the suite because TestServer routes by path
+    /// (it ignores the URI authority) — only this URI-recording assertion can
+    /// distinguish the loopback target from the operator-facing one.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Pure unit coverage of the URL-composition helper itself lives in
+    /// <c>Interfold.Api.UnitTests/Socket/ResolveLoopbackBaseUriTests.cs</c>; this
+    /// integration test layers on top of those by exercising the full upgrade →
+    /// join → endpoint → outbound HttpClient pipeline so a regression in the call
+    /// site (independent of the helper's correctness) still surfaces here.
+    /// </para>
+    /// <para>
+    /// <c>[NotInParallel("websocket-uri-recorder")]</c> serialises this test against
+    /// any other test that mutates <see cref="InterfoldWebApplicationFactory.OutboundHttpUriRecorder"/>
+    /// on the same <c>PerTestSession</c> factory instance. Keep the key in sync with
+    /// any future tests that adopt the same hook.
+    /// </para>
+    /// </remarks>
+    [Test, NotInParallel("websocket-uri-recorder")]
+    public async Task Api_UserSocketEndpoint_ProxiesToLocalListener_RegardlessOfInboundHostHeader(CancellationToken token)
+    {
+        var systemId = UniqueId("sys-proxy-loopback");
+        var topic = $"system:{systemId}";
+        var socketToken = await CreateRandomToken(fixture.Factory, systemId);
+
+        var recorder = new ConcurrentQueue<Uri>();
+        fixture.Factory.OutboundHttpUriRecorder = recorder;
+        try
+        {
+            var wsClient = fixture.Factory.Server.CreateWebSocketClient();
+            // Simulate the production topology: the operator's reverse proxy / docker
+            // port mapping fronts the container, so the upgrade request's Host header
+            // is the operator-facing hostname + host-side port (e.g. shrimp.local:5001
+            // — the literal value from the crash report this test guards against).
+            // The internal Kestrel port differs (5100/5101 by default) and the hostname
+            // is not in the container's DNS namespace; the proxy MUST ignore both.
+            const string operatorFacingHost = "shrimp.local";
+            const int hostSideMappedPort = 99999; // intentionally unroutable: a real dial would fail.
+            wsClient.ConfigureRequest = request =>
+            {
+                request.Host = new HostString(operatorFacingHost, hostSideMappedPort);
+            };
+
+            var uri = new Uri(WebSocketBasePath(fixture.Factory.Server), $"api/socket/websocket?token={socketToken}");
+            using var ws = await wsClient.ConnectAsync(uri, token);
+
+            await JoinTopicAsync(ws, topic, socketToken, token);
+
+            // POST /api/systems/me/alters is the same call exercised by the existing
+            // endpoint-proxy fanout tests above — a known-good relay target that
+            // returns 201 with a JSON body. Choosing an established endpoint keeps
+            // this test's signal focused on the URI-composition regression rather
+            // than on controller-level wiring.
+            var endpointFrame = new PhxFrame<PhxEndpointPayload>
+            {
+                Topic = topic,
+                Event = "endpoint",
+                Payload = new PhxEndpointPayload
+                {
+                    Method = "POST",
+                    Path = "/api/systems/me/alters",
+                    Body = new { name = "LoopbackProbeAlter" }
+                },
+                Ref = "2",
+                JoinRef = "1"
+            }.ToBytes();
+
+            // POST /api/systems/me/alters triggers an alter_created domain-event push that
+            // arrives interleaved with the endpoint phx_reply on the same socket. The shared
+            // ReceiveReplyAndPushAsync helper handles either ordering — the same pattern the
+            // existing endpoint-proxy fanout tests above use.
+            await ws.SendAsync(endpointFrame, WebSocketMessageType.Text, endOfMessage: true, token);
+            var (replyFrame, _) = await ReceivedPhxFrame.ReceiveReplyAndPushAsync(
+                ws, token, SocketEventNames.Alters.Created);
+            await Assert.That(replyFrame).IsNotNull()
+                .Because("Expected a phx_reply for the endpoint proxy call.");
+            var reply = replyFrame!.Reply<SocketEndpointProxyResponse>();
+
+            using (Assert.Multiple())
+            {
+                // The proxy completing successfully despite the bogus inbound Host is
+                // the first half of the contract — pre-fix the call would have built a
+                // non-loopback URL string, which under real Kestrel produces the
+                // "Name or service not known" SocketException seen in the production
+                // crash. Under TestServer the authority is cosmetic, so this assertion
+                // alone is not sufficient — see the URI-recorder assertions below.
+                await Assert.That(reply.Status).IsEqualTo("ok")
+                    .Because("Expected the endpoint-proxy phx_reply to be ok; the proxy must succeed regardless of the inbound Host header.");
+                await Assert.That(reply.Response.Status).IsEqualTo(StatusCodes.Status201Created)
+                    .Because("Expected the relayed POST /api/systems/me/alters to return 201 Created (mirrors the contract from the existing endpoint-proxy tests above).");
+
+                // The URI-recorder assertions ARE the regression guard. Pre-fix the
+                // proxy passed `{Request.Scheme}://{Request.Host}{path}` to HttpClient,
+                // which the recorder would have captured as containing `shrimp.local`
+                // and `:99999`. Post-fix the proxy passes the IServerAddressesFeature-
+                // derived loopback URL (or the TestServer fallback `http://localhost`),
+                // so neither token appears.
+                var recordedUris = recorder.ToArray();
+                await Assert.That(recordedUris.Length).IsGreaterThan(0)
+                    .Because("Expected the endpoint proxy to issue at least one outbound HttpClient call (the relayed POST to /api/systems/me/alters).");
+
+                // Find the URI that targeted the relayed path — there may be other
+                // unrelated HttpClient activity captured (token generation flows,
+                // EnsureUserExistsAsync from CreateRandomToken, etc.).
+                var proxyUri = recordedUris.FirstOrDefault(u =>
+                    u.AbsolutePath.Equals("/api/systems/me/alters", StringComparison.Ordinal));
+                await Assert.That(proxyUri).IsNotNull()
+                    .Because($"Expected to record an HttpClient call to /api/systems/me/alters from the endpoint proxy. Recorded URIs: [{string.Join(", ", recordedUris.Select(u => u.ToString()))}].");
+
+                await Assert.That(proxyUri!.Host).IsNotEqualTo(operatorFacingHost)
+                    .Because($"Regression: the proxy is dialing the inbound Host header ({operatorFacingHost}) instead of the local Kestrel listener — this is the exact crash from csharp/Interfold.Api/Socket/WebSocketHandler.cs:444. Recorded host was '{proxyUri.Host}'.");
+                await Assert.That(proxyUri.Port).IsNotEqualTo(hostSideMappedPort)
+                    .Because($"Regression: the proxy is dialing the host-side mapped port ({hostSideMappedPort}) instead of the container-internal Kestrel port. Recorded URI was '{proxyUri}'.");
+
+                // The proxy MUST target a loopback host. Under TestServer the helper's
+                // null/empty-Addresses fallback produces `http://localhost`; under real
+                // Kestrel the helper rewrites wildcard binds to `127.0.0.1`. Accepting
+                // either keeps the test stable across both the in-process harness here
+                // and any future test variant that runs against a real Kestrel.
+                var isLoopback = proxyUri.Host is "localhost" or "127.0.0.1" or "::1" or "[::1]";
+                await Assert.That(isLoopback).IsTrue()
+                    .Because($"Expected the proxy to dial a loopback host (localhost / 127.0.0.1 / ::1). Recorded URI was '{proxyUri}'.");
+            }
+
+            await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "test done", token);
+        }
+        finally
+        {
+            // Clear the recorder hook before any other test sees the factory; the
+            // [NotInParallel] key guarantees no overlap but resetting in `finally`
+            // keeps the post-condition obvious to readers.
+            fixture.Factory.OutboundHttpUriRecorder = null;
+        }
     }
 
     internal static async Task JoinTopicAsync(WebSocket ws, string topic, string socketToken, CancellationToken timeoutToken)

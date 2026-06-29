@@ -110,12 +110,15 @@ public sealed class ConfigValidationTests
     public async Task Ipv4HostPassesValidation()
     {
         // Self-hoster on a LAN box without any DNS - just the box's static IP. Must pass validation
-        // and produce a working stack with an IP-SAN'd leaf cert.
+        // and produce a working stack with an IP-SAN'd leaf cert. The derived CallbackBaseUrl is
+        // always `https` + `:{Ports.ApiHttps}` (the API container always terminates HTTPS in
+        // self-host independent of WebHttps; the default ApiHttps is 5001 — see
+        // ConfigPhase.ResolveDerivedDefaults for the rationale).
         var cfg = MakeValid();
         cfg.Deployment.Hosts = ["192.168.1.42"];
 
         ConfigPhase.Validate(cfg);
-        await Assert.That(cfg.ApiRuntime.CallbackBaseUrl).IsEqualTo("http://192.168.1.42");
+        await Assert.That(cfg.ApiRuntime.CallbackBaseUrl).IsEqualTo("https://192.168.1.42:5001");
     }
 
     [Test]
@@ -123,12 +126,14 @@ public sealed class ConfigValidationTests
     {
         // IPv6 literal as the only host. Validate must accept it, and the derived URL must
         // bracket-wrap the address per RFC 3986 §3.2.2 — un-bracketed IPv6 in a URL authority
-        // is malformed and would break every downstream Uri.Parse caller.
+        // is malformed and would break every downstream Uri.Parse caller. The :5001 port
+        // suffix follows the closing bracket so the colons inside the bracketed authority
+        // can't be confused with the port separator.
         var cfg = MakeValid();
         cfg.Deployment.Hosts = ["fe80::1"];
 
         ConfigPhase.Validate(cfg);
-        await Assert.That(cfg.ApiRuntime.CallbackBaseUrl).IsEqualTo("http://[fe80::1]");
+        await Assert.That(cfg.ApiRuntime.CallbackBaseUrl).IsEqualTo("https://[fe80::1]:5001");
     }
 
     [Test]
@@ -141,7 +146,7 @@ public sealed class ConfigValidationTests
         cfg.Deployment.Hosts = ["api.example.com", "10.0.0.0/8"];
 
         ConfigPhase.Validate(cfg);
-        await Assert.That(cfg.ApiRuntime.CallbackBaseUrl).IsEqualTo("http://api.example.com");
+        await Assert.That(cfg.ApiRuntime.CallbackBaseUrl).IsEqualTo("https://api.example.com:5001");
     }
 
     [Test]
@@ -151,7 +156,7 @@ public sealed class ConfigValidationTests
         cfg.Deployment.Hosts = ["192.168.1.42", "fe80::/64"];
 
         ConfigPhase.Validate(cfg);
-        await Assert.That(cfg.ApiRuntime.CallbackBaseUrl).IsEqualTo("http://192.168.1.42");
+        await Assert.That(cfg.ApiRuntime.CallbackBaseUrl).IsEqualTo("https://192.168.1.42:5001");
     }
 
     [Test]
@@ -448,9 +453,13 @@ public sealed class ConfigValidationTests
 
         ConfigPhase.Validate(cfg);
 
-        await Assert.That(cfg.ApiRuntime.CallbackBaseUrl).IsEqualTo("https://api.example.com");
-        await Assert.That(cfg.ApiRuntime.JwtAuthority).IsEqualTo("https://api.example.com");
+        // API URL carries the default Ports.ApiHttps=5001 suffix (always https in self-host).
+        // CORS scheme tracks WebHttps=true with the default Ports.WebHttps=8081 suffix.
+        await Assert.That(cfg.ApiRuntime.CallbackBaseUrl).IsEqualTo("https://api.example.com:5001");
+        await Assert.That(cfg.ApiRuntime.JwtAuthority).IsEqualTo("https://api.example.com:5001");
         await Assert.That(cfg.ApiRuntime.CorsAllowedOrigins.Count).IsEqualTo(2);
+        await Assert.That(cfg.ApiRuntime.CorsAllowedOrigins).Contains("https://api.example.com:8081");
+        await Assert.That(cfg.ApiRuntime.CorsAllowedOrigins).Contains("https://admin.example.com:8081");
     }
 
     // --- Cluster / Storage / Observability / Socket / Persistence tuning validation ---

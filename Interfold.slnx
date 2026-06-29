@@ -6,6 +6,7 @@
   </Configurations>
   <Folder Name="/csharp/">
     <Project Path="csharp/Interfold.Api/Interfold.Api.csproj" />
+    <Project Path="csharp/Interfold.Api.UnitTests/Interfold.Api.UnitTests.csproj" />
     <Project Path="csharp/Interfold.AppHost/Interfold.AppHost.csproj" />
     <Project Path="csharp/Interfold.Bootstrapper.IntegrationTests/Interfold.Bootstrapper.IntegrationTests.csproj" />
     <Project Path="csharp/Interfold.Bootstrapper.UnitTests/Interfold.Bootstrapper.UnitTests.csproj" />

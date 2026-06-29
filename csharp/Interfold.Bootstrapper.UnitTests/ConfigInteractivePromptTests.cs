@@ -591,9 +591,10 @@ public sealed class ConfigInteractivePromptTests
         // The four ApiRuntime show callbacks call ResolveDerivedDefaults on a clone so the
         // menu row paints the derived default next to its label even when the stored field
         // is still empty. Hosts has no shipped default, so the test first populates it via
-        // the Public host(s) row (field index 1); after that, with WebHttps=false the derived
-        // callback URL is "http://api.example.com" — that exact string should appear in the
-        // menu's value column next to the "OAuth callback base URL" label.
+        // the Public host(s) row (field index 1); after that, with WebHttps=false and the
+        // shipped port defaults (Ports.ApiHttps=5001 / Ports.WebHttp=8080) the derived
+        // callback URL is "https://api.example.com:5001" (always https for the API in
+        // self-host) and the CORS origin is "http://api.example.com:8080" (web tier).
         var console = NewConsole();
         EditField(console, fieldIndex: 1, "api.example.com");
         ConfirmForm(console);
@@ -603,11 +604,11 @@ public sealed class ConfigInteractivePromptTests
         var output = console.Output;
         // Same row-format guard as the OAuth-ID <empty> assertions: anchor on the label so
         // a regression that paints a blank value cell or the wrong derived string fails loudly.
-        await Assert.That(Regex.IsMatch(output, @"OAuth callback base URL\s+http://api\.example\.com")).IsTrue();
-        await Assert.That(Regex.IsMatch(output, @"JWT authority \(iss claim\)\s+http://api\.example\.com")).IsTrue();
+        await Assert.That(Regex.IsMatch(output, @"OAuth callback base URL\s+https://api\.example\.com:5001")).IsTrue();
+        await Assert.That(Regex.IsMatch(output, @"JWT authority \(iss claim\)\s+https://api\.example\.com:5001")).IsTrue();
         // CORS row derives one entry per non-CIDR host, joined with ',' for the menu display.
-        // The single-host input produces one entry.
-        await Assert.That(Regex.IsMatch(output, @"CORS allowed origins\s+http://api\.example\.com")).IsTrue();
+        // The single-host input produces one entry on the web scheme + port.
+        await Assert.That(Regex.IsMatch(output, @"CORS allowed origins\s+http://api\.example\.com:8080")).IsTrue();
     }
 
     [Test]
