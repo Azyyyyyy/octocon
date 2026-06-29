@@ -102,46 +102,49 @@ public sealed class ResolveLoopbackBaseUriTests
     }
 
     [Test]
-    public async Task PrefersHttpListener_OverHttps_WhenBothPresent()
+    public async Task PrefersHttpsListener_OverHttp_WhenBothPresent()
     {
         // In the published deployment topology Kestrel binds BOTH http and https endpoints
         // (the AppHost wires ASPNETCORE_HTTP_PORTS and ASPNETCORE_HTTPS_PORTS — see
-        // csharp/Interfold.AppHost/InterfoldAppHost.cs:647-648). The self-call must use
-        // http because the leaf PFX has SANs for the operator-facing hostname
-        // (e.g. api.example.com), not 127.0.0.1 — an HTTPS loopback would fail TLS
-        // hostname validation and reintroduce a different flavour of the bug.
+        // csharp/Interfold.AppHost/InterfoldAppHost.cs:647-648). The self-call prefers
+        // HTTPS so it doesn't get 308-redirected by UseHttpsRedirection (which would land
+        // us on the HTTPS listener anyway, with the round-trip cost of two requests). TLS
+        // validation against the local leaf cert is handled by LoopbackHttpClient's
+        // permissive validator — safe because the dial target is loopback and therefore
+        // cannot be MITM'd from outside the process.
         var result = WebSocketHandler.ResolveLoopbackBaseUri([
-            "https://[::]:5101",
             "http://[::]:5100",
+            "https://[::]:5101",
         ]);
-        await Assert.That(result).IsEqualTo("http://127.0.0.1:5100")
-            .Because("HTTPS loopback would fail TLS hostname validation because the leaf PFX's SANs target the operator-facing hostname, not 127.0.0.1.");
+        await Assert.That(result).IsEqualTo("https://127.0.0.1:5101")
+            .Because("Dialing HTTPS directly avoids the 308 round-trip via UseHttpsRedirection; the loopback HttpClient's permissive validator handles TLS validation.");
     }
 
     [Test]
-    public async Task PrefersHttpListener_RegardlessOfOrdering()
+    public async Task PrefersHttpsListener_RegardlessOfOrdering()
     {
-        // Same as the previous case but with the http entry listed first. Defends the
+        // Same as the previous case but with the https entry listed first. Defends the
         // ordering-stable preference logic against accidental reliance on Kestrel's
         // emission order (which is implementation-defined and may vary across versions).
         var result = WebSocketHandler.ResolveLoopbackBaseUri([
-            "http://[::]:5100",
             "https://[::]:5101",
+            "http://[::]:5100",
         ]);
-        await Assert.That(result).IsEqualTo("http://127.0.0.1:5100")
+        await Assert.That(result).IsEqualTo("https://127.0.0.1:5101")
             .Because("Preference must be based on scheme, not on the order Kestrel emits its bindings.");
     }
 
     [Test]
-    public async Task FallsBackToHttps_WhenOnlyHttpsAvailable()
+    public async Task FallsBackToHttp_WhenOnlyHttpAvailable()
     {
-        // Operator-overridden topology — running an HTTPS-only Kestrel. The helper
-        // still returns a usable URL; the caller dialing HTTPS loopback in this niche
-        // case is the operator's choice (and documented as a limitation in the code
-        // comment in WebSocketHandler.cs).
-        var result = WebSocketHandler.ResolveLoopbackBaseUri(["https://[::]:5101"]);
-        await Assert.That(result).IsEqualTo("https://127.0.0.1:5101")
-            .Because("HTTPS-only topology is unusual but supported — the helper returns a loopback HTTPS URL rather than the fallback.");
+        // Operator-overridden topology — running an HTTP-only Kestrel (e.g. when TLS
+        // termination is delegated entirely to an upstream proxy). The helper still
+        // returns a usable URL; the proxy will dial HTTP directly. UseHttpsRedirection
+        // would redirect this if the AppHost set ASPNETCORE_HTTPS_PORTS, but in an
+        // HTTP-only topology that variable is not set and the middleware passes through.
+        var result = WebSocketHandler.ResolveLoopbackBaseUri(["http://[::]:5100"]);
+        await Assert.That(result).IsEqualTo("http://127.0.0.1:5100")
+            .Because("HTTP-only topology is supported — the helper returns a loopback HTTP URL when no HTTPS listener is bound.");
     }
 
     [Test]
@@ -189,8 +192,8 @@ public sealed class ResolveLoopbackBaseUriTests
                 .Because("Regression guard: the proxy must never return the inbound request's operator-facing hostname.");
             await Assert.That(result).DoesNotContain(":5001")
                 .Because("Regression guard: the proxy must never return the host-side mapped port.");
-            await Assert.That(result).IsEqualTo("http://127.0.0.1:5100")
-                .Because("Expected the rewritten loopback HTTP URL targeting the container-internal Kestrel port.");
+            await Assert.That(result).IsEqualTo("https://127.0.0.1:5101")
+                .Because("Expected the rewritten loopback HTTPS URL targeting the container-internal Kestrel TLS port — preferred over HTTP to avoid the HttpsRedirection 308.");
         }
     }
 }

@@ -453,11 +453,31 @@ static async Task<SocketEndpointProxyResponse> HandleEndpointProxyAsync(
     // default 5100/5101, configurable via `Ports:api-container-http(s)`).
     // Resolving via IServerAddressesFeature picks up whatever Kestrel actually
     // bound to in this process, regardless of the deployment topology in front
-    // of it.
+    // of it. We prefer the HTTPS binding so the call doesn't trip
+    // HttpsRedirection (which would 308 us at the HTTPS listener anyway), and
+    // dial it through the named `LoopbackHttpClient` whose permissive TLS
+    // validator accepts the local leaf cert despite the SAN/chain mismatches —
+    // see `LoopbackHttpClient` for the safety argument.
     var server = websocketContext.RequestServices.GetRequiredService<IServer>();
     var baseUri = ResolveLoopbackBaseUri(server.Features.Get<IServerAddressesFeature>()?.Addresses);
     var targetUri = $"{baseUri}{path}";
-    using var request = new HttpRequestMessage(new HttpMethod(method), targetUri);
+
+    if (!Uri.TryCreate(targetUri, UriKind.Absolute, out var parsedTargetUri)
+        || (parsedTargetUri.Scheme is "https" && !LoopbackHttpClient.IsLoopbackHost(parsedTargetUri)))
+    {
+        // Defence-in-depth: ResolveLoopbackBaseUri is unit-tested to always emit a loopback
+        // shape (or the TestServer fallback `http://localhost`), but the named loopback
+        // HttpClient skips TLS validation, so a future regression that let a non-loopback
+        // host through here would silently weaken every self-call. Fail fast instead.
+        return new SocketEndpointProxyResponse(
+            StatusCodes.Status500InternalServerError,
+            ToJsonString(new ErrorResponse(
+                "Socket endpoint relay resolved a non-loopback target.",
+                "socket_endpoint_proxy_misrouted",
+                System.Net.HttpStatusCode.InternalServerError)));
+    }
+
+    using var request = new HttpRequestMessage(new HttpMethod(method), parsedTargetUri);
     request.Headers.TryAddWithoutValidation("Authorization", $"Bearer {socketToken}");
     request.Headers.TryAddWithoutValidation("Accept", "application/json");
 
@@ -478,7 +498,7 @@ static async Task<SocketEndpointProxyResponse> HandleEndpointProxyAsync(
     }
 
     var httpClientFactory = websocketContext.RequestServices.GetRequiredService<IHttpClientFactory>();
-    using var httpClient = httpClientFactory.CreateClient();
+    using var httpClient = httpClientFactory.CreateClient(LoopbackHttpClient.Name);
 
     var response = await httpClient.SendAsync(request, websocketContext.RequestAborted);
     try
@@ -496,20 +516,28 @@ static string ToJsonString<T>(T value)
     => JsonSerializer.Serialize(value, SocketJson.Options);
 
 /// <summary>
-/// Picks a loopback-safe base URL from Kestrel's bound addresses for the
-/// socket endpoint relay's self-call. Prefers http:// over https:// because
-/// the leaf PFX served by Kestrel in self-host carries SANs for the
-/// operator-facing hostname (e.g. api.example.com), not 127.0.0.1, so
-/// HTTPS loopback would fail TLS hostname validation. Wildcard hosts
-/// (`0.0.0.0`, `[::]`, `+`, `*`) are rewritten to 127.0.0.1 so the URL
-/// actually dials the local listener instead of trying to resolve a
-/// wildcard literal. Falls back to <c>http://localhost</c> when no bound
-/// addresses are reported — that branch is unreachable in production
-/// (Kestrel always reports its actual bindings) but keeps the proxy
-/// functional under <c>Microsoft.AspNetCore.TestHost.TestServer</c>,
-/// whose no-op <see cref="IServerAddressesFeature"/> exposes an empty
-/// address list because requests are routed in-memory rather than over
-/// a real socket.
+/// Picks a loopback-safe base URL from Kestrel's bound addresses for the socket
+/// endpoint relay's self-call. Prefers <c>https://</c> over <c>http://</c> so the
+/// self-call doesn't get 308-redirected by <c>UseHttpsRedirection</c> — we'd land on
+/// the HTTPS listener either way, so dial it directly. The leaf PFX served by Kestrel
+/// in self-host carries SANs for the operator-facing hostname (e.g.
+/// <c>api.example.com</c>), not the loopback literal, and is signed by a private CA
+/// not in the container's system trust store, so HTTPS loopback would fail TLS
+/// validation under the default <see cref="HttpClient"/>; the call site routes
+/// through <see cref="LoopbackHttpClient.Name"/>, whose permissive TLS validator is
+/// safe because the dial target is always loopback and therefore can't be MITM'd from
+/// outside the process.
+///
+/// <para>
+/// Wildcard hosts (<c>0.0.0.0</c>, <c>[::]</c>, <c>+</c>, <c>*</c>) are rewritten to
+/// <c>127.0.0.1</c> so the URL dials the local listener instead of trying to resolve
+/// a wildcard literal. Falls back to <c>http://localhost</c> when no bound addresses
+/// are reported — that branch is unreachable in production (Kestrel always reports
+/// its actual bindings) but keeps the proxy functional under
+/// <c>Microsoft.AspNetCore.TestHost.TestServer</c>, whose no-op
+/// <see cref="IServerAddressesFeature"/> exposes an empty address list because
+/// requests are routed in-memory rather than over a real socket.
+/// </para>
 /// </summary>
 internal static string ResolveLoopbackBaseUri(ICollection<string>? addresses)
 {
@@ -517,7 +545,7 @@ internal static string ResolveLoopbackBaseUri(ICollection<string>? addresses)
     if (addresses is null || addresses.Count == 0) return testServerFallback;
 
     var preferred = addresses
-        .OrderBy(static addr => addr.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ? 0 : 1)
+        .OrderBy(static addr => addr.StartsWith("https://", StringComparison.OrdinalIgnoreCase) ? 0 : 1)
         .FirstOrDefault();
     if (preferred is null) return testServerFallback;
 

@@ -127,6 +127,31 @@ builder.Services.AddHttpClient<AppleOAuthService>();
 builder.Services.AddHttpClient("SimplyPlural").AddHttpMessageHandler<HttpLoggingHandler>();
 builder.Services.AddSingleton<ISimplyPluralImportService, SimplyPluralImportService>();
 
+// --- Loopback self-call HttpClient ---
+// Used exclusively by WebSocketHandler.HandleEndpointProxyAsync to relay a socket
+// `endpoint` frame to the API's own controllers. The destination is always the API's
+// own Kestrel listener at 127.0.0.1 / ::1 / localhost (resolved via
+// IServerAddressesFeature in WebSocketHandler.ResolveLoopbackBaseUri), so the client
+// permissively accepts any TLS cert the server presents. Strict validation would fail
+// on the self-call because (a) the leaf PFX's SANs target the operator-facing hostname
+// rather than the loopback literal, and (b) the bootstrapper-issued private root CA is
+// not in the container's system trust store — both surface as RemoteCertificateName
+// Mismatch + RemoteCertificateChainErrors. Loopback connections cannot be intercepted
+// from outside the process, so this isn't a security boundary; see LoopbackHttpClient
+// for the full rationale. AllowAutoRedirect is disabled so HttpsRedirection (which
+// applies because the carve-out above only covers /.well-known) doesn't redirect the
+// proxy off-host: the call ALWAYS targets the HTTPS listener directly when available,
+// so a redirect would only ever be a bug.
+builder.Services.AddHttpClient(LoopbackHttpClient.Name)
+    .ConfigurePrimaryHttpMessageHandler(static () => new SocketsHttpHandler
+    {
+        AllowAutoRedirect = false,
+        SslOptions = new System.Net.Security.SslClientAuthenticationOptions
+        {
+            RemoteCertificateValidationCallback = (_, _, _, _) => true,
+        },
+    });
+
 // --- Auth ---
 // Tokens are always self-issued by this backend after
 // OAuth provider authentication completes. There is no single external OIDC authority to
