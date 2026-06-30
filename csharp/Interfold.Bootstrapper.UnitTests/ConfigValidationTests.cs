@@ -602,6 +602,147 @@ public sealed class ConfigValidationTests
     }
 
     [Test]
+    public async Task DefaultBackupSectionPasses()
+    {
+        // The shipped defaults (enabled=false, schedule="daily", retain=14, dir="", autostart=false)
+        // are the "no-op" stance — every operator's stock bootstrap.json includes them, so they
+        // must satisfy the validator on day one.
+        var cfg = MakeValid();
+        // MakeValid leaves the section at its default; this assertion just pins the contract.
+        await Assert.That(cfg.Backup.RetainCount).IsEqualTo(14);
+        await Assert.That(cfg.Backup.Schedule).IsEqualTo("daily");
+        ConfigPhase.Validate(cfg);
+        await Task.CompletedTask;
+    }
+
+    [Test]
+    public async Task ZeroBackupRetainCountFailsValidation()
+    {
+        // retainCount=0 would delete every backup as soon as it's written — almost certainly
+        // a typo for the "disable scheduled backups" semantics (which is `enabled=false`).
+        // Validator rejects to surface the misconfiguration at bootstrap time.
+        var cfg = MakeValid();
+        cfg.Backup.RetainCount = 0;
+
+        var ex = Assert.Throws<InvalidOperationException>(() => ConfigPhase.Validate(cfg));
+        await Assert.That(ex.Message).Contains("retainCount");
+    }
+
+    [Test]
+    public async Task NegativeBackupRetainCountFailsValidation()
+    {
+        var cfg = MakeValid();
+        cfg.Backup.RetainCount = -5;
+
+        var ex = Assert.Throws<InvalidOperationException>(() => ConfigPhase.Validate(cfg));
+        await Assert.That(ex.Message).Contains("retainCount");
+    }
+
+    [Test]
+    public async Task BackupRetainCountAboveCapFailsValidation()
+    {
+        // 1000 is the documented cap; anything larger is almost certainly a units error
+        // (operator confused minutes-to-keep with files-to-keep, or similar).
+        var cfg = MakeValid();
+        cfg.Backup.RetainCount = 5000;
+
+        var ex = Assert.Throws<InvalidOperationException>(() => ConfigPhase.Validate(cfg));
+        await Assert.That(ex.Message).Contains("retainCount");
+    }
+
+    [Test]
+    public async Task EmptyBackupScheduleFailsValidation()
+    {
+        // An empty schedule renders into `OnCalendar=` (no value), which systemd-analyze
+        // rejects — but rejecting it at config-load time gives the operator a faster
+        // feedback loop and a clearer message.
+        var cfg = MakeValid();
+        cfg.Backup.Schedule = string.Empty;
+
+        var ex = Assert.Throws<InvalidOperationException>(() => ConfigPhase.Validate(cfg));
+        await Assert.That(ex.Message).Contains("schedule");
+    }
+
+    [Test]
+    public async Task WhitespaceBackupScheduleFailsValidation()
+    {
+        var cfg = MakeValid();
+        cfg.Backup.Schedule = "   ";
+
+        var ex = Assert.Throws<InvalidOperationException>(() => ConfigPhase.Validate(cfg));
+        await Assert.That(ex.Message).Contains("schedule");
+    }
+
+    [Test]
+    public async Task BackupScheduleWithShellMetacharactersFailsValidation()
+    {
+        // Catches an operator trying to embed a `;` or `&` to chain a second command — the
+        // schedule string ends up on the OnCalendar= line of a unit file, but a paranoid
+        // upfront reject also defends against future code paths that might shell out with it.
+        var cfg = MakeValid();
+        cfg.Backup.Schedule = "daily;rm -rf /";
+
+        var ex = Assert.Throws<InvalidOperationException>(() => ConfigPhase.Validate(cfg));
+        await Assert.That(ex.Message).Contains("schedule");
+    }
+
+    [Test]
+    public async Task WellKnownBackupScheduleShortcutsPass()
+    {
+        // systemd's OnCalendar= shortcuts. Every value here must satisfy the validator's
+        // permissive pattern.
+        foreach (var schedule in new[] { "hourly", "daily", "weekly", "monthly", "*-*-* 03:00", "Mon..Fri 03:30", "Sat *-*-* 04,16:00:00" })
+        {
+            var cfg = MakeValid();
+            cfg.Backup.Schedule = schedule;
+            ConfigPhase.Validate(cfg);
+        }
+        await Task.CompletedTask;
+    }
+
+    [Test]
+    public async Task RelativeBackupDirectoryFailsValidation()
+    {
+        // Relative paths resolve against systemd-timer-driven invocations' unpredictable
+        // CWD — we'd silently write to /run, /home/root, or wherever depending on the
+        // distro's systemd unit defaults. Reject upfront.
+        var cfg = MakeValid();
+        cfg.Backup.Directory = "backups/interfold";
+
+        var ex = Assert.Throws<InvalidOperationException>(() => ConfigPhase.Validate(cfg));
+        await Assert.That(ex.Message).Contains("directory");
+    }
+
+    [Test]
+    public async Task EmptyBackupDirectoryPasses()
+    {
+        // Empty == "use {outputDir}/backups". This is the default and most-common state.
+        var cfg = MakeValid();
+        cfg.Backup.Directory = string.Empty;
+
+        ConfigPhase.Validate(cfg);
+        await Task.CompletedTask;
+    }
+
+    [Test]
+    public async Task AutostartTogglePassesIndependently()
+    {
+        // The Enabled / AutostartServer toggles are orthogonal — operators can enable
+        // either independently of the other. Validator must accept all four combinations.
+        foreach (var enabled in new[] { true, false })
+        {
+            foreach (var autostart in new[] { true, false })
+            {
+                var cfg = MakeValid();
+                cfg.Backup.Enabled = enabled;
+                cfg.Backup.AutostartServer = autostart;
+                ConfigPhase.Validate(cfg);
+            }
+        }
+        await Task.CompletedTask;
+    }
+
+    [Test]
     public async Task MalformedJsonReturnsClearError()
     {
         // ConfigPhase.RunAsync uses JsonSerializer.Deserialize, which surfaces a JsonException

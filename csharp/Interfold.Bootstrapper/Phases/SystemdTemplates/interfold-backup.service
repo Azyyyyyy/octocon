@@ -1,0 +1,13 @@
+[Unit]
+Description=Interfold database backup (Postgres + Scylla/Cassandra)
+Documentation=https://github.com/Azyyyyyy/octocon
+After=interfold.service
+Wants=interfold.service
+
+[Service]
+Type=oneshot
+WorkingDirectory={{OUTPUT_DIR}}
+ExecStart={{BINARY_PATH}} backup --config {{CONFIG_PATH}} --output-dir {{OUTPUT_DIR}} --component all
+# Operator-overridable: drop in /etc/systemd/system/interfold-backup.service.d/*.conf
+# with [Service] Environment= entries to tweak per-host. The bootstrapper never edits
+# user drop-ins on rerun.

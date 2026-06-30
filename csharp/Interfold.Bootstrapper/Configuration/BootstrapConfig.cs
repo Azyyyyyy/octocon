@@ -126,6 +126,18 @@ public sealed class BootstrapConfig
 
     [JsonPropertyName("oauth")]
     public OAuthSection OAuth { get; set; } = new();
+
+    /// <summary>
+    /// Per-host backup + autostart preferences. Drives the <c>backup</c> and
+    /// <c>install-service</c> subcommands rendered by
+    /// <see cref="Phases.BackupPhase"/> and <see cref="Phases.SystemdInstallPhase"/>.
+    /// All fields default to a "do nothing automatically" stance so a stock bootstrap
+    /// behaves identically to pre-feature deployments; operators opt in by flipping
+    /// <see cref="BackupSection.Enabled"/> or <see cref="BackupSection.AutostartServer"/>
+    /// and re-running <c>install-service</c>.
+    /// </summary>
+    [JsonPropertyName("backup")]
+    public BackupSection Backup { get; set; } = new();
 }
 
 /// <summary>
@@ -478,4 +490,65 @@ public sealed class SocketSection
     /// </summary>
     [JsonPropertyName("batchBytesThreshold")]
     public int? BatchBytesThreshold { get; set; }
+}
+
+/// <summary>
+/// Backup + autostart preferences consumed by the <c>backup</c> and <c>install-service</c>
+/// subcommands. Every field defaults to a "do nothing automatically" stance so a stock
+/// bootstrap behaves identically to pre-feature deployments — operators opt in explicitly
+/// in <c>interfold.bootstrap.json</c> or via the interactive prompt, then re-run
+/// <c>install-service</c> to materialise the matching systemd units.
+/// </summary>
+public sealed class BackupSection
+{
+    /// <summary>
+    /// Master toggle for the scheduled-backup feature. When <c>false</c> the bootstrapper
+    /// neither installs <c>interfold-backup.timer</c> nor enables it. The one-shot
+    /// <c>backup</c> subcommand always works regardless of this flag — this only governs
+    /// the systemd timer wiring.
+    /// </summary>
+    [JsonPropertyName("enabled")]
+    public bool Enabled { get; set; } = false;
+
+    /// <summary>
+    /// Schedule expression rendered into the timer unit's <c>OnCalendar=</c> directive.
+    /// Accepts systemd's calendar event syntax — the well-known shortcuts (<c>hourly</c>,
+    /// <c>daily</c>, <c>weekly</c>, <c>monthly</c>) plus the full <c>DOW YYYY-MM-DD HH:MM:SS</c>
+    /// form (e.g. <c>"Mon..Fri 03:30"</c>). Validation in
+    /// <see cref="Phases.ConfigPhase.Validate"/> only checks for non-empty + a permissive
+    /// character set; <see cref="Phases.SystemdInstallPhase"/> shells out to
+    /// <c>systemd-analyze calendar</c> at install time to catch syntactically-invalid values.
+    /// </summary>
+    [JsonPropertyName("schedule")]
+    public string Schedule { get; set; } = "daily";
+
+    /// <summary>
+    /// Number of backup archives to keep per component (<c>postgres</c>, <c>scylla</c>).
+    /// After a successful backup the phase deletes the oldest archives until exactly this
+    /// many remain. Bounded 1..1000 by the validator; <c>0</c> would defeat the feature
+    /// entirely (every backup would immediately delete itself) so the lower bound is 1.
+    /// </summary>
+    [JsonPropertyName("retainCount")]
+    public int RetainCount { get; set; } = 14;
+
+    /// <summary>
+    /// Override for the on-disk backup root. Blank (the default) means
+    /// <c>{outputDir}/backups</c>; the phase creates <c>postgres/</c> and <c>scylla/</c>
+    /// subdirectories underneath. When non-empty, must be an absolute path — relative
+    /// values would resolve against the bootstrapper's CWD at backup time, which on a
+    /// systemd-timer-driven invocation is unpredictable.
+    /// </summary>
+    [JsonPropertyName("directory")]
+    public string Directory { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Master toggle for the boot-up autostart feature. When <c>true</c>, running
+    /// <c>install-service --enable-autostart</c> installs and enables
+    /// <c>interfold.service</c>, which brings the compose stack up via
+    /// <c>docker compose -f {outputDir}/docker-compose.yaml up -d</c> after
+    /// <c>docker.service</c> on every boot. Independent of <see cref="Enabled"/>: operators
+    /// can autostart the server without scheduled backups, or vice versa.
+    /// </summary>
+    [JsonPropertyName("autostartServer")]
+    public bool AutostartServer { get; set; } = false;
 }

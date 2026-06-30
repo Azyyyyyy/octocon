@@ -1,0 +1,14 @@
+[Unit]
+Description=Interfold scheduled backup timer
+Documentation=https://github.com/Azyyyyyy/octocon
+
+[Timer]
+OnCalendar={{ON_CALENDAR}}
+# Persistent=true ensures a missed run (host powered off at the scheduled time) fires on
+# next boot rather than silently waiting for the next slot. Mirrors the standard
+# systemd-tmpfiles-clean.timer pattern.
+Persistent=true
+Unit=interfold-backup.service
+
+[Install]
+WantedBy=timers.target

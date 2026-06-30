@@ -114,17 +114,29 @@ Shape lives on `[BootstrapConfig](../csharp/Interfold.Bootstrapper/Configuration
                                      // serves (`single`/`cassandra` modes only create one,
                                      // so this and the migration target must agree).
   "apiRuntime": {
-    // Three of the four are derivable from `deployment` and may be left blank — the
-    // bootstrapper fills them at validate-time with values computed from `hosts` +
-    // `webHttps`. The interactive form pre-fills the prompt with the same derived value.
-    "callbackBaseUrl":    "",        // empty -> {scheme}://{primary host}; lands on
-                                     // OCTOCON_AUTH_CALLBACK_BASE_URL. (Primary host = first
-                                     // non-CIDR entry in `hosts`; IPv6 literals are
-                                     // bracket-wrapped per RFC 3986.)
-    "jwtAuthority":       "",        // empty -> {scheme}://{primary host}; JWT `iss` claim.
+    // Three of the four are derivable from `deployment` + `ports` and may be left blank —
+    // the bootstrapper fills them at validate-time with values computed from `hosts`,
+    // `webHttps`, and the matching `ports.*` slot. The interactive form pre-fills the
+    // prompt with the same derived value.
+    "callbackBaseUrl":    "",        // empty -> https://{primary host}[:{ports.apiHttps}];
+                                     // lands on OCTOCON_AUTH_CALLBACK_BASE_URL. The scheme is
+                                     // always `https` because the API container terminates
+                                     // HTTPS unconditionally in self-host (Kestrel binds the
+                                     // bootstrapper-issued leaf PFX independent of `webHttps`,
+                                     // which only governs the web container). The port
+                                     // suffix is dropped when `ports.apiHttps` is 443.
+                                     // (Primary host = first non-CIDR entry in `hosts`; IPv6
+                                     // literals are bracket-wrapped per RFC 3986.)
+    "jwtAuthority":       "",        // empty -> https://{primary host}[:{ports.apiHttps}];
+                                     // JWT `iss` claim. Same derivation as
+                                     // `callbackBaseUrl`.
     "jwtAudience":        "octocon", // JWT `aud` claim; no derivation, just a default.
-    "corsAllowedOrigins": []         // empty -> one entry per non-CIDR `hosts` entry (each
-                                     // with scheme from `webHttps`); joined with ',' for
+    "corsAllowedOrigins": []         // empty -> one entry per non-CIDR `hosts` entry of the
+                                     // form `{webScheme}://{host}[:{webPort}]`, where
+                                     // `webScheme` follows `webHttps` and `webPort` is the
+                                     // matching `ports.webHttps` / `ports.webHttp` value (port
+                                     // suffix dropped when default for the scheme: 80 for
+                                     // http, 443 for https). Joined with ',' for
                                      // OCTOCON_CORS_ALLOWED_ORIGINS. CIDR entries are
                                      // skipped because they have no URL form. An empty list
                                      // at the API would fall back to "allow any origin",
@@ -180,6 +192,34 @@ Shape lives on `[BootstrapConfig](../csharp/Interfold.Bootstrapper/Configuration
     "discordClientSecret": "",                                 // empty -> row skipped
     "appleClientId":       "",                                 // empty -> provider disabled
     "appleClientSecret":   ""                                  // empty -> row skipped
+  },
+  "backup": {
+    // Backup + autostart preferences consumed by the `backup` and `install-service`
+    // subcommands. Every field defaults to a "do nothing automatically" stance —
+    // operators opt in here, then re-run `install-service` to materialise the matching
+    // systemd units. See README.md "Backups" / "systemd integration" for the operator
+    // walkthrough.
+    "enabled":         false,        // master toggle for the scheduled-backup timer.
+                                     //   When false, install-service does NOT enable
+                                     //   interfold-backup.timer. The one-shot `backup`
+                                     //   subcommand always works regardless.
+    "schedule":        "daily",      // systemd OnCalendar= expression. Accepts the
+                                     //   shortcuts (hourly|daily|weekly|monthly) plus
+                                     //   the full "DOW YYYY-MM-DD HH:MM:SS" form
+                                     //   (e.g. "Mon..Fri 03:30"). Validated at install
+                                     //   time by `systemd-analyze calendar`.
+    "retainCount":     14,           // per-component archive count to retain. After
+                                     //   every successful backup the oldest archives
+                                     //   (by mtime) are deleted until exactly this
+                                     //   many remain. Bounded 1..1000.
+    "directory":       "",           // blank -> {outputDir}/backups. Non-blank values
+                                     //   must be ABSOLUTE — systemd timer invocations
+                                     //   have an unpredictable CWD, so relative paths
+                                     //   would not resolve consistently.
+    "autostartServer": false         // when true, install-service enables
+                                     //   interfold.service so `docker compose up -d`
+                                     //   runs on every boot after docker.service.
+                                     //   Independent of `enabled`.
   }
 }
 ```
@@ -232,9 +272,11 @@ of the following shapes:
 
 The **primary host** is the first non-CIDR entry. It seeds the leaf cert subject CN, the
 nginx `server_name`, and the derived `apiRuntime.callbackBaseUrl` /
-`apiRuntime.jwtAuthority` URLs (IPv6 literals are bracket-wrapped per RFC 3986 §3.2.2).
-Wildcard DNS entries cannot be the primary because `*.example.com` is not a single host
-the leaf cert can serve — list the concrete primary alongside the wildcard.
+`apiRuntime.jwtAuthority` URLs (always `https` for the API in self-host, with the
+`:{ports.apiHttps}` suffix dropped only when the operator picked 443; IPv6 literals are
+bracket-wrapped per RFC 3986 §3.2.2). Wildcard DNS entries cannot be the primary because
+`*.example.com` is not a single host the leaf cert can serve — list the concrete primary
+alongside the wildcard.
 
 CIDR entries are useful when you want the root CA's Name Constraints scope to cover an
 entire subnet (for example a LAN where individual leaf certs are minted later) without
@@ -316,6 +358,36 @@ via systemd, a sibling `.env.local`, or whatever orchestration they use. See the
 README's [Configuration & integrations](../README.md#configuration--integrations) for the
 short operator-facing list.
 
+### Bootstrapper-installed systemd units
+
+`interfold-bootstrap install-service` materialises three systemd units to
+`/etc/systemd/system/` (overridable via `--systemd-unit-dir`, used by integration tests).
+All three are rendered from templates embedded in the bootstrapper binary; see
+`csharp/Interfold.Bootstrapper/Phases/SystemdTemplates/` for the source.
+
+| Unit                       | Type                       | What it does |
+| -------------------------- | -------------------------- | ------------ |
+| `interfold.service`        | `oneshot` `RemainAfterExit=yes` | Brings the compose stack up via `/usr/bin/docker compose -f {outputDir}/docker-compose.yaml up -d` after `docker.service` on boot. Deliberately does NOT shell out to `interfold-bootstrap up` — that would re-run the 5-minute `/health/ready` wait inside systemd's boot critical path. Compose's own restart policy + the API container's healthcheck handle steady-state recovery. |
+| `interfold-backup.service` | `oneshot`                  | Runs `interfold-bootstrap backup --config {configPath} --output-dir {outputDir} --component all`. Inherits the bootstrapper's `phase=...` log line format. Operators add drop-in overrides via `/etc/systemd/system/interfold-backup.service.d/*.conf`; the bootstrapper never edits drop-ins on rerun. |
+| `interfold-backup.timer`   | `timer`                    | Fires `interfold-backup.service` on `OnCalendar={config.backup.schedule}` with `Persistent=true` so a missed run (host powered off at the scheduled time) fires on next boot. |
+
+Enable/disable contract:
+
+- `install-service --enable-autostart` runs `systemctl enable --now interfold.service`
+  after writing the unit. The CLI flag defaults to `config.backup.autostartServer`, so
+  operators who set that in `interfold.bootstrap.json` get the boot service enabled on a
+  plain `install-service` invocation.
+- `install-service --enable-backup-timer` runs `systemctl enable --now interfold-backup.timer`.
+  Defaults to `config.backup.enabled`.
+- Both flags require `systemctl` to be on PATH; if it isn't (Windows / macOS dev box,
+  unprivileged container) the units still get written but no enable-step runs and the
+  log says `systemctl not on PATH; units written but not enabled`.
+
+Validation happens at install time: `systemd-analyze verify` runs against each rendered
+unit and `systemd-analyze calendar` against the schedule string. Either failing aborts
+the install with the analyzer's output — the unit files stay on disk so the operator can
+inspect and edit them, but no `daemon-reload` happens.
+
 ### Full env inventory
 
 Variables marked **(bootstrapper-managed)** are written into `deploy/.env` by the
@@ -347,7 +419,7 @@ encryption pepper, and the API refuses to boot without it). If the value is stil
 
 | Env var                               | Default         | Notes                                                                                                                                                 |
 | ------------------------------------- | --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `OCTOCON_AUTH_CALLBACK_BASE_URL`      | *empty*         | Base URL the API's OAuth callbacks redirect to. Sourced from `BootstrapConfig.apiRuntime.callbackBaseUrl` via Aspire parameter `oauth-callback-base-url`; defaults derive to `{scheme}://{primary host}` (first non-CIDR entry of `deployment.hosts`; scheme follows `deployment.webHttps`; IPv6 literals bracket-wrapped) when the operator leaves the field blank. (bootstrapper-managed) |
+| `OCTOCON_AUTH_CALLBACK_BASE_URL`      | *empty*         | Base URL the API's OAuth callbacks redirect to. Sourced from `BootstrapConfig.apiRuntime.callbackBaseUrl` via Aspire parameter `oauth-callback-base-url`; defaults derive to `https://{primary host}[:{ports.apiHttps}]` (first non-CIDR entry of `deployment.hosts`, always `https` because the API container terminates HTTPS unconditionally in self-host, port suffix omitted when `ports.apiHttps` is 443; IPv6 literals bracket-wrapped) when the operator leaves the field blank. (bootstrapper-managed) |
 | `OCTOCON_JWT_AUTHORITY`               | `octocon-local` | JWT `iss` claim. Sourced from `BootstrapConfig.apiRuntime.jwtAuthority` via Aspire parameter `jwt-authority`; derives the same way as `OCTOCON_AUTH_CALLBACK_BASE_URL`. The `octocon-local` default applies only to dev / non-bootstrapped runs. (bootstrapper-managed) |
 | `OCTOCON_JWT_AUDIENCE`                | `octocon`       | JWT `aud` claim. Sourced from `BootstrapConfig.apiRuntime.jwtAudience` via Aspire parameter `jwt-audience`. Bound into `AuthenticationConfiguration.JwtAudience` by `ConfigurationServiceCollectionExtensions.ApplyAuthentication` (previously documented as bound but the binding was missing; fixed alongside the bootstrapper wire-up). (bootstrapper-managed) |
 | `OCTOCON_GOOGLE_OAUTH_CLIENT_ID`      | *empty*         | Sourced from `BootstrapConfig.oauth.googleClientId` via Aspire parameter `google-oauth-client-id`; empty value disables the Google scheme. (bootstrapper-managed) |

@@ -41,6 +41,25 @@ internal static class Orchestrator
             return 0;
         }
 
+        // --- backup short-circuit ---
+        // Snapshots Postgres + Scylla/Cassandra against an already-running compose stack.
+        // Loads (does not generate) config + secrets from disk. Like show-trust, this skips
+        // the heavyweight host-mutating phases entirely because backup is a runtime
+        // operation that the operator (or systemd timer) expects to be quick and idempotent.
+        if (options.Command == BootstrapCommand.Backup)
+        {
+            return await BackupPhase.RunAsync(options, logger, ct).ConfigureAwait(false);
+        }
+
+        // --- install-service short-circuit ---
+        // Renders the embedded systemd unit templates into /etc/systemd/system/ and
+        // optionally runs systemctl enable --now. Reads config from disk for the backup
+        // schedule + autostart toggles, but never generates secrets or invokes Aspire.
+        if (options.Command == BootstrapCommand.InstallService)
+        {
+            return await SystemdInstallPhase.RunAsync(options, logger, ct).ConfigureAwait(false);
+        }
+
         // Phase sequence per command:
         //   bootstrap       prereqs -> config -> secrets -> certs -> publish -> db-init -> launch
         //   publish         config  -> secrets -> certs -> publish

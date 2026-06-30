@@ -361,6 +361,24 @@ internal static class ConfigPhase
                                                 () => c.OAuth.AppleClientId = PromptStr("Apple OAuth client ID", c.OAuth.AppleClientId)),
             ("Apple OAuth client secret",       () => Mask(c.OAuth.AppleClientSecret),
                                                 () => c.OAuth.AppleClientSecret = PromptOAuth("Apple OAuth client secret", c.OAuth.AppleClientSecret)),
+
+            // --- Backup & autostart ---
+            // Master toggle for the scheduled-backup feature. When false the install-service
+            // subcommand still installs the unit files but does NOT enable
+            // interfold-backup.timer. The one-shot `backup` subcommand works regardless.
+            ("Scheduled backups enabled",       () => c.Backup.Enabled.ToString(),
+                                                () => c.Backup.Enabled = PromptBool("Enable scheduled backups (systemd timer)", c.Backup.Enabled)),
+            ("Backup schedule (OnCalendar)",    () => c.Backup.Schedule,
+                                                () => c.Backup.Schedule = PromptStr("Backup schedule (systemd OnCalendar, e.g. 'daily', 'weekly', 'Mon..Fri 03:30')", c.Backup.Schedule)),
+            ("Backup retention (count per component)", () => c.Backup.RetainCount.ToString(),
+                                                () => c.Backup.RetainCount = PromptInt("Backup retention (number of archives to keep per component)", c.Backup.RetainCount, 1, 1000)),
+            // Blank = "{outputDir}/backups". Non-blank must be absolute (systemd timer
+            // invocations have an unpredictable CWD, so relative paths would silently
+            // resolve against / or wherever the unit happens to land).
+            ("Backup directory (absolute, blank=default)", () => ShowOrEmpty(c.Backup.Directory),
+                                                () => c.Backup.Directory = PromptStr("Backup directory (absolute path; leave blank to default to {outputDir}/backups)", c.Backup.Directory)),
+            ("Autostart server on boot",        () => c.Backup.AutostartServer.ToString(),
+                                                () => c.Backup.AutostartServer = PromptBool("Autostart the server on host boot (installs interfold.service)", c.Backup.AutostartServer)),
         };
 
         // Section boundaries for the menu's grouped layout. Each row is (0-based index of the
@@ -388,6 +406,11 @@ internal static class ConfigPhase
             // — heterogeneous fields but all "knobs the operator probably leaves alone".
             (25, "Performance tuning"),
             (30, "OAuth credentials"),
+            // Backup + autostart section sits at the end of the form because most
+            // operators leave its five fields at their no-op defaults; surfacing it
+            // after the credentials block keeps the high-traffic fields earlier in the
+            // menu where they're easy to find.
+            (36, "Backup & autostart"),
         };
 
         // Sentinels: -1 = "Confirm and save" (commits the form and returns). The 0..fields.Count-1
@@ -410,11 +433,11 @@ internal static class ConfigPhase
                 .Title(
                     "[bold]Configure interfold.bootstrap.json[/]\n" +
                     "[grey]Use arrow keys to navigate, Enter to edit, choose [green]Confirm and save[/] when done.[/]")
-                // Default Spectre page size is 10; the form has 36 fields + 8 headers + 1 confirm
-                // = 45 rows. Sizing the page to fit them all means no scrolling on a 48+ row
+                // Default Spectre page size is 10; the form has 42 fields + 9 headers + 1 confirm
+                // = 52 rows. Sizing the page to fit them all means no scrolling on a 55+ row
                 // terminal; smaller TTYs still paginate cleanly with the MoreChoicesText hint
                 // below. Operators on a 24-row TTY will scroll but every row is reachable.
-                .PageSize(46)
+                .PageSize(53)
                 .MoreChoicesText("[grey](move up/down to reveal more)[/]")
                 // Markup.Escape on the value because some fields legitimately contain markup-like
                 // characters (e.g. ApiImage's `ghcr.io/...:latest` is safe but a future operator
@@ -963,6 +986,35 @@ internal static class ConfigPhase
         }
         ValidateIntRange(config.Persistence.HydrationMaxConcurrency, 1, 1024,
             "config.persistence.hydrationMaxConcurrency");
+
+        // Backup + autostart: every field defaults to a no-op stance, so the validator only
+        // matters for operators that opted in. The schedule check is intentionally permissive
+        // — we don't reimplement systemd's calendar parser, just reject obvious typos
+        // (empty/control chars). SystemdInstallPhase shells out to `systemd-analyze calendar`
+        // at install time for the real validation, but catching the egregious cases here gives
+        // operators a faster feedback loop than running through the publish path.
+        ValidateIntRange(config.Backup.RetainCount, 1, 1000, "config.backup.retainCount");
+        if (string.IsNullOrWhiteSpace(config.Backup.Schedule))
+        {
+            throw new InvalidOperationException(
+                "config.backup.schedule must be a non-empty systemd OnCalendar expression " +
+                "(e.g. 'daily', 'weekly', or 'Mon..Fri 03:30').");
+        }
+        if (!BackupSchedulePattern.IsMatch(config.Backup.Schedule))
+        {
+            throw new InvalidOperationException(
+                $"config.backup.schedule='{config.Backup.Schedule}' contains characters that are not " +
+                "valid in a systemd OnCalendar expression. Allowed: letters, digits, spaces, and " +
+                "the punctuation '.-:,*/'.");
+        }
+        if (!string.IsNullOrEmpty(config.Backup.Directory)
+            && !Path.IsPathRooted(config.Backup.Directory))
+        {
+            throw new InvalidOperationException(
+                $"config.backup.directory='{config.Backup.Directory}' must be an absolute path " +
+                "(systemd-driven backup invocations have an unpredictable CWD; relative paths " +
+                "would not resolve consistently). Leave blank to default to '{outputDir}/backups'.");
+        }
     }
 
     /// <summary>
@@ -1020,6 +1072,19 @@ internal static class ConfigPhase
 
     private static readonly Regex ClusterNamePattern =
         new("^[A-Za-z0-9 ._-]{1,64}$", RegexOptions.CultureInvariant | RegexOptions.Compiled);
+
+    /// <summary>
+    /// Character-class allow-list for the <see cref="BackupSection.Schedule"/> field. Covers
+    /// every glyph systemd accepts in a <c>OnCalendar=</c> directive (the shortcuts
+    /// <c>hourly|daily|weekly|monthly</c>, day-of-week tokens like <c>Mon..Fri</c>, and the
+    /// full <c>YYYY-MM-DD HH:MM:SS</c> form including <c>*</c>/<c>/</c> wildcards). We
+    /// deliberately don't try to enforce the grammar — <c>systemd-analyze calendar</c> does
+    /// that authoritatively at install time. This pattern only rejects clearly-bogus inputs
+    /// (control chars, shell metacharacters) so the operator gets feedback at config-load
+    /// time instead of three commands later.
+    /// </summary>
+    private static readonly Regex BackupSchedulePattern =
+        new(@"^[A-Za-z0-9 .,:\-*/]{1,256}$", RegexOptions.CultureInvariant | RegexOptions.Compiled);
 
     private static void ValidatePort(int port, string field)
     {

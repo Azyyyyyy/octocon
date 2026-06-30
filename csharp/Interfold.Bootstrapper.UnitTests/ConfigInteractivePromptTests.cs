@@ -15,8 +15,8 @@ namespace Interfold.Bootstrapper.UnitTests;
 ///
 /// Interaction model after the form-only redesign:
 /// <list type="bullet">
-///   <item>The form is a single <c>SelectionPrompt&lt;int&gt;</c> with 37 field rows grouped
-///         under 8 section headers + a trailing <c>Confirm and save</c> entry. Section headers
+///   <item>The form is a single <c>SelectionPrompt&lt;int&gt;</c> with 42 field rows grouped
+///         under 9 section headers + a trailing <c>Confirm and save</c> entry. Section headers
 ///         are inert (not selectable); arrow-key navigation skips them.</item>
 ///   <item>Cursor starts at field index 0 (<c>Output directory</c>) — <see cref="SelectionPrompt{T}.DefaultValue"/>
 ///         defaults to <c>default(int)</c>.</item>
@@ -64,8 +64,13 @@ namespace Interfold.Bootstrapper.UnitTests;
 ///   <item>34 Discord OAuth client secret            (OAuth credentials)</item>
 ///   <item>35 Apple OAuth client ID                  (OAuth credentials)</item>
 ///   <item>36 Apple OAuth client secret              (OAuth credentials)</item>
+///   <item>37 Scheduled backups enabled              (Backup &amp; autostart)</item>
+///   <item>38 Backup schedule (OnCalendar)           (Backup &amp; autostart)</item>
+///   <item>39 Backup retention (count per component) (Backup &amp; autostart)</item>
+///   <item>40 Backup directory (absolute, blank=default) (Backup &amp; autostart)</item>
+///   <item>41 Autostart server on boot              (Backup &amp; autostart)</item>
 /// </list>
-/// Navigate(37) lands on the trailing <c>Confirm and save</c> entry (one DownArrow per
+/// Navigate(42) lands on the trailing <c>Confirm and save</c> entry (one DownArrow per
 /// selectable row past field 0). Helpers <see cref="Navigate"/> / <see cref="ConfirmForm"/> /
 /// <see cref="EditField"/> below wrap the key sequences so the test bodies stay focused on
 /// "what is being edited", not "how many DownArrows that takes".
@@ -73,11 +78,11 @@ namespace Interfold.Bootstrapper.UnitTests;
 public sealed class ConfigInteractivePromptTests
 {
     /// <summary>Number of selectable field rows in the navigable form.</summary>
-    private const int FieldCount = 37;
+    private const int FieldCount = 42;
 
     /// <summary>
     /// Builds a fresh interactive <see cref="TestConsole"/> tall enough to render the entire
-    /// 45-row navigable form (36 fields + 8 section headers + Confirm entry) without Spectre
+    /// 52-row navigable form (42 fields + 9 section headers + Confirm entry) without Spectre
     /// paginating it. Default <see cref="TestConsole"/> height is 24 lines, which would clamp
     /// the menu to a single page and hide the top section header by the time the cursor
     /// reaches Confirm — breaking the "every label is in the captured output" assertions.
@@ -87,7 +92,7 @@ public sealed class ConfigInteractivePromptTests
     {
         var c = new TestConsole();
         c.Interactive();
-        // Bump well above the form's 45-row footprint so the form never paginates in
+        // Bump well above the form's 52-row footprint so the form never paginates in
         // tests (pagination clips top rows out of the captured output and breaks the
         // "every label is in the output" assertions).
         c.Profile.Height = 100;
@@ -693,10 +698,10 @@ public sealed class ConfigInteractivePromptTests
     public async Task FormListsEverySectionHeader()
     {
         // Section headers are rendered by AddChoiceGroup as inert rows above each group. All
-        // eight headers (Deployment / Ports / Database / API / Cluster & telemetry / Storage /
-        // Performance tuning / OAuth credentials) must appear in the captured output. "API"
-        // subsumes the old single-row "API image" section now that the four ApiRuntime fields
-        // share the section.
+        // nine headers (Deployment / Ports / Database / API / Cluster & telemetry / Storage /
+        // Performance tuning / OAuth credentials / Backup & autostart) must appear in the
+        // captured output. "API" subsumes the old single-row "API image" section now that the
+        // four ApiRuntime fields share the section.
         var console = NewConsole();
         ConfirmForm(console);
 
@@ -715,11 +720,66 @@ public sealed class ConfigInteractivePromptTests
         await Assert.That(Regex.IsMatch(output, @"---\s+Storage\s+---")).IsTrue();
         await Assert.That(output).Contains("Performance tuning");
         await Assert.That(output).Contains("OAuth credentials");
+        // New Backup & autostart section sits after the credentials group; the framing is
+        // the same as Storage.
+        await Assert.That(output).Contains("Backup & autostart");
         // The title is part of every form render — assert it too so a future refactor that
         // accidentally drops the Title() call gets flagged immediately.
         await Assert.That(output).Contains("Configure interfold.bootstrap.json");
         // And the Confirm entry.
         await Assert.That(output).Contains("Confirm and save");
+    }
+
+    [Test]
+    public async Task EditingBackupTogglesAndSchedule()
+    {
+        // Five-row backup section (rows 37..41). Exercises a happy-path edit of every row so
+        // the round-trip through PromptForConfig captures the operator input verbatim.
+        var console = NewConsole();
+        EditField(console, fieldIndex: 37, "y");                           // Enabled := true
+        EditField(console, fieldIndex: 38, "Mon..Fri 03:30");              // Schedule
+        EditField(console, fieldIndex: 39, "30");                          // RetainCount
+        EditField(console, fieldIndex: 40, "/srv/backups/interfold");     // Directory
+        EditField(console, fieldIndex: 41, "y");                           // AutostartServer := true
+        ConfirmForm(console);
+
+        var config = PromptWithoutDetection(console);
+
+        await Assert.That(config.Backup.Enabled).IsTrue();
+        await Assert.That(config.Backup.Schedule).IsEqualTo("Mon..Fri 03:30");
+        await Assert.That(config.Backup.RetainCount).IsEqualTo(30);
+        await Assert.That(config.Backup.Directory).IsEqualTo("/srv/backups/interfold");
+        await Assert.That(config.Backup.AutostartServer).IsTrue();
+    }
+
+    [Test]
+    public async Task BackupRetainPromptRejectsOutOfRangeValues()
+    {
+        // PromptInt re-prompts on values outside the [1..1000] band. The first input is bad
+        // (the validator's lower bound is 1) and the operator types a valid value second.
+        var console = NewConsole();
+        EditField(console, fieldIndex: 39, "0", "7");
+        ConfirmForm(console);
+
+        var config = PromptWithoutDetection(console);
+
+        await Assert.That(config.Backup.RetainCount).IsEqualTo(7);
+    }
+
+    [Test]
+    public async Task BackupSectionEmptyDirectoryDefaults()
+    {
+        // Confirming the form without editing the directory row leaves it at the empty-string
+        // default — the "use {outputDir}/backups" sentinel. Important because operators who
+        // ignore the section entirely (the most common case) still produce a valid config.
+        var console = NewConsole();
+        ConfirmForm(console);
+
+        var config = PromptWithoutDetection(console);
+
+        await Assert.That(config.Backup.Directory).IsEqualTo(string.Empty);
+        await Assert.That(config.Backup.Enabled).IsFalse();
+        await Assert.That(config.Backup.AutostartServer).IsFalse();
     }
 
     [Test]

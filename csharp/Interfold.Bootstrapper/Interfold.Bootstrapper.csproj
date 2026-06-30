@@ -104,4 +104,22 @@
                       LogicalName="support/db/cassandra/Dockerfile" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!--
+      systemd unit *templates* consumed by SystemdInstallPhase. We deliberately use a
+      "systemd/" prefix rather than the "support/" one above so EmbeddedSupportFiles.EnsureExtracted
+      does NOT auto-extract these onto disk on first run. The templates contain
+      {{TOKEN}} placeholders that SystemdInstallPhase substitutes before writing to
+      /etc/systemd/system/; surfacing the raw, unrendered text next to the binary would
+      invite operators to enable a unit that has a literal "{{OUTPUT_DIR}}" in its
+      ExecStart=.
+    -->
+    <EmbeddedResource Include="Phases\SystemdTemplates\interfold.service"
+                      LogicalName="systemd/interfold.service" />
+    <EmbeddedResource Include="Phases\SystemdTemplates\interfold-backup.service"
+                      LogicalName="systemd/interfold-backup.service" />
+    <EmbeddedResource Include="Phases\SystemdTemplates\interfold-backup.timer"
+                      LogicalName="systemd/interfold-backup.timer" />
+  </ItemGroup>
+
 </Project>
