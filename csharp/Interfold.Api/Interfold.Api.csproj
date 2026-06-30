@@ -18,4 +18,13 @@
     <ProjectReference Include="..\Interfold.Infrastructure\Interfold.Infrastructure.csproj" />
     <ProjectReference Include="..\Interfold.ServiceDefaults\Interfold.ServiceDefaults.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <!--
+      Pre-creates /app/data/avatars in the published image with app:app ownership so the
+      AppHost's `interfold_avatars` named volume (see InterfoldAppHost.ConfigureApiSelfHostEnv)
+      inherits writable perms via Docker's volume-init. The SDK only auto-publishes wwwroot/,
+      so the placeholder needs an explicit <None Include /> to land in the image.
+    -->
+    <None Include="data\avatars\.gitkeep" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
 </Project>

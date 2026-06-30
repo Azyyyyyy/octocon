@@ -478,6 +478,10 @@ static async Task<SocketEndpointProxyResponse> HandleEndpointProxyAsync(
     }
 
     using var request = new HttpRequestMessage(new HttpMethod(method), parsedTargetUri);
+    // Forward the outer Host so the inner controller's `Request.Host` is the operator-facing
+    // origin, not the loopback dial target — anything reading `Request.Host` for URL
+    // qualification (`QualifyAvatar`, OAuth callbacks) would otherwise emit unreachable URLs.
+    request.Headers.Host = websocketContext.Request.Host.Value;
     request.Headers.TryAddWithoutValidation("Authorization", $"Bearer {socketToken}");
     request.Headers.TryAddWithoutValidation("Accept", "application/json");
 

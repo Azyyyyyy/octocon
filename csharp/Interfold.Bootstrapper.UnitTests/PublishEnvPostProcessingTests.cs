@@ -319,6 +319,46 @@ public sealed class PublishEnvPostProcessingTests
     }
 
     [Test]
+    public async Task BuildEnvReplacementsKeepsAvatarStorageRootBlankSoAppHostCanSubstituteDefault()
+    {
+        // Phase-1 of the "avatars in a bootstrapped instance" change moved the
+        // default avatar-storage-path substitution from the bootstrapper into the
+        // AppHost (InterfoldAppHost.cs: DefaultContainerAvatarStorageRoot constant +
+        // effectiveAvatarStorageRoot resolution + matching WithVolume mount).
+        //
+        // The contract this test pins: when the operator leaves
+        // BootstrapConfig.Storage.AvatarStorageRoot blank, the rendered .env line
+        // for AVATAR_STORAGE_ROOT MUST stay blank (i.e. `AVATAR_STORAGE_ROOT=`), NOT
+        // get pre-filled with `/app/data/avatars`. Two reasons:
+        //
+        //   1. The AppHost reads the .env value AND falls back to its constant when
+        //      the value is blank — pre-filling would short-circuit that fallback
+        //      and remove the AppHost's only signal that the operator wants the
+        //      managed-volume codepath (the same signal the AppHost uses to gate
+        //      `api.WithVolume("interfold_avatars", ...)`).
+        //   2. Pinning the default in two places (bootstrapper + AppHost) means a
+        //      future path change has to land in both — drift is silent. Keeping
+        //      the default exclusively in the AppHost makes it the single source
+        //      of truth.
+        //
+        // A sibling check on the matching live behaviour (AppHost wires both the
+        // env var AND the volume to the same path) lives in the AppHost integration
+        // tests, not here — the bootstrapper unit tests stay scoped to .env content.
+        var (config, secrets) = MakeInputs();
+        // Default for Storage.AvatarStorageRoot is empty string; leave it untouched
+        // so this test exercises the "operator did not configure it" path exactly.
+        await Assert.That(config.Storage.AvatarStorageRoot).IsEqualTo(string.Empty)
+            .Because("Pre-condition: this test only makes sense when the config-side default is blank.");
+
+        var replacements = PublishPhase.BuildEnvReplacements(config, secrets, "/base", "/out");
+
+        await Assert.That(replacements.Parameters.ContainsKey("AVATAR_STORAGE_ROOT")).IsTrue()
+            .Because("The key must still be present (Aspire .env post-processing rewrites blank values; missing keys trigger an operator warning).");
+        await Assert.That(replacements.Parameters["AVATAR_STORAGE_ROOT"]).IsEqualTo(string.Empty)
+            .Because("Blank config MUST round-trip as a blank .env value; the AppHost is responsible for substituting /app/data/avatars at compose-graph build time.");
+    }
+
+    [Test]
     public async Task BuildEnvReplacementsEmitsEmptyTuningSlotsForNullables()
     {
         // The four "disabled when empty" tuning fields (Avatar*, OtlpEndpoint, socket

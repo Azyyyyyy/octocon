@@ -212,6 +212,25 @@ public class AvatarSourceTests(IWebFactoryFixture fixture) : BaseEndpointTest
                 // configured public base so external observers can fetch the bytes.
                 await Assert.That(UrlPathStartsWith(avatarUrl, $"{publicBase}/{principalId}/self/")).IsTrue();
             }
+
+            // End-to-end serving check (mirrors the sibling assertion in
+            // SettingsControllerTests.Api_SettingsAvatarMultipart_PersistsAndServesAvatar):
+            // the avatar URL the SPA receives MUST be servable. This test covers the
+            // local-avatar-source codepath specifically — the assertion sits here, not in
+            // the source-only happy-path tests above, because this is the only test in
+            // the file that exercises a real multipart upload (the others use external
+            // URLs and never persist bytes).
+            using var avatarRequest = new HttpRequestMessage(HttpMethod.Get, avatarUrl);
+            // Anonymous on purpose — see the sibling test for the rationale (URL is the capability).
+            var avatarResponse = await client.SendAsync(avatarRequest);
+            var avatarBytes = await avatarResponse.Content.ReadAsByteArrayAsync();
+            using (Assert.Multiple())
+            {
+                await Assert.That(avatarResponse.StatusCode).IsEqualTo(HttpStatusCode.OK)
+                    .Because($"Expected the local-source avatar URL to be servable. URL was '{avatarUrl}'.");
+                await Assert.That(avatarBytes.Length).IsGreaterThan(0)
+                    .Because("Expected non-zero bytes back from the avatar GET.");
+            }
         }
         finally
         {

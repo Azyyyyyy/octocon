@@ -286,16 +286,32 @@ internal static class ConfigPhase
                                                     c.Observability.OtlpEndpoint)),
 
             // --- Storage ---
-            // Both rows are optional and disabled when blank — ShowOrEmpty surfaces the unset
-            // state. Operators that opt in are responsible for the corresponding compose bind
-            // mount; the bootstrapper does not create the directory or wire the mount.
+            // Both rows are optional; their blank-state behaviour is "AppHost-managed
+            // defaults" rather than "disabled":
+            //
+            //   AvatarStorageRoot blank → the AppHost substitutes /app/data/avatars and
+            //   mounts an `interfold_avatars` named Docker volume there so the bytes
+            //   survive container restarts (with the right `app:app` ownership the
+            //   published image pre-creates the directory with). Non-blank means the
+            //   operator owns the mount: they're responsible for the bind/volume target,
+            //   the host-side path, AND the permissions that let the API process (running
+            //   as user `app`, UID 1654 — the .NET SDK container default) read+write
+            //   inside it. The AppHost will NOT silently add a named volume for paths it
+            //   doesn't control.
+            //
+            //   AvatarPublicBase blank → the API serves /avatars/* directly (matches the
+            //   LocalAvatarStorage URL stamp default). Non-blank with a path-only value
+            //   (`/static/avatars`) re-prefixes the served path. Non-blank with an
+            //   absolute https URL hands ownership of the byte-serving surface to a CDN
+            //   / reverse proxy and the API stops trying to serve the files itself (see
+            //   AvatarServingPolicy.Resolve in the API project).
             ("Avatar storage root (container path)", () => ShowOrEmpty(c.Storage.AvatarStorageRoot),
                                                 () => c.Storage.AvatarStorageRoot = PromptStr(
-                                                    "Avatar storage root (blank to disable)",
+                                                    "Avatar storage root (blank = /app/data/avatars, persisted by AppHost-managed volume; non-blank = you manage the mount and ownership)",
                                                     c.Storage.AvatarStorageRoot)),
             ("Avatar public base URL",          () => ShowOrEmpty(c.Storage.AvatarPublicBase),
                                                 () => c.Storage.AvatarPublicBase = PromptStr(
-                                                    "Avatar public base URL (blank to disable)",
+                                                    "Avatar public base URL (blank = API serves /avatars/* directly; set https URL to delegate to CDN)",
                                                     c.Storage.AvatarPublicBase)),
 
             // --- Performance tuning ---

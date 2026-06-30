@@ -1088,18 +1088,28 @@ public class WebSocketTests(IWebFactoryFixture fixture) : BaseEndpointTest
         var socketToken = await CreateRandomToken(fixture.Factory, systemId);
 
         var recorder = new ConcurrentQueue<Uri>();
+        var inboundRecorder = new ConcurrentQueue<(string Host, string Path)>();
         fixture.Factory.OutboundHttpUriRecorder = recorder;
+        fixture.Factory.InboundRequestHostRecorder = inboundRecorder;
         try
         {
             var wsClient = fixture.Factory.Server.CreateWebSocketClient();
             // Simulate the production topology: the operator's reverse proxy / docker
             // port mapping fronts the container, so the upgrade request's Host header
-            // is the operator-facing hostname + host-side port (e.g. shrimp.local:5001
-            // — the literal value from the crash report this test guards against).
-            // The internal Kestrel port differs (5100/5101 by default) and the hostname
+            // is the operator-facing hostname + host-side port. The literal value from
+            // the crash report this test guards against is `shrimp.local:5001`. The
+            // internal Kestrel port differs (5100/5101 by default) and the hostname
             // is not in the container's DNS namespace; the proxy MUST ignore both.
+            //
+            // Port must be a valid TCP port (0-65535) because the Phase-0 Host-
+            // forwarding fix in WebSocketHandler.HandleEndpointProxyAsync assigns
+            // `Request.Host.Value` to the inner HttpRequestMessage's `Headers.Host`
+            // property, whose setter validates the value via ParserHelpers.CheckValidHost.
+            // Under TestServer the URI authority is otherwise unobservable, so picking
+            // the real operator-facing port from the crash report is both valid AND
+            // the most faithful reproduction of the production scenario.
             const string operatorFacingHost = "shrimp.local";
-            const int hostSideMappedPort = 99999; // intentionally unroutable: a real dial would fail.
+            const int hostSideMappedPort = 5001;
             wsClient.ConfigureRequest = request =>
             {
                 request.Host = new HostString(operatorFacingHost, hostSideMappedPort);
@@ -1184,16 +1194,38 @@ public class WebSocketTests(IWebFactoryFixture fixture) : BaseEndpointTest
                 var isLoopback = proxyUri.Host is "localhost" or "127.0.0.1" or "::1" or "[::1]";
                 await Assert.That(isLoopback).IsTrue()
                     .Because($"Expected the proxy to dial a loopback host (localhost / 127.0.0.1 / ::1). Recorded URI was '{proxyUri}'.");
+
+                // Regression guard for the loopback-origin leak in WebSocketHandler.
+                // HandleEndpointProxyAsync: before the fix, the proxy left
+                // `request.Headers.Host` unset, so the inner controller saw
+                // `Request.Host` = the loopback dial target. Any avatar / OAuth /
+                // origin-stamped URL in the inner response was then qualified with
+                // the loopback host (e.g. `https://127.0.0.1:5101/...`) which the
+                // browser can't reach. The fix sets the Host header on the inner
+                // self-call so the inner pipeline observes the OUTER upgrade's host.
+                // The recorder middleware captures both the outer upgrade and the
+                // inner self-call; we filter for the relayed POST path because the
+                // outer is the WebSocket upgrade (different path) and other unrelated
+                // pipeline traffic (token validation, etc.) may also appear.
+                var inboundHits = inboundRecorder.ToArray();
+                var operatorFacingHostHeader = $"{operatorFacingHost}:{hostSideMappedPort}";
+                var innerInbound = inboundHits.FirstOrDefault(h =>
+                    h.Path.Equals("/api/systems/me/alters", StringComparison.Ordinal));
+                await Assert.That(innerInbound.Path).IsEqualTo("/api/systems/me/alters")
+                    .Because($"Expected to observe the relayed POST hitting the inner pipeline. Recorded inbound (Host, Path) pairs: [{string.Join(", ", inboundHits.Select(h => $"({h.Host}, {h.Path})"))}].");
+                await Assert.That(innerInbound.Host).IsEqualTo(operatorFacingHostHeader)
+                    .Because($"Regression: the inner self-call's Request.Host should reflect the OUTER WebSocket upgrade's Host header ('{operatorFacingHostHeader}'), not the loopback dial target. Without this, AvatarUrlQualifier (and any other Request.Host-based URL stamping) emits unreachable URLs in phx_reply payloads. Recorded inner Host was '{innerInbound.Host}'.");
             }
 
             await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "test done", token);
         }
         finally
         {
-            // Clear the recorder hook before any other test sees the factory; the
+            // Clear the recorder hooks before any other test sees the factory; the
             // [NotInParallel] key guarantees no overlap but resetting in `finally`
             // keeps the post-condition obvious to readers.
             fixture.Factory.OutboundHttpUriRecorder = null;
+            fixture.Factory.InboundRequestHostRecorder = null;
         }
     }
 

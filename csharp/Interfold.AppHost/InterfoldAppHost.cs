@@ -285,6 +285,24 @@ public static class InterfoldAppHost
         var nodeGroup = builder.AddParameter("node-group", "auxiliary", publishValueAsDefault: true);
         var avatarStorageRoot = builder.AddParameter("avatar-storage-root", "", publishValueAsDefault: true);
         var avatarPublicBase = builder.AddParameter("avatar-public-base", "", publishValueAsDefault: true);
+
+        // Resolve the effective in-container avatar storage path AT APPHOST-BUILD TIME so we
+        // can both (a) pipe the literal value as OCTOCON_AVATAR_STORAGE_ROOT to the API
+        // container and (b) line up an AppHost-managed named volume at the same path. When
+        // the operator leaves the parameter blank we substitute /app/data/avatars — the path
+        // pre-created in the published image (via the `data/avatars/.gitkeep` placeholder +
+        // <None Include /> in Interfold.Api.csproj) with app:app ownership, so Docker's
+        // named-volume initialization step inherits that ownership into the volume's root
+        // and the API process (running as user `app`, UID 1654 — .NET SDK container default)
+        // can write to it without any chown gymnastics. Operators that supply a non-blank
+        // value opt out of the managed volume (see the WithVolume guard in
+        // ConfigureApiSelfHostEnv) and are on the hook for their own mount and ownership.
+        const string DefaultContainerAvatarStorageRoot = "/app/data/avatars";
+        var rawAvatarStorageRoot = builder.Configuration["Parameters:avatar-storage-root"];
+        var effectiveAvatarStorageRoot = string.IsNullOrWhiteSpace(rawAvatarStorageRoot)
+            ? DefaultContainerAvatarStorageRoot
+            : rawAvatarStorageRoot;
+        var useDefaultAvatarStorageRoot = string.IsNullOrWhiteSpace(rawAvatarStorageRoot);
         var otlpEndpoint = builder.AddParameter("otlp-endpoint", "", publishValueAsDefault: true);
         var socketBatchBytesThreshold = builder.AddParameter("socket-batch-bytes-threshold", "", publishValueAsDefault: true);
         var dbRetryAttempts = builder.AddParameter("db-retry-attempts", "3", publishValueAsDefault: true);
@@ -699,7 +717,13 @@ public static class InterfoldAppHost
                    // ApplyStorage / ApplyObservability / TryParseInt, which normalise
                    // empty → null so the API's not-configured branches still fire.
                    .WithEnvironment("OCTOCON_NODE_GROUP", nodeGroup)
-                   .WithEnvironment("OCTOCON_AVATAR_STORAGE_ROOT", avatarStorageRoot)
+                   // OCTOCON_AVATAR_STORAGE_ROOT carries the RESOLVED literal path (see
+                   // effectiveAvatarStorageRoot above), not the raw Aspire parameter. Blank
+                   // parameter values are substituted with the DefaultContainerAvatarStorageRoot
+                   // constant so the API container always sees a concrete path, and that path
+                   // matches the WithVolume mount below — so the named volume actually
+                   // persists the bytes the API writes.
+                   .WithEnvironment("OCTOCON_AVATAR_STORAGE_ROOT", effectiveAvatarStorageRoot)
                    .WithEnvironment("OCTOCON_AVATAR_PUBLIC_BASE", avatarPublicBase)
                    .WithEnvironment("OCTOCON_OTLP_ENDPOINT", otlpEndpoint)
                    .WithEnvironment("OCTOCON_SOCKET_BATCH_BYTES_THRESHOLD", socketBatchBytesThreshold)
@@ -707,6 +731,23 @@ public static class InterfoldAppHost
                    .WithEnvironment("OCTOCON_DB_RETRY_INITIAL_DELAY_MS", dbRetryInitialDelayMs)
                    .WithEnvironment("OCTOCON_DB_RETRY_MAX_DELAY_MS", dbRetryMaxDelayMs)
                    .WithEnvironment("OCTOCON_HYDRATION_MAX_CONCURRENCY", hydrationMaxConcurrency);
+
+                // AppHost-managed named volume for avatar persistence. Only mounted when (a)
+                // we're in the persistent-containers mode (the integration-test fixture flips
+                // this off for ephemeral runs), AND (b) the operator hasn't overridden the
+                // avatar storage path. The path matches the in-image directory pre-created
+                // with app:app ownership via Interfold.Api/data/avatars/.gitkeep, so Docker's
+                // volume-init carries that ownership into the new volume's root and the API
+                // (running as user `app`) can write to it. Operators with a custom
+                // OCTOCON_AVATAR_STORAGE_ROOT path are intentionally opted-out — their path
+                // doesn't exist in the image with the right ownership, so silently mounting
+                // a named volume there would just produce the EACCES failure this guard
+                // avoids; instead they're responsible for their own bind mount + permissions
+                // story (documented in the Phase-3 bootstrapper prompt copy).
+                if (persistentContainers && useDefaultAvatarStorageRoot)
+                {
+                    api.WithVolume("interfold_avatars", DefaultContainerAvatarStorageRoot);
+                }
             }
 
             var apiImageRef = builder.Configuration["Parameters:api-image"];

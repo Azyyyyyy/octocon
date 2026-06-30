@@ -152,6 +152,28 @@ public class SettingsControllerTests(IWebFactoryFixture fixture) : BaseEndpointT
                 await Assert.That(avatarUrl).IsNotNullOrWhiteSpace();
                 await Assert.That(UrlPathStartsWith(avatarUrl, $"{publicBase}/{principalId}/self/")).IsTrue();
             }
+
+            // End-to-end serving check: the avatar_url that the SPA receives from the
+            // profile response must actually return the bytes when fetched. Before the
+            // Phase-2 middleware in Program.cs this would 404 — the API wrote the file
+            // to disk and stamped a URL, but no handler served the bytes back. The
+            // assertion below is the regression guard for that "URL stamped but no
+            // listener" gap. We do it inside the same test so any future shape change
+            // to LocalAvatarStorage's URL format and the middleware's path matching is
+            // caught in one place.
+            using var avatarRequest = new HttpRequestMessage(HttpMethod.Get, avatarUrl);
+            // Avatar GETs are unauthenticated (the URL itself is the capability — this
+            // is the same exposure model as a CDN-fronted setup). Anonymous request is
+            // intentional so the assertion reflects what the SPA / external embed sees.
+            var avatarResponse = await client.SendAsync(avatarRequest);
+            var avatarBytes = await avatarResponse.Content.ReadAsByteArrayAsync();
+            using (Assert.Multiple())
+            {
+                await Assert.That(avatarResponse.StatusCode).IsEqualTo(HttpStatusCode.OK)
+                    .Because($"Expected the avatar URL returned by the profile endpoint to be servable. URL was '{avatarUrl}'.");
+                await Assert.That(avatarBytes.Length).IsGreaterThan(0)
+                    .Because("Expected non-zero bytes back from the avatar GET — a zero-length response would indicate the middleware matched the path but couldn't read the file off disk.");
+            }
         }
         finally
         {

@@ -5,6 +5,7 @@ using Interfold.Infrastructure;
 using Interfold.Infrastructure.Coordination;
 using Interfold.Infrastructure.Postgres;
 using Interfold.Infrastructure.Scylla;
+using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
@@ -60,6 +61,22 @@ public class InterfoldWebApplicationFactory : WebApplicationFactory<Program>
     /// the pre-recorder shape).
     /// </remarks>
     public ConcurrentQueue<Uri>? OutboundHttpUriRecorder { get; set; }
+
+    /// <summary>
+    /// Test-only sibling of <see cref="OutboundHttpUriRecorder"/>: when non-null, an
+    /// <see cref="IStartupFilter"/>-injected middleware enqueues every inbound request's
+    /// <c>(Host, Path)</c> tuple into this queue before the request reaches MVC. Used to
+    /// assert what host the INSIDE of the pipeline saw — outbound recording alone can't
+    /// observe whether a self-call's inner controller honoured a forwarded Host header,
+    /// because TestServer routes by path and the inbound side is otherwise unobservable.
+    /// </summary>
+    /// <remarks>
+    /// Same <c>PerTestSession</c> caveats as <see cref="OutboundHttpUriRecorder"/> — any
+    /// test that touches this MUST be serialised against any other test that does so.
+    /// The middleware is wired unconditionally (cheap when the queue is null), so the
+    /// only cost when unused is one nullable read per request.
+    /// </remarks>
+    public ConcurrentQueue<(string Host, string Path)>? InboundRequestHostRecorder { get; set; }
 
     public InterfoldWebApplicationFactory(
         string persistenceType,
@@ -184,6 +201,7 @@ public class InterfoldWebApplicationFactory : WebApplicationFactory<Program>
         builder.ConfigureServices(x =>
         {
             x.AddSingleton(this);
+            x.AddSingleton<IStartupFilter>(new InboundHostRecordingStartupFilter(this));
             x.Replace(ServiceDescriptor.Singleton<IHttpClientFactory, TestHttpClientFactory>());
             // Replace only the rate limiter with one backed by FakeTimeProvider.
             x.Replace(ServiceDescriptor.Singleton(new SocketJoinRateLimiter(TimeProvider)));
@@ -293,6 +311,42 @@ public class InterfoldWebApplicationFactory : WebApplicationFactory<Program>
                 sink.Enqueue(request.RequestUri);
             }
             return base.SendAsync(request, cancellationToken);
+        }
+    }
+
+    /// <summary>
+    /// Injects a tiny first-position middleware that captures <c>(Request.Host.Value,
+    /// Request.Path.Value)</c> into <see cref="InboundRequestHostRecorder"/> when set.
+    /// Lives as an <see cref="IStartupFilter"/> so it wraps the real Configure pipeline
+    /// without each test having to know how Program.cs assembles middleware.
+    /// </summary>
+    /// <remarks>
+    /// Recording runs at the FRONT of the pipeline — before any rewrite middleware could
+    /// mutate <c>Request.Host</c> — so the observed value is exactly what the inbound
+    /// request carried (either the upgrade's Host header for outer calls, or the
+    /// <c>HttpRequestMessage.Headers.Host</c> the proxy set on the inner self-call).
+    /// When <see cref="InboundRequestHostRecorder"/> is null the middleware is a single
+    /// nullable read per request and adds no observable behaviour.
+    /// </remarks>
+    private sealed class InboundHostRecordingStartupFilter(InterfoldWebApplicationFactory factory) : IStartupFilter
+    {
+        public Action<IApplicationBuilder> Configure(Action<IApplicationBuilder> next)
+        {
+            return app =>
+            {
+                app.Use(async (context, next2) =>
+                {
+                    var recorder = factory.InboundRequestHostRecorder;
+                    if (recorder is not null)
+                    {
+                        recorder.Enqueue((
+                            context.Request.Host.Value ?? string.Empty,
+                            context.Request.Path.Value ?? string.Empty));
+                    }
+                    await next2();
+                });
+                next(app);
+            };
         }
     }
 

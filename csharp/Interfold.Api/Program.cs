@@ -32,15 +32,9 @@ var builder = WebApplication.CreateBuilder(args);
 // --- Aspire ServiceDefaults (OTel, resilience, service discovery) ---
 builder.AddServiceDefaults();
 
-// --- Kestrel leaf PFX password (self-host only) ---
-// In the published self-host image the leaf PFX is bind-mounted at /certs/leaf.pfx and the
-// path env var (ASPNETCORE_Kestrel__Certificates__Default__Path) is set by the AppHost.
-// The matching password used to be an env var too, but it now lives exclusively in
-// internal.secrets under `certs:leaf_pfx_password`. We fetch it via a one-shot Npgsql
-// connection BEFORE the host builds — Kestrel reads the password out of IConfiguration
-// when it binds the HTTPS endpoint, and the hosted SecretsBootstrapService runs too late
-// for that. If Postgres isn't reachable here, the API fails before Kestrel binds; that's
-// the deliberate trade-off documented in docs/configuration.md.
+// Self-host only: patch the leaf PFX password into IConfiguration before the host builds
+// so Kestrel can unlock /certs/leaf.pfx at HTTPS-bind time. See LoadLeafPfxPasswordFromStoreIfNeeded
+// below for the self-host trigger + ordering rationale.
 LoadLeafPfxPasswordFromStoreIfNeeded(builder.Configuration);
 
 //Database connections which have been implemented
@@ -56,11 +50,9 @@ var authConfig = builder.Configuration.BindAuthenticationConfiguration();
 var persistenceConfig = builder.Configuration.BindPersistenceConfiguration();
 builder.Services.AddInterfoldOptions();
 
-// CORS allow-list. Operators supply a comma-separated list via OCTOCON_CORS_ALLOWED_ORIGINS
-// (e.g. "https://octocon.app,https://beta.octocon.app"). When the env var is empty or unset
-// the policy falls back to allowing any origin — appropriate for solo-API dev behind no
-// reverse proxy, but a production stack should always set the env explicitly. Trailing
-// slashes on individual entries are trimmed for parity with the ASP.NET Core CORS matcher.
+// Comma-separated allow-list from OCTOCON_CORS_ALLOWED_ORIGINS; blank falls back to
+// allow-any (dev-only — production stacks must set it explicitly). Trailing slashes
+// trimmed for parity with the ASP.NET Core CORS matcher.
 var configuredCorsOrigins = (builder.Configuration["OCTOCON_CORS_ALLOWED_ORIGINS"] ?? string.Empty)
     .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
     .Select(static origin => origin.TrimEnd('/'))
@@ -86,11 +78,8 @@ builder.Services.AddCors(options =>
     });
 });
 
-// --- Secrets Bootstrap ---
-// Registered BEFORE persistence services so its StartingAsync executes first.
-// Reads admin credentials + OAuth secrets from internal.secrets and patches configuration
-// before migration services attempt to use them. Dependencies (ISecretsStore, etc.) are
-// resolved after the DI container is fully built, so registration order doesn't matter for DI.
+// Registered BEFORE persistence services so its StartingAsync runs before migration services
+// try to read admin creds / OAuth secrets out of IConfiguration.
 builder.Services.AddHostedService<SecretsBootstrapService>();
 
 // --- Dependency Injection ---
@@ -127,21 +116,11 @@ builder.Services.AddHttpClient<AppleOAuthService>();
 builder.Services.AddHttpClient("SimplyPlural").AddHttpMessageHandler<HttpLoggingHandler>();
 builder.Services.AddSingleton<ISimplyPluralImportService, SimplyPluralImportService>();
 
-// --- Loopback self-call HttpClient ---
-// Used exclusively by WebSocketHandler.HandleEndpointProxyAsync to relay a socket
-// `endpoint` frame to the API's own controllers. The destination is always the API's
-// own Kestrel listener at 127.0.0.1 / ::1 / localhost (resolved via
-// IServerAddressesFeature in WebSocketHandler.ResolveLoopbackBaseUri), so the client
-// permissively accepts any TLS cert the server presents. Strict validation would fail
-// on the self-call because (a) the leaf PFX's SANs target the operator-facing hostname
-// rather than the loopback literal, and (b) the bootstrapper-issued private root CA is
-// not in the container's system trust store — both surface as RemoteCertificateName
-// Mismatch + RemoteCertificateChainErrors. Loopback connections cannot be intercepted
-// from outside the process, so this isn't a security boundary; see LoopbackHttpClient
-// for the full rationale. AllowAutoRedirect is disabled so HttpsRedirection (which
-// applies because the carve-out above only covers /.well-known) doesn't redirect the
-// proxy off-host: the call ALWAYS targets the HTTPS listener directly when available,
-// so a redirect would only ever be a bug.
+// Permissive-TLS named client for the WebSocket endpoint relay's self-call. The call
+// site (WebSocketHandler.HandleEndpointProxyAsync + ResolveLoopbackBaseUri) guarantees
+// a loopback destination; LoopbackHttpClient's XML doc covers why permissive validation
+// is the right call there. AllowAutoRedirect off because the relay targets the HTTPS
+// listener directly, so any redirect would be a bug to surface, not follow.
 builder.Services.AddHttpClient(LoopbackHttpClient.Name)
     .ConfigurePrimaryHttpMessageHandler(static () => new SocketsHttpHandler
     {
@@ -153,11 +132,8 @@ builder.Services.AddHttpClient(LoopbackHttpClient.Name)
     });
 
 // --- Auth ---
-// Tokens are always self-issued by this backend after
-// OAuth provider authentication completes. There is no single external OIDC authority to
-// validate against — the provider is only used to identify the user;
-// the resulting JWT is issued by Interfold itself. We therefore skip issuer validation and
-// rely on audience and lifetime checks only for now.
+// JWTs are self-issued post-OAuth (the provider only identifies the user); no external OIDC
+// authority to validate iss against, so issuer validation is off and we rely on aud + lifetime.
 // TODO: Look into how we can make this better WITHOUT breaking existing clients
 builder.Services
     .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
@@ -298,9 +274,10 @@ startupLogger.LogInformation(
     "ES256 token issuance is enabled. Verification key count: {VerificationKeyCount}.",
     verificationKeyCount);
 
-// Ensure avatar multipart uploads are buffered before any component touches Request.Body.
 app.UseExceptionHandler("/error");
 
+// Buffer avatar multipart PUTs so source-validation can re-read Request.Body after MVC
+// model-binds the form. Scoped to the two avatar routes to keep the cost off everything else.
 app.Use(async (context, next) =>
 {
     if (HttpMethods.IsPut(context.Request.Method)
@@ -367,14 +344,8 @@ app.Use(async (ctx, next) =>
 });
 
 app.UseHsts();
-// HttpsRedirection is bypassed for /.well-known/* because TrustController serves the
-// root CA there over plain HTTP. End-user devices fetching the cert haven't yet
-// installed our root, so they have no trust path to HTTPS - a 308-to-HTTPS would
-// break the bootstrap flow with an unauthenticated-cert error and is also wrong
-// directionally (the redirect target uses the container-internal HTTPS port, which is
-// not the same as the externally reachable HTTPS port behind a reverse proxy / port
-// map). Every other path keeps the redirect; clients are expected to speak HTTPS once
-// they've installed the root CA via the .well-known/ fetch-and-verify recipe.
+// Carve /.well-known out of HTTPS-redirect so TrustController can serve the root CA over
+// plain HTTP — clients can't trust HTTPS until they've fetched and installed that root.
 app.UseWhen(
     static ctx => !ctx.Request.Path.StartsWithSegments("/.well-known"),
     static branch => branch.UseHttpsRedirection());
@@ -382,6 +353,72 @@ app.UseCors();
 app.UseAuthentication();
 app.UseMiddleware<InterfoldPrincipalMiddleware>();
 app.UseStaticFiles();
+
+// Serve avatars per AvatarServingPolicy (see its XML doc for the config matrix). Hand-rolled
+// rather than a secondary UseStaticFiles because the policy reads IOptionsMonitor per request
+// — LocalAvatarStorage stamps URLs from the same monitor, so write-side and read-side must
+// agree on current values across config reloads. Unknown extensions fall through (matches
+// StaticFileMiddleware's ServeUnknownFileTypes=false); the upload controller already gates
+// content-type at write time.
+var avatarContentTypeProvider = new Microsoft.AspNetCore.StaticFiles.FileExtensionContentTypeProvider();
+app.Use(async (context, next) =>
+{
+    var storageMonitor = context.RequestServices.GetRequiredService<IOptionsMonitor<StorageConfiguration>>();
+    var current = storageMonitor.CurrentValue;
+    var (shouldServe, physicalRoot, requestPath) = AvatarServingPolicy.Resolve(
+        current.AvatarStorageRoot, current.AvatarPublicBase);
+
+    if (!shouldServe
+        || !context.Request.Path.StartsWithSegments(requestPath, StringComparison.Ordinal, out var remainingPath)
+        || !(HttpMethods.IsGet(context.Request.Method) || HttpMethods.IsHead(context.Request.Method)))
+    {
+        await next();
+        return;
+    }
+
+    var relative = remainingPath.Value?.TrimStart('/') ?? string.Empty;
+    if (relative.Length == 0 || relative.Contains("..", StringComparison.Ordinal))
+    {
+        await next();
+        return;
+    }
+
+    var rootFull = Path.GetFullPath(physicalRoot);
+    var rootWithSep = rootFull.EndsWith(Path.DirectorySeparatorChar)
+        ? rootFull
+        : rootFull + Path.DirectorySeparatorChar;
+    var fullPath = Path.GetFullPath(Path.Combine(rootFull, relative));
+    if (!fullPath.StartsWith(rootWithSep, StringComparison.OrdinalIgnoreCase))
+    {
+        await next();
+        return;
+    }
+
+    if (!File.Exists(fullPath))
+    {
+        await next();
+        return;
+    }
+
+    if (!avatarContentTypeProvider.TryGetContentType(fullPath, out var contentType))
+    {
+        await next();
+        return;
+    }
+
+    var fi = new FileInfo(fullPath);
+    context.Response.ContentType = contentType;
+    context.Response.ContentLength = fi.Length;
+    // Safe to cache long-term: LocalAvatarStorage embeds a timestamp+Guid in the filename,
+    // so any overwrite produces a fresh URL.
+    context.Response.Headers.CacheControl = "public, max-age=86400";
+    if (HttpMethods.IsHead(context.Request.Method))
+    {
+        return;
+    }
+    await context.Response.SendFileAsync(fullPath, context.RequestAborted);
+});
+
 app.UseWebSockets(new WebSocketOptions
 {
     KeepAliveInterval = TimeSpan.FromSeconds(30)
@@ -472,13 +509,14 @@ static string NormalizePem(string pem)
     if (string.IsNullOrWhiteSpace(pem))
         return pem;
 
-    // Normalize various line ending formats to actual newlines
+    // PEMs arrive from env vars / DB with both real and escaped line endings; collapse all
+    // of them to '\n' so ECDsa.ImportFromPem accepts the result.
     var normalized = pem
-        .Replace(@"\r\n", "\n", StringComparison.Ordinal)  // Escaped Windows (\r\n became \\r\\n)
-        .Replace("\\r", "\n", StringComparison.Ordinal)     // Escaped carriage return
-        .Replace("\\n", "\n", StringComparison.Ordinal)     // Escaped newline
-        .Replace("\r\n", "\n", StringComparison.Ordinal)    // Windows line endings
-        .Replace("\r", "\n", StringComparison.Ordinal);     // Old Mac line endings
+        .Replace(@"\r\n", "\n", StringComparison.Ordinal)
+        .Replace("\\r", "\n", StringComparison.Ordinal)
+        .Replace("\\n", "\n", StringComparison.Ordinal)
+        .Replace("\r\n", "\n", StringComparison.Ordinal)
+        .Replace("\r", "\n", StringComparison.Ordinal);
 
     return normalized;
 }
