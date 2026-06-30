@@ -16,6 +16,15 @@ jobs:
       # artifact per invocation), and a TARGETARCH→RID case branch in both
       # /Dockerfile and /Dockerfile.bootstrapper.
       BUILD_PLATFORMS: linux/amd64,linux/arm64,linux/arm/v7
+      # Tighter DinD-test concurrency for the bootstrapper integration suite
+      # than the assembly default (see DinDParallelLimit). Five fixtures spin
+      # up their own DinD on first use (each ~1.5 GB layer + ~1.6 GB preloaded
+      # inner images), and every concurrent compose stack inside those DinDs
+      # adds another ~0.7-1 GB of PG/Scylla named-volume churn. The GH-hosted
+      # ubuntu-latest runner only ships with ~14 GB free, so capping concurrent
+      # compose stacks at 2 keeps the peak well under the cliff that produced
+      # the "No space left on device" worker crash on run 28459493553.
+      INTERFOLD_DIND_PARALLEL_LIMIT: '2'
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
