@@ -59,7 +59,7 @@ public sealed class LoopbackHttpClientTests
         // baked into a dial-out URL. If a future change ever re-emits this from
         // ResolveLoopbackBaseUri, the call-site gate must reject it so the
         // permissive validator doesn't run against the real api.example.com cert.
-        var result = LoopbackHttpClient.IsLoopbackHost(new Uri("https://shrimp.local:5001/api/foo"));
+        var result = LoopbackHttpClient.IsLoopbackHost(new Uri("https://pineapple.local:5001/api/foo"));
         await Assert.That(result).IsFalse()
             .Because("Operator-facing hostnames are NOT loopback — the permissive validator must never run against them.");
     }

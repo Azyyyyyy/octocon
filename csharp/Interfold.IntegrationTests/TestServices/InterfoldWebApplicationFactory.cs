@@ -5,7 +5,6 @@ using Interfold.Infrastructure;
 using Interfold.Infrastructure.Coordination;
 using Interfold.Infrastructure.Postgres;
 using Interfold.Infrastructure.Scylla;
-using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
@@ -47,11 +46,15 @@ public class InterfoldWebApplicationFactory : WebApplicationFactory<Program>
     /// <summary>
     /// Test-only hook: when non-null, every <see cref="HttpClient"/> manufactured by
     /// <see cref="TestHttpClientFactory"/> chains a recording <see cref="DelegatingHandler"/>
-    /// in front of TestServer's handler. That handler enqueues each outbound
-    /// <see cref="HttpRequestMessage.RequestUri"/> into this queue before the request
-    /// is dispatched, so individual tests can assert what the API actually tried to dial
-    /// (rather than what TestServer routed it to — TestServer ignores the URI authority
-    /// when routing by path).
+    /// in front of TestServer's handler. The handler enqueues the outbound
+    /// <see cref="HttpRequestMessage.RequestUri"/> and <see cref="HttpRequestHeaders.Host"/>
+    /// BEFORE the request is dispatched, so tests can deterministically assert both what
+    /// the API tried to dial AND what Host header it set — important for the WebSocket
+    /// endpoint-relay regression where the inner <c>HttpContext.Request.Host</c> is not
+    /// a reliable observation point under TestServer (the in-process
+    /// <c>Microsoft.AspNetCore.TestHost.ClientHandler</c> does not faithfully propagate
+    /// <c>HttpRequestMessage.Headers.Host</c> on every platform, e.g. .NET 10.0.9 on
+    /// Linux observably falls back to the URI authority).
     /// </summary>
     /// <remarks>
     /// The factory is shared <c>PerTestSession</c>, so any test that sets this MUST run
@@ -60,23 +63,7 @@ public class InterfoldWebApplicationFactory : WebApplicationFactory<Program>
     /// Default is null (no recording, zero overhead, observable behaviour identical to
     /// the pre-recorder shape).
     /// </remarks>
-    public ConcurrentQueue<Uri>? OutboundHttpUriRecorder { get; set; }
-
-    /// <summary>
-    /// Test-only sibling of <see cref="OutboundHttpUriRecorder"/>: when non-null, an
-    /// <see cref="IStartupFilter"/>-injected middleware enqueues every inbound request's
-    /// <c>(Host, Path)</c> tuple into this queue before the request reaches MVC. Used to
-    /// assert what host the INSIDE of the pipeline saw — outbound recording alone can't
-    /// observe whether a self-call's inner controller honoured a forwarded Host header,
-    /// because TestServer routes by path and the inbound side is otherwise unobservable.
-    /// </summary>
-    /// <remarks>
-    /// Same <c>PerTestSession</c> caveats as <see cref="OutboundHttpUriRecorder"/> — any
-    /// test that touches this MUST be serialised against any other test that does so.
-    /// The middleware is wired unconditionally (cheap when the queue is null), so the
-    /// only cost when unused is one nullable read per request.
-    /// </remarks>
-    public ConcurrentQueue<(string Host, string Path)>? InboundRequestHostRecorder { get; set; }
+    public ConcurrentQueue<RecordedHttpCall>? OutboundHttpUriRecorder { get; set; }
 
     public InterfoldWebApplicationFactory(
         string persistenceType,
@@ -201,7 +188,6 @@ public class InterfoldWebApplicationFactory : WebApplicationFactory<Program>
         builder.ConfigureServices(x =>
         {
             x.AddSingleton(this);
-            x.AddSingleton<IStartupFilter>(new InboundHostRecordingStartupFilter(this));
             x.Replace(ServiceDescriptor.Singleton<IHttpClientFactory, TestHttpClientFactory>());
             // Replace only the rate limiter with one backed by FakeTimeProvider.
             x.Replace(ServiceDescriptor.Singleton(new SocketJoinRateLimiter(TimeProvider)));
@@ -295,58 +281,30 @@ public class InterfoldWebApplicationFactory : WebApplicationFactory<Program>
     }
 
     /// <summary>
-    /// Records every outbound <see cref="HttpRequestMessage.RequestUri"/> into a sink before
-    /// passing the request to TestServer's handler. Used by regression tests for the WebSocket
-    /// endpoint proxy that need to observe what URL the proxy is dialing (not just whether
-    /// the request succeeded — TestServer routes successfully regardless of authority because
-    /// it ignores host:port and matches by path).
+    /// Outbound <see cref="HttpClient"/> call captured for assertion: the request URI
+    /// the API tried to dial, plus the explicit <see cref="HttpRequestHeaders.Host"/>
+    /// value (if the API set one). Recording on the outbound side is more deterministic
+    /// than inspecting the inner <c>HttpContext.Request.Host</c> because TestHost's
+    /// in-process handler does not always faithfully copy the Host header into the
+    /// inner pipeline.
     /// </summary>
-    private sealed class RecordingDelegatingHandler(ConcurrentQueue<Uri> sink) : DelegatingHandler
+    public sealed record RecordedHttpCall(Uri Uri, string? HostHeader);
+
+    /// <summary>
+    /// Captures each outbound request's <see cref="HttpRequestMessage.RequestUri"/> and
+    /// <see cref="HttpRequestHeaders.Host"/> before TestServer dispatches it.
+    /// </summary>
+    private sealed class RecordingDelegatingHandler(
+        ConcurrentQueue<RecordedHttpCall> sink) : DelegatingHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request, CancellationToken cancellationToken)
         {
             if (request.RequestUri is not null)
             {
-                sink.Enqueue(request.RequestUri);
+                sink.Enqueue(new RecordedHttpCall(request.RequestUri, request.Headers.Host));
             }
             return base.SendAsync(request, cancellationToken);
-        }
-    }
-
-    /// <summary>
-    /// Injects a tiny first-position middleware that captures <c>(Request.Host.Value,
-    /// Request.Path.Value)</c> into <see cref="InboundRequestHostRecorder"/> when set.
-    /// Lives as an <see cref="IStartupFilter"/> so it wraps the real Configure pipeline
-    /// without each test having to know how Program.cs assembles middleware.
-    /// </summary>
-    /// <remarks>
-    /// Recording runs at the FRONT of the pipeline — before any rewrite middleware could
-    /// mutate <c>Request.Host</c> — so the observed value is exactly what the inbound
-    /// request carried (either the upgrade's Host header for outer calls, or the
-    /// <c>HttpRequestMessage.Headers.Host</c> the proxy set on the inner self-call).
-    /// When <see cref="InboundRequestHostRecorder"/> is null the middleware is a single
-    /// nullable read per request and adds no observable behaviour.
-    /// </remarks>
-    private sealed class InboundHostRecordingStartupFilter(InterfoldWebApplicationFactory factory) : IStartupFilter
-    {
-        public Action<IApplicationBuilder> Configure(Action<IApplicationBuilder> next)
-        {
-            return app =>
-            {
-                app.Use(async (context, next2) =>
-                {
-                    var recorder = factory.InboundRequestHostRecorder;
-                    if (recorder is not null)
-                    {
-                        recorder.Enqueue((
-                            context.Request.Host.Value ?? string.Empty,
-                            context.Request.Path.Value ?? string.Empty));
-                    }
-                    await next2();
-                });
-                next(app);
-            };
         }
     }
 

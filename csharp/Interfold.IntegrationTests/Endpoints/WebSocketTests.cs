@@ -1048,13 +1048,13 @@ public class WebSocketTests(IWebFactoryFixture fixture) : BaseEndpointTest
     /// relay used to build its outbound URL from the inbound request's
     /// <c>Scheme</c> + <c>Host</c>, which in published docker compose stacks crashed
     /// because the inbound Host is the operator-facing hostname + host-mapped port
-    /// (e.g. <c>shrimp.local:5001</c>) that the container itself can neither resolve
+    /// (e.g. <c>pineapple.local:5001</c>) that the container itself can neither resolve
     /// in DNS nor reach (port 5001 is the docker port-mapping host-side; the
     /// container listens on <c>ASPNETCORE_HTTP(S)_PORTS</c> internally — default
     /// 5100/5101, configurable via <c>Ports:api-container-http(s)</c>).
     ///
     /// This test pins the proxy's contract by simulating the production topology:
-    /// the WebSocket upgrade arrives with <c>Host: shrimp.local:99999</c>, then an
+    /// the WebSocket upgrade arrives with <c>Host: pineapple.local:99999</c>, then an
     /// <c>endpoint</c> frame is relayed through the proxy. The
     /// <see cref="InterfoldWebApplicationFactory.OutboundHttpUriRecorder"/> records
     /// every URI the proxy passes to <c>HttpClient.SendAsync</c>; the assertions
@@ -1087,17 +1087,15 @@ public class WebSocketTests(IWebFactoryFixture fixture) : BaseEndpointTest
         var topic = $"system:{systemId}";
         var socketToken = await CreateRandomToken(fixture.Factory, systemId);
 
-        var recorder = new ConcurrentQueue<Uri>();
-        var inboundRecorder = new ConcurrentQueue<(string Host, string Path)>();
+        var recorder = new ConcurrentQueue<InterfoldWebApplicationFactory.RecordedHttpCall>();
         fixture.Factory.OutboundHttpUriRecorder = recorder;
-        fixture.Factory.InboundRequestHostRecorder = inboundRecorder;
         try
         {
             var wsClient = fixture.Factory.Server.CreateWebSocketClient();
             // Simulate the production topology: the operator's reverse proxy / docker
             // port mapping fronts the container, so the upgrade request's Host header
             // is the operator-facing hostname + host-side port. The literal value from
-            // the crash report this test guards against is `shrimp.local:5001`. The
+            // the crash report this test guards against is `pineapple.local:5001`. The
             // internal Kestrel port differs (5100/5101 by default) and the hostname
             // is not in the container's DNS namespace; the proxy MUST ignore both.
             //
@@ -1108,7 +1106,7 @@ public class WebSocketTests(IWebFactoryFixture fixture) : BaseEndpointTest
             // Under TestServer the URI authority is otherwise unobservable, so picking
             // the real operator-facing port from the crash report is both valid AND
             // the most faithful reproduction of the production scenario.
-            const string operatorFacingHost = "shrimp.local";
+            const string operatorFacingHost = "pineapple.local";
             const int hostSideMappedPort = 5001;
             wsClient.ConfigureRequest = request =>
             {
@@ -1163,25 +1161,25 @@ public class WebSocketTests(IWebFactoryFixture fixture) : BaseEndpointTest
                 await Assert.That(reply.Response.Status).IsEqualTo(StatusCodes.Status201Created)
                     .Because("Expected the relayed POST /api/systems/me/alters to return 201 Created (mirrors the contract from the existing endpoint-proxy tests above).");
 
-                // The URI-recorder assertions ARE the regression guard. Pre-fix the
+                // The outbound recorder assertions ARE the regression guard. Pre-fix the
                 // proxy passed `{Request.Scheme}://{Request.Host}{path}` to HttpClient,
-                // which the recorder would have captured as containing `shrimp.local`
-                // and `:99999`. Post-fix the proxy passes the IServerAddressesFeature-
+                // which the recorder would have captured as containing `pineapple.local`
+                // and `:5001`. Post-fix the proxy passes the IServerAddressesFeature-
                 // derived loopback URL (or the TestServer fallback `http://localhost`),
                 // so neither token appears.
-                var recordedUris = recorder.ToArray();
-                await Assert.That(recordedUris.Length).IsGreaterThan(0)
+                var recorded = recorder.ToArray();
+                await Assert.That(recorded.Length).IsGreaterThan(0)
                     .Because("Expected the endpoint proxy to issue at least one outbound HttpClient call (the relayed POST to /api/systems/me/alters).");
 
-                // Find the URI that targeted the relayed path — there may be other
-                // unrelated HttpClient activity captured (token generation flows,
-                // EnsureUserExistsAsync from CreateRandomToken, etc.).
-                var proxyUri = recordedUris.FirstOrDefault(u =>
-                    u.AbsolutePath.Equals("/api/systems/me/alters", StringComparison.Ordinal));
-                await Assert.That(proxyUri).IsNotNull()
-                    .Because($"Expected to record an HttpClient call to /api/systems/me/alters from the endpoint proxy. Recorded URIs: [{string.Join(", ", recordedUris.Select(u => u.ToString()))}].");
+                // Filter to the relayed path — other HttpClient activity from this test
+                // (token generation, EnsureUserExistsAsync, etc.) may also be captured.
+                var proxyCall = recorded.FirstOrDefault(c =>
+                    c.Uri.AbsolutePath.Equals("/api/systems/me/alters", StringComparison.Ordinal));
+                await Assert.That(proxyCall).IsNotNull()
+                    .Because($"Expected to record an HttpClient call to /api/systems/me/alters from the endpoint proxy. Recorded calls: [{string.Join(", ", recorded.Select(c => $"({c.Uri}, Host={c.HostHeader ?? "<null>"})"))}].");
 
-                await Assert.That(proxyUri!.Host).IsNotEqualTo(operatorFacingHost)
+                var proxyUri = proxyCall!.Uri;
+                await Assert.That(proxyUri.Host).IsNotEqualTo(operatorFacingHost)
                     .Because($"Regression: the proxy is dialing the inbound Host header ({operatorFacingHost}) instead of the local Kestrel listener — this is the exact crash from csharp/Interfold.Api/Socket/WebSocketHandler.cs:444. Recorded host was '{proxyUri.Host}'.");
                 await Assert.That(proxyUri.Port).IsNotEqualTo(hostSideMappedPort)
                     .Because($"Regression: the proxy is dialing the host-side mapped port ({hostSideMappedPort}) instead of the container-internal Kestrel port. Recorded URI was '{proxyUri}'.");
@@ -1197,35 +1195,33 @@ public class WebSocketTests(IWebFactoryFixture fixture) : BaseEndpointTest
 
                 // Regression guard for the loopback-origin leak in WebSocketHandler.
                 // HandleEndpointProxyAsync: before the fix, the proxy left
-                // `request.Headers.Host` unset, so the inner controller saw
-                // `Request.Host` = the loopback dial target. Any avatar / OAuth /
-                // origin-stamped URL in the inner response was then qualified with
-                // the loopback host (e.g. `https://127.0.0.1:5101/...`) which the
-                // browser can't reach. The fix sets the Host header on the inner
-                // self-call so the inner pipeline observes the OUTER upgrade's host.
-                // The recorder middleware captures both the outer upgrade and the
-                // inner self-call; we filter for the relayed POST path because the
-                // outer is the WebSocket upgrade (different path) and other unrelated
-                // pipeline traffic (token validation, etc.) may also appear.
-                var inboundHits = inboundRecorder.ToArray();
+                // `request.Headers.Host` unset on the inner HttpRequestMessage, so under
+                // real Kestrel the inner controller saw `Request.Host` = the loopback
+                // dial target (e.g. `127.0.0.1:5101`) and stamped unreachable URLs in
+                // phx_reply payloads (avatar URLs, OAuth callbacks, etc.). The fix sets
+                // the Host header on the inner self-call to the outer upgrade's host.
+                //
+                // We assert on the OUTBOUND `HttpRequestMessage.Headers.Host` (what the
+                // production code intentionally set) rather than the inner
+                // `HttpContext.Request.Host` because the latter depends on TestHost's
+                // ClientHandler propagating the Host header into the in-process
+                // HttpContext — that propagation is not reliable across platforms (.NET
+                // 10.0.9 on Linux observed to drop it). Real Kestrel always honors the
+                // Host header from the HTTP wire as a matter of HTTP standard, so the
+                // outbound assertion is sufficient for production correctness.
                 var operatorFacingHostHeader = $"{operatorFacingHost}:{hostSideMappedPort}";
-                var innerInbound = inboundHits.FirstOrDefault(h =>
-                    h.Path.Equals("/api/systems/me/alters", StringComparison.Ordinal));
-                await Assert.That(innerInbound.Path).IsEqualTo("/api/systems/me/alters")
-                    .Because($"Expected to observe the relayed POST hitting the inner pipeline. Recorded inbound (Host, Path) pairs: [{string.Join(", ", inboundHits.Select(h => $"({h.Host}, {h.Path})"))}].");
-                await Assert.That(innerInbound.Host).IsEqualTo(operatorFacingHostHeader)
-                    .Because($"Regression: the inner self-call's Request.Host should reflect the OUTER WebSocket upgrade's Host header ('{operatorFacingHostHeader}'), not the loopback dial target. Without this, AvatarUrlQualifier (and any other Request.Host-based URL stamping) emits unreachable URLs in phx_reply payloads. Recorded inner Host was '{innerInbound.Host}'.");
+                await Assert.That(proxyCall.HostHeader).IsEqualTo(operatorFacingHostHeader)
+                    .Because($"Regression: the proxy must forward the OUTER upgrade's Host header ('{operatorFacingHostHeader}') onto the inner HttpRequestMessage so the inner pipeline observes the operator-facing origin, not the loopback dial target. Recorded Host header was '{proxyCall.HostHeader ?? "<null>"}'.");
             }
 
             await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "test done", token);
         }
         finally
         {
-            // Clear the recorder hooks before any other test sees the factory; the
+            // Clear the recorder hook before any other test sees the factory; the
             // [NotInParallel] key guarantees no overlap but resetting in `finally`
             // keeps the post-condition obvious to readers.
             fixture.Factory.OutboundHttpUriRecorder = null;
-            fixture.Factory.InboundRequestHostRecorder = null;
         }
     }
 

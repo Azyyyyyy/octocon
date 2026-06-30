@@ -9,7 +9,7 @@ namespace Interfold.Api.UnitTests.Socket;
 ///
 /// The pre-fix behaviour built the proxy's outbound URL from the inbound request's
 /// <c>Scheme</c> + <c>Host</c>, which crashed in published docker deployments because the
-/// inbound Host is the operator-facing hostname:port (e.g. <c>shrimp.local:5001</c>) that
+/// inbound Host is the operator-facing hostname:port (e.g. <c>pineapple.local:5001</c>) that
 /// the container itself can neither resolve nor reach (port 5001 is the host-side of the
 /// docker port mapping; the container listens on <c>ASPNETCORE_HTTP(S)_PORTS</c> internally,
 /// default 5100/5101). This helper resolves the URL from Kestrel's actual bindings
@@ -172,7 +172,7 @@ public sealed class ResolveLoopbackBaseUriTests
     [Test]
     public async Task RegressionGuard_DoesNotReturnOperatorFacingHostname()
     {
-        // The original bug surfaced as the proxy dialing `https://shrimp.local:5001/api/...`
+        // The original bug surfaced as the proxy dialing `https://pineapple.local:5001/api/...`
         // — the operator-facing hostname + host-side port baked into the inbound request.
         // The helper has no business returning that shape regardless of input: it MUST
         // only ever return either the TestServer fallback or one of the inputs (post
@@ -188,7 +188,7 @@ public sealed class ResolveLoopbackBaseUriTests
 
         using (Assert.Multiple())
         {
-            await Assert.That(result).DoesNotContain("shrimp.local")
+            await Assert.That(result).DoesNotContain("pineapple.local")
                 .Because("Regression guard: the proxy must never return the inbound request's operator-facing hostname.");
             await Assert.That(result).DoesNotContain(":5001")
                 .Because("Regression guard: the proxy must never return the host-side mapped port.");
