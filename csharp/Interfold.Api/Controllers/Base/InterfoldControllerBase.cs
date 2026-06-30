@@ -165,6 +165,20 @@ public abstract class InterfoldControllerBase : ControllerBase
         return ConflictToError(result.Conflict!);
     }
 
+    /// <summary>
+    /// Maps a <see cref="CommandExecutionResult{T}"/> to a 202 Accepted <see cref="Response{TData}"/>
+    /// carrying the mapped <paramref name="dataSelector"/> result. Used by endpoints whose
+    /// command handler dispatches work asynchronously (the lifecycle then continues out-of-band,
+    /// typically via WebSocket frames) — the controller is done as soon as the dispatch lands.
+    /// </summary>
+    protected Response<TData> CommandAccepted<T, TData>(CommandExecutionResult<T> result, Func<T, TData> dataSelector)
+    {
+        if (result.Accepted)
+            return new SuccessResponse<TData>(dataSelector(result.Result!), HttpStatusCode.Accepted);
+
+        return ConflictToError(result.Conflict!);
+    }
+
     protected ErrorResponse ConflictToError(Contracts.Operations.ConflictResult conflict)
     {
         Response.Headers["X-Interfold-OperationId"] = conflict.OperationId;

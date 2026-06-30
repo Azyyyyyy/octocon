@@ -7,11 +7,13 @@ using Interfold.Api.Helpers;
 using Interfold.Api.Middleware;
 using Interfold.Api.Services;
 using Interfold.Api.Services.Http;
+using Interfold.Api.Services.ImportJobs;
 using Interfold.Api.Socket;
 using Interfold.Api.Swagger;
 using Interfold.Contracts;
 using Interfold.Contracts.Configuration;
 using Interfold.Domain.Abstractions;
+using Interfold.Domain.Abstractions.ImportJobs;
 using Interfold.Domain.Abstractions.Repository;
 using Interfold.Infrastructure.DependencyInjection;
 using Interfold.Infrastructure.InMemory;
@@ -115,6 +117,16 @@ builder.Services.AddHttpClient<DiscordOAuthService>();
 builder.Services.AddHttpClient<AppleOAuthService>();
 builder.Services.AddHttpClient("SimplyPlural").AddHttpMessageHandler<HttpLoggingHandler>();
 builder.Services.AddSingleton<ISimplyPluralImportService, SimplyPluralImportService>();
+
+// Async-import worker stack. The queue itself is registered in
+// AddInterfoldCluster (it's a coordination primitive). Runners are per-kind and
+// resolve their concrete importer dependency from this graph. The hosted service
+// drains the queue, drives operation-row transitions, and publishes the
+// sp_import_complete / pk_import_complete events that the existing socket pump
+// relays to the WebSocket client.
+builder.Services.AddSingleton<IImportJobRunner, SpImportJobRunner>();
+builder.Services.AddSingleton<IImportJobRunner, PkImportJobRunner>();
+builder.Services.AddHostedService<ImportJobBackgroundService>();
 
 // Permissive-TLS named client for the WebSocket endpoint relay's self-call. The call
 // site (WebSocketHandler.HandleEndpointProxyAsync + ResolveLoopbackBaseUri) guarantees

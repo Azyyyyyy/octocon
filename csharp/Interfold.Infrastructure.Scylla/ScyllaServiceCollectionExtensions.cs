@@ -43,6 +43,7 @@ public static class ScyllaServiceCollectionExtensions
                 .AddSingleton<ITagRepository, ScyllaTagRepository>()
                 .AddSingleton<IJournalRepository, ScyllaJournalRepository>()
                 .AddSingleton<IPollRepository, ScyllaPollRepository>()
+                .AddSingleton<IImportOperationRepository, ScyllaImportOperationRepository>()
                 .AddHostedService<ScyllaMigrationService>();
 
         return pipeline;

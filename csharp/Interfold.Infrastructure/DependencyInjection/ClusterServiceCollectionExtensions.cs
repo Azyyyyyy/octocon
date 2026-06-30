@@ -3,6 +3,7 @@ using Interfold.Contracts.Enums;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Interfold.Domain.Abstractions;
+using Interfold.Domain.Abstractions.ImportJobs;
 using Interfold.Infrastructure.Coordination;
 
 namespace Interfold.Infrastructure.DependencyInjection;
@@ -24,6 +25,12 @@ public static partial class ServiceCollectionExtensions
 
         // Cluster event bus — in-process for single-node and integration tests.
         services.AddSingleton<IClusterEventBus, InProcessEventBus>();
+
+        // Async-import queue — single-channel in-process FIFO consumed by
+        // ImportJobBackgroundService. The per-system mutex lives in
+        // IImportOperationRepository (LWT on active_import_by_system), not here, so a
+        // single global channel + one worker is the simplest correct shape.
+        services.AddSingleton<IImportJobQueue, InProcessImportJobQueue>();
 
         // FCM push notification service — NullFCMService until real Firebase integration is configured.
         services.AddSingleton<IFCMService, NullFCMService>();

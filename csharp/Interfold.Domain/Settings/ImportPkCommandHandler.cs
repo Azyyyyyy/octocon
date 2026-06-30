@@ -1,81 +1,73 @@
 ﻿using Interfold.Contracts;
-using Interfold.Contracts.Events;
 using Interfold.Contracts.Models;
 using Interfold.Contracts.Models.Commands;
+using Interfold.Contracts.Models.ImportOperations;
 using Interfold.Contracts.Operations;
 using Interfold.Domain.Abstractions;
+using Interfold.Domain.Abstractions.ImportJobs;
+using Interfold.Domain.Abstractions.Repository;
 
 namespace Interfold.Domain.Settings;
 
-public sealed class ImportPkCommandHandler : ICommandHandler<ImportPkCommand, SettingsCommandResult>
+/// <summary>
+/// Async dispatcher for PluralKit imports — symmetrical to <see cref="ImportSpCommandHandler"/>.
+/// The real PK importer is still a stub (see <see cref="ImportJobs.PkImportJobRunner"/>),
+/// but the dispatch shape is identical so when the real importer lands it inherits the
+/// per-system mutex, the background-worker lifecycle, and the existing
+/// <c>pk_import_complete</c> / <c>pk_import_failed</c> WebSocket contract for free.
+/// </summary>
+public sealed class ImportPkCommandHandler : ICommandHandler<ImportPkCommand, ImportDispatchCommandResult>
 {
-    private readonly IIdempotencyStore _idempotencyStore;
-    private readonly IClusterEventBus _eventBus;
+    private readonly IImportOperationRepository _operations;
+    private readonly IImportJobQueue _queue;
 
-    public ImportPkCommandHandler(IIdempotencyStore idempotencyStore, IClusterEventBus eventBus)
+    public ImportPkCommandHandler(IImportOperationRepository operations, IImportJobQueue queue)
     {
-        _idempotencyStore = idempotencyStore;
-        _eventBus = eventBus;
+        _operations = operations;
+        _queue = queue;
     }
 
-    public Task<CommandExecutionResult<SettingsCommandResult>> HandleAsync(CommandEnvelope<ImportPkCommand> command, CancellationToken cancellationToken = default)
+    public async Task<CommandExecutionResult<ImportDispatchCommandResult>> HandleAsync(
+        CommandEnvelope<ImportPkCommand> command,
+        CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(command.Payload.Token))
         {
-            return Task.FromResult(CommandExecutionResult<SettingsCommandResult>.Rejected(
-                new ConflictResult(ConflictCode.ConflictInvariant, command.OperationId, "settings:import_pk_invalid", "manual_merge_required")));
+            return CommandExecutionResult<ImportDispatchCommandResult>.Rejected(
+                new ConflictResult(
+                    ConflictCode.ConflictInvariant,
+                    command.OperationId,
+                    "settings:import_pk_invalid",
+                    "manual_merge_required"));
         }
 
-        return ExecuteAndPublishAsync(command, cancellationToken);
-    }
+        var claim = await _operations.TryClaimAsync(
+            command.PrincipalId,
+            ImportOperationKinds.PluralKit,
+            command.IdempotencyKey,
+            cancellationToken).ConfigureAwait(false);
 
-    private async Task<CommandExecutionResult<SettingsCommandResult>> ExecuteAndPublishAsync(
-        CommandEnvelope<ImportPkCommand> command,
-        CancellationToken cancellationToken)
-    {
-        // The PK importer itself is still a TODO (mirrors Octocon.Workers.PluralKitImportWorker
-        // in the legacy stack). The socket lifecycle wiring lives here so the broadcast
-        // contract — pk_import_complete carrying alter_count, pk_import_failed signal — is
-        // ready as soon as the apply delegate starts performing real work. Capture the
-        // imported count out of the apply scope the same way ImportSpCommandHandler does.
-        int importedAlterCount = 0;
-        bool importApplied = false;
-
-        CommandExecutionResult<SettingsCommandResult> result;
-        try
+        if (claim.IsNew)
         {
-            result = await SettingsCommandHelper.ExecuteAsync(
-                command,
-                "pk_imported",
-                "settings:import:pk",
-                _idempotencyStore,
-                _ =>
-                {
-                    importApplied = true;
-                    return Task.FromResult(true);
-                },
-                cancellationToken);
-        }
-        catch
-        {
-            await _eventBus.PublishAsync(new PluralKitImportFailedEvent(command.PrincipalId), cancellationToken);
-            throw;
+            // PK doesn't have a recovery code — the contract carries a single token only.
+            await _queue.EnqueueAsync(
+                new ImportJobItem(
+                    claim.OperationId,
+                    command.PrincipalId,
+                    ImportOperationKinds.PluralKit,
+                    command.Payload.Token,
+                    RecoveryCode: null),
+                cancellationToken).ConfigureAwait(false);
         }
 
-        if (result is { Accepted: true, Result.Replay: false })
-        {
-            await _eventBus.PublishAsync(new SettingsProfileUpdatedEvent(command.PrincipalId, false), cancellationToken);
-            await _eventBus.PublishAsync(
-                new PluralKitImportCompletedEvent(command.PrincipalId, importedAlterCount),
-                cancellationToken);
-        }
-        else if (importApplied && result is { Accepted: false })
-        {
-            // Only fires once the real PK importer is wired up and starts returning false
-            // for graceful failures; replay short-circuits before this branch and is a no-op.
-            await _eventBus.PublishAsync(new PluralKitImportFailedEvent(command.PrincipalId), cancellationToken);
-        }
+        var result = new ImportDispatchCommandResult(
+            command.PrincipalId,
+            claim.OperationId,
+            ImportOperationKinds.PluralKit,
+            Status: claim.IsNew ? "queued" : "running",
+            StartedAt: DateTimeOffset.UtcNow,
+            Replay: false);
 
-        return result;
+        return CommandExecutionResult<ImportDispatchCommandResult>.Success(result);
     }
 }

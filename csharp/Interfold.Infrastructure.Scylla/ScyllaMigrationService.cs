@@ -48,6 +48,7 @@ public sealed partial class ScyllaMigrationService(
     private const string KeyspacesMigration = "001_create_interfold_keyspaces.cql";
     private const string SchemaMigration = "002_create_interfold_schema.templated.cql";
     private const string FieldTimestampsMigration = "003_field_udt_timestamps.templated.cql";
+    private const string ImportOperationsMigration = "004_import_operations.templated.cql";
     private const string GrantsVersion = "grants_v1";
 
     // Stable template hashed for grant tracking. Bump GrantsVersion whenever this string
@@ -140,6 +141,7 @@ public sealed partial class ScyllaMigrationService(
             await ApplyKeyspaces(session, visibleDcs, isScylla, applied);
             await ApplySchema(session, applied);
             await ApplyTemplatedMigrationPerKeyspace(session, applied, FieldTimestampsMigration);
+            await ApplyTemplatedMigrationPerKeyspace(session, applied, ImportOperationsMigration);
             await GrantPermissions(session, applied);
         }
         finally

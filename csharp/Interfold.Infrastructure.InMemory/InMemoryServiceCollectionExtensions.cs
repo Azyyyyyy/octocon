@@ -75,6 +75,7 @@ public static class InMemoryServiceCollectionExtensions
             .AddSingleton<ITagRepository, InMemoryTagRepository>()
             .AddSingleton<IJournalRepository, InMemoryJournalRepository>()
             .AddSingleton<IIdempotencyStore, InMemoryIdempotencyStore>()
+            .AddSingleton<IImportOperationRepository, InMemoryImportOperationRepository>()
             .AddSingleton<IAuthTokenRevocationRepository, InMemoryAuthTokenRevocationRepository>();
     }
 

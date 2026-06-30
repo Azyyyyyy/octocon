@@ -423,9 +423,15 @@ public sealed class SettingsController : InterfoldControllerBase
         return CommandNoContent(execution);
     }
 
-    //TODO: To ensure route works as expected
+    /// <summary>
+    /// Dispatches a PluralKit import onto the background worker. Returns 202 Accepted
+    /// with the dispatched operation_id; the actual import outcome is pushed over the
+    /// WebSocket as <c>pk_import_complete</c> or <c>pk_import_failed</c>. Concurrent
+    /// dispatches for the same system collapse onto the in-flight operation rather
+    /// than starting a second importer run.
+    /// </summary>
     [HttpPost("import-pk")]
-    public async Task<Response> ImportPk([FromBody] SettingsImportRequest req, CancellationToken ct)
+    public async Task<Response<ImportDispatchResponse>> ImportPk([FromBody] SettingsImportRequest req, CancellationToken ct)
     {
         var envelope = new CommandEnvelope<ImportPkCommand>(
             OperationIds.SettingsImportPk,
@@ -436,11 +442,24 @@ public sealed class SettingsController : InterfoldControllerBase
             Payload: new ImportPkCommand(req.Token)
         );
 
-        return CommandNoContent(await _importPkHandler.HandleAsync(envelope, ct));
+        return CommandAccepted(
+            await _importPkHandler.HandleAsync(envelope, ct),
+            r => new ImportDispatchResponse(r.OperationId, r.Status, r.StartedAt));
     }
 
+    /// <summary>
+    /// Dispatches a Simply Plural import onto the background worker. Returns 202 Accepted
+    /// with the dispatched operation_id in &lt;500 ms (no synchronous import work runs
+    /// here). The actual import outcome — including the per-import alter count for
+    /// successful runs — is pushed over the WebSocket as <c>sp_import_complete</c> or
+    /// <c>sp_import_failed</c> and the frontend already listens for those frames.
+    /// Concurrent dispatches for the same system collapse onto the existing in-flight
+    /// operation via the Cassandra LWT mutex on <c>active_import_by_system</c>, so a
+    /// browser retry, Polly retry, or double-clicked button can no longer trigger a
+    /// duplicate import run.
+    /// </summary>
     [HttpPost("import-sp")]
-    public async Task<Response> ImportSp([FromBody] SettingsImportRequest req, CancellationToken ct)
+    public async Task<Response<ImportDispatchResponse>> ImportSp([FromBody] SettingsImportRequest req, CancellationToken ct)
     {
         string? recoveryCode = null;
         if (!string.IsNullOrWhiteSpace(req.RecoveryCode) && !TryResolveRecoveryCode(req.RecoveryCode, out recoveryCode, out var decryptionErrorCode))
@@ -455,7 +474,9 @@ public sealed class SettingsController : InterfoldControllerBase
             Payload: new ImportSpCommand(req.Token, recoveryCode)
         );
 
-        return CommandNoContent(await _importSpHandler.HandleAsync(envelope, ct));
+        return CommandAccepted(
+            await _importSpHandler.HandleAsync(envelope, ct),
+            r => new ImportDispatchResponse(r.OperationId, r.Status, r.StartedAt));
     }
 
     [HttpPost("unlink_discord")]

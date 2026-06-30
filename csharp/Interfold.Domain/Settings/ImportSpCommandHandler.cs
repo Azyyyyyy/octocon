@@ -1,88 +1,91 @@
 using Interfold.Contracts;
-using Interfold.Contracts.Events;
 using Interfold.Contracts.Models;
 using Interfold.Contracts.Models.Commands;
+using Interfold.Contracts.Models.ImportOperations;
 using Interfold.Contracts.Operations;
 using Interfold.Domain.Abstractions;
+using Interfold.Domain.Abstractions.ImportJobs;
+using Interfold.Domain.Abstractions.Repository;
 
 namespace Interfold.Domain.Settings;
 
-public sealed class ImportSpCommandHandler : ICommandHandler<ImportSpCommand, SettingsCommandResult>
+/// <summary>
+/// Async dispatcher for Simply Plural imports. The handler no longer runs the importer
+/// itself — it only claims a per-system slot (LWT-protected) and enqueues the actual
+/// work for the <c>ImportJobBackgroundService</c> to pick up. Returns in a few ms so the
+/// controller can respond with HTTP 202 Accepted and the client UI flips into its local
+/// "importing" state immediately (no Polly-induced retry storm because there's nothing
+/// for the loopback HttpClient to time out on).
+///
+/// <para>
+/// <b>Why the old code path is gone.</b> Synchronously calling
+/// <c>SettingsCommandHelper.ExecuteAsync</c> wrapped the importer in a per-command
+/// idempotency dedupe that fired once on the request-level key. The duplicate-SP-import
+/// bug bypassed that dedupe by minting a fresh idempotency key per Polly retry (see
+/// <c>GetIdempotencyKey</c>'s fallback). Replacing the dedupe with the per-system LWT
+/// mutex (<c>active_import_by_system</c>) means every dispatch — original or retried,
+/// from any client — collapses onto the same in-flight operation, regardless of what
+/// the idempotency key looks like.
+/// </para>
+/// </summary>
+public sealed class ImportSpCommandHandler : ICommandHandler<ImportSpCommand, ImportDispatchCommandResult>
 {
-    private readonly IIdempotencyStore _idempotencyStore;
-    private readonly IClusterEventBus _eventBus;
-    private readonly ISimplyPluralImportService _importService;
+    private readonly IImportOperationRepository _operations;
+    private readonly IImportJobQueue _queue;
 
-    public ImportSpCommandHandler(IIdempotencyStore idempotencyStore, IClusterEventBus eventBus, ISimplyPluralImportService importService)
+    public ImportSpCommandHandler(IImportOperationRepository operations, IImportJobQueue queue)
     {
-        _idempotencyStore = idempotencyStore;
-        _eventBus = eventBus;
-        _importService = importService;
+        _operations = operations;
+        _queue = queue;
     }
 
-    public Task<CommandExecutionResult<SettingsCommandResult>> HandleAsync(CommandEnvelope<ImportSpCommand> command, CancellationToken cancellationToken = default)
+    public async Task<CommandExecutionResult<ImportDispatchCommandResult>> HandleAsync(
+        CommandEnvelope<ImportSpCommand> command,
+        CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(command.Payload.Token))
         {
-            return Task.FromResult(CommandExecutionResult<SettingsCommandResult>.Rejected(
-                new ConflictResult(ConflictCode.ConflictInvariant, command.OperationId, "settings:import_sp_invalid", "manual_merge_required")));
+            return CommandExecutionResult<ImportDispatchCommandResult>.Rejected(
+                new ConflictResult(
+                    ConflictCode.ConflictInvariant,
+                    command.OperationId,
+                    "settings:import_sp_invalid",
+                    "manual_merge_required"));
         }
 
-        return ExecuteAndPublishAsync(command, cancellationToken);
-    }
+        var claim = await _operations.TryClaimAsync(
+            command.PrincipalId,
+            ImportOperationKinds.SimplyPlural,
+            command.IdempotencyKey,
+            cancellationToken).ConfigureAwait(false);
 
-    private async Task<CommandExecutionResult<SettingsCommandResult>> ExecuteAndPublishAsync(
-        CommandEnvelope<ImportSpCommand> command,
-        CancellationToken cancellationToken)
-    {
-        // Captured from inside the apply delegate so the outer handler can broadcast the
-        // matching socket lifecycle event (sp_import_complete includes alter_count, mirroring
-        // the legacy Elixir Octocon.Workers.SimplyPluralImportWorker contract).
-        SpImportResult? capturedResult = null;
-
-        CommandExecutionResult<SettingsCommandResult> result;
-        try
+        if (claim.IsNew)
         {
-            result = await SettingsCommandHelper.ExecuteAsync(
-                command,
-                "sp_imported",
-                "settings:import:sp",
-                _idempotencyStore,
-                async ct =>
-                {
-                    capturedResult = await _importService.ImportAsync(
-                        command.PrincipalId,
-                        command.Payload.Token,
-                        command.Payload.RecoveryCode,
-                        ct);
-                    return capturedResult.Success;
-                },
-                cancellationToken);
-        }
-        catch
-        {
-            // Mirror the legacy worker's rescue-clause: emit sp_import_failed even for
-            // thrown exceptions (HTTP/transport failures, decryption errors, etc.) before
-            // letting the exception propagate to the controller.
-            await _eventBus.PublishAsync(new SimplyPluralImportFailedEvent(command.PrincipalId), cancellationToken);
-            throw;
+            await _queue.EnqueueAsync(
+                new ImportJobItem(
+                    claim.OperationId,
+                    command.PrincipalId,
+                    ImportOperationKinds.SimplyPlural,
+                    command.Payload.Token,
+                    command.Payload.RecoveryCode),
+                cancellationToken).ConfigureAwait(false);
         }
 
-        if (result is { Accepted: true, Result.Replay: false })
-        {
-            await _eventBus.PublishAsync(new SettingsProfileUpdatedEvent(command.PrincipalId, false), cancellationToken);
-            await _eventBus.PublishAsync(
-                new SimplyPluralImportCompletedEvent(command.PrincipalId, capturedResult?.AlterCount ?? 0),
-                cancellationToken);
-        }
-        else if (capturedResult is { Success: false })
-        {
-            // Graceful import failure (auth, encryption mismatch, fetch errors that the
-            // service swallows into a `Success=false` result) still warrants the socket
-            // signal that the legacy contract sent.
-            await _eventBus.PublishAsync(new SimplyPluralImportFailedEvent(command.PrincipalId), cancellationToken);
-        }
+        // The "running" status returned on a collapse is intentional: a second dispatch
+        // for the same system while a job is still in flight is a NO-OP at the worker
+        // layer (we never enqueue), but the caller still gets back a real operation_id
+        // so any client log / debugger sees the same correlation handle as the
+        // originating click. Replay is wired to false because async dispatch doesn't have
+        // the "exact same result available on replay" semantics SettingsCommandHelper
+        // gave the synchronous path — the WebSocket frame is the authoritative outcome.
+        var result = new ImportDispatchCommandResult(
+            command.PrincipalId,
+            claim.OperationId,
+            ImportOperationKinds.SimplyPlural,
+            Status: claim.IsNew ? "queued" : "running",
+            StartedAt: DateTimeOffset.UtcNow,
+            Replay: false);
 
-        return result;
+        return CommandExecutionResult<ImportDispatchCommandResult>.Success(result);
     }
 }
