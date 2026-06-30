@@ -288,6 +288,111 @@ public class AltersControllerTests(IWebFactoryFixture fixture) : BaseEndpointTes
     }
 
     [Test]
+    public async Task AlterDelete_CascadesAlterJournalsAndDetachesFromGlobalJournals()
+    {
+        // Regression: deleting an alter must wipe its alter_journals entries (both view tables
+        // in the Scylla repo) and detach it from any global_journal_alters rows, while leaving
+        // the global journal itself intact (multiple alters can share a group journal).
+        // Before the fix, DeleteAlterCommandHandler called only IAlterRepository.DeleteAsync and
+        // left every alter-journal entry orphaned in the database.
+        using var client = fixture.Factory.CreateClient(new WebApplicationFactoryClientOptions
+        {
+            AllowAutoRedirect = false
+        });
+
+        var principal = $"parity-alter-delete-cascade-{Guid.NewGuid():N}"[..32];
+        var deletedAlterId = await CreateAlterAsync(client, principal, "DeleteMe");
+        var keeperAlterId = await CreateAlterAsync(client, principal, "KeepMe");
+
+        // Create an alter-journal entry owned by the alter we're about to delete. After the
+        // delete, the per-entry GET must 404 (the cascade wiped it).
+        using var createAlterJournalReq = new HttpRequestMessage(HttpMethod.Post, $"/api/systems/me/alters/{deletedAlterId}/journals")
+        {
+            Content = JsonContent.Create(new { title = "AlterJournalToCascade" })
+        };
+        AttachPrincipalAuth(createAlterJournalReq, client, principal);
+        var alterJournalRes = await client.SendAsync(createAlterJournalReq);
+        var alterJournalBody = await alterJournalRes.Content.ReadAsStringAsync();
+        var alterJournalEntryId = ReadNestedString(alterJournalBody, "data", "id");
+        if (string.IsNullOrWhiteSpace(alterJournalEntryId))
+            alterJournalEntryId = ReadNestedString(alterJournalBody, "data", "entry_id");
+        await Assert.That(alterJournalEntryId).IsNotNullOrWhiteSpace();
+
+        // Create a global journal and attach BOTH alters. After the cascade, the global
+        // journal must still exist with the keeper alter still attached.
+        using var createGlobalReq = new HttpRequestMessage(HttpMethod.Post, "/api/journals")
+        {
+            Content = JsonContent.Create(new { title = "GroupJournalShared" })
+        };
+        AttachPrincipalAuth(createGlobalReq, client, principal);
+        var globalRes = await client.SendAsync(createGlobalReq);
+        var globalBody = await globalRes.Content.ReadAsStringAsync();
+        var globalJournalId = ReadNestedString(globalBody, "data", "id");
+        await Assert.That(globalJournalId).IsNotNullOrWhiteSpace();
+
+        foreach (var alterIdToAttach in new[] { deletedAlterId, keeperAlterId })
+        {
+            using var attachReq = new HttpRequestMessage(HttpMethod.Post, $"/api/journals/{globalJournalId}/alter")
+            {
+                Content = JsonContent.Create(new { alter_id = alterIdToAttach })
+            };
+            AttachPrincipalAuth(attachReq, client, principal);
+            var attachRes = await client.SendAsync(attachReq);
+            await Assert.That(attachRes.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
+        }
+
+        // Confirm setup: both alters attached before the delete.
+        using var preDeleteGlobalReq = new HttpRequestMessage(HttpMethod.Get, $"/api/journals/{globalJournalId}");
+        AttachPrincipalAuth(preDeleteGlobalReq, client, principal);
+        var preDeleteGlobalRes = await client.SendAsync(preDeleteGlobalReq);
+        var preDeleteGlobalBody = await preDeleteGlobalRes.Content.ReadAsStringAsync();
+        using (Assert.Multiple())
+        {
+            await Assert.That(preDeleteGlobalRes.StatusCode).IsEqualTo(HttpStatusCode.OK);
+            // Assertion against the raw body keeps us out of the snake-case-vs-camelCase JSON
+            // policy weeds for the alter_ids list - we just need to know both ids appear.
+            await Assert.That(preDeleteGlobalBody).Contains($"{deletedAlterId}");
+            await Assert.That(preDeleteGlobalBody).Contains($"{keeperAlterId}");
+        }
+
+        // Act: delete the alter.
+        using var deleteAlterReq = new HttpRequestMessage(HttpMethod.Delete, $"/api/systems/me/alters/{deletedAlterId}");
+        AttachPrincipalAuth(deleteAlterReq, client, principal);
+        var deleteAlterRes = await client.SendAsync(deleteAlterReq);
+        await Assert.That(deleteAlterRes.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
+
+        // Cascade 1: the per-alter journal entry is gone.
+        using var showAlterJournalReq = new HttpRequestMessage(HttpMethod.Get, $"/api/systems/me/alters/journals/{alterJournalEntryId}");
+        AttachPrincipalAuth(showAlterJournalReq, client, principal);
+        var showAlterJournalRes = await client.SendAsync(showAlterJournalReq);
+        await Assert.That(showAlterJournalRes.StatusCode)
+            .IsEqualTo(HttpStatusCode.NotFound)
+            .Because("the alter's journal entry should be cascade-deleted along with the alter.");
+
+        // Cascade 2: the global journal still exists, but the deleted alter is no longer in
+        // its alter_ids list. The keeper alter must still be attached.
+        using var postDeleteGlobalReq = new HttpRequestMessage(HttpMethod.Get, $"/api/journals/{globalJournalId}");
+        AttachPrincipalAuth(postDeleteGlobalReq, client, principal);
+        var postDeleteGlobalRes = await client.SendAsync(postDeleteGlobalReq);
+        var postDeleteGlobalBody = await postDeleteGlobalRes.Content.ReadAsStringAsync();
+        using (Assert.Multiple())
+        {
+            await Assert.That(postDeleteGlobalRes.StatusCode)
+                .IsEqualTo(HttpStatusCode.OK)
+                .Because("global journals are shared and must outlive any one attached alter.");
+            // Read the attached-alter id list specifically so we don't falsely match the
+            // deleted alter id appearing anywhere else in the response payload (e.g. inside
+            // the global journal's id Guid). The JournalReadModel record names the property
+            // `Alters` and the global JSON policy renders it as `alters`.
+            using var doc = JsonDocument.Parse(postDeleteGlobalBody);
+            var altersArr = doc.RootElement.GetProperty("data").GetProperty("alters");
+            var remaining = altersArr.EnumerateArray().Select(e => e.GetInt32()).ToArray();
+            await Assert.That(remaining).DoesNotContain(deletedAlterId);
+            await Assert.That(remaining).Contains(keeperAlterId);
+        }
+    }
+
+    [Test]
     public async Task AlterJournal_ShowAfterDelete_Returns404()
     {
         using var client = fixture.Factory.CreateClient(new WebApplicationFactoryClientOptions

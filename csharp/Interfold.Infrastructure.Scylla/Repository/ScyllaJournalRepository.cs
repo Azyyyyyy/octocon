@@ -665,6 +665,79 @@ public sealed class ScyllaJournalRepository : IJournalRepository
         }, _options, cancellationToken);
     }
 
+    public async Task<int> DeleteAllForAlterAsync(string systemId, int alterId, CancellationToken cancellationToken = default)
+    {
+        return await DatabaseTransientRetry.ExecuteScyllaAsync(async () =>
+        {
+            var session = await _sessionProvider.GetSessionAsync(cancellationToken);
+            var normalizedSystemId = _keyspaceResolver.NormalizeSystemId(systemId);
+            var keyspace = _keyspaceResolver.ResolveRegionalKeyspace(systemId);
+            var alterIdShort = (short)alterId;
+
+            // Step 1: list every per-alter journal entry id for this alter via the by-alter
+            // view (the partition key is (user_id, alter_id), so this is one single-partition
+            // read - no cross-partition scan). We capture both id and alter_id even though
+            // alter_id is constant per partition because the alter_journals (main view) row
+            // key is (user_id, id, alter_id).
+            var listQuery = new SimpleStatement(
+                $"SELECT id FROM {keyspace}.alter_journals_by_alter WHERE user_id = ? AND alter_id = ?",
+                normalizedSystemId,
+                alterIdShort);
+            var entryIds = (await session.ExecuteAsync(listQuery))
+                .Select(r => r.GetValue<Guid>("id"))
+                .ToArray();
+
+            // Step 2: detach the alter from any global journals. We scan the user's
+            // global_journal_alters partition once and filter for the matching alter_id in
+            // C# (ALLOW FILTERING would be equivalent at the server but burns a server-side
+            // filter; the partition is small enough that client-side filter is cheap and we
+            // already pay for the row reads either way).
+            var attachmentsQuery = new SimpleStatement(
+                $"SELECT global_journal_id, alter_id FROM {keyspace}.global_journal_alters WHERE user_id = ?",
+                normalizedSystemId);
+            var attachedGlobals = (await session.ExecuteAsync(attachmentsQuery))
+                .Where(r => r.GetValue<short>("alter_id") == alterIdShort)
+                .Select(r => r.GetValue<Guid>("global_journal_id"))
+                .ToArray();
+
+            if (entryIds.Length == 0 && attachedGlobals.Length == 0)
+            {
+                return 0;
+            }
+
+            // Step 3: single batch for all deletes so we either land the full cascade or
+            // none of it. The deletes are all to the same partition key prefix (user_id)
+            // so this is a single-coordinator batch in Scylla terms.
+            var batch = new BatchStatement();
+
+            foreach (var entryId in entryIds)
+            {
+                batch.Add(new SimpleStatement(
+                    $"DELETE FROM {keyspace}.alter_journals WHERE user_id = ? AND id = ? AND alter_id = ?",
+                    normalizedSystemId,
+                    entryId,
+                    alterIdShort));
+                batch.Add(new SimpleStatement(
+                    $"DELETE FROM {keyspace}.alter_journals_by_alter WHERE user_id = ? AND alter_id = ? AND id = ?",
+                    normalizedSystemId,
+                    alterIdShort,
+                    entryId));
+            }
+
+            foreach (var globalJournalId in attachedGlobals)
+            {
+                batch.Add(new SimpleStatement(
+                    $"DELETE FROM {keyspace}.global_journal_alters WHERE user_id = ? AND global_journal_id = ? AND alter_id = ?",
+                    normalizedSystemId,
+                    globalJournalId,
+                    alterIdShort));
+            }
+
+            await session.ExecuteAsync(batch);
+            return entryIds.Length;
+        }, _options, cancellationToken);
+    }
+
     internal static bool TryParseUuid(string value, out Guid guid)
     {
         if (Guid.TryParseExact(value, "N", out guid))

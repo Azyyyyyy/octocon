@@ -40,8 +40,12 @@ internal sealed class SpCustomFieldContent
     [JsonPropertyName("type")]
     public int Type { get; set; }
 
+    // SP's `update300.ts` migration copies legacy field schemas into the customFields
+    // collection via `insertOne({ ..., supportMarkdown: field.supportMarkdown, ... })`
+    // where the legacy `field.supportMarkdown` is undefined for pre-markdown rows.
+    // Mongo stores undefined as `null`, the SP API serialises it as `"supportMarkdown":null`
     [JsonPropertyName("supportMarkdown")]
-    public bool SupportMarkdown { get; set; }
+    public bool? SupportMarkdown { get; set; }
 
     [JsonPropertyName("private")]
     public bool Private { get; set; }
@@ -212,9 +216,13 @@ internal sealed class SpNoteContent
     [JsonPropertyName("member")]
     public string? Member { get; set; }
 
+    // Defensively nullable: legacy notes from pre-supportMarkdown SP versions can serialise
+    // as `null` for the same reason custom fields do (Mongo stores `undefined` -> SP API
+    // emits `null`). We don't read this field today, but a non-nullable `bool` would make
+    // the whole notes deserialisation throw and silently empty the per-alter notes page.
     [JsonPropertyName("supportMarkdown")]
+    public bool? SupportMarkdown { get; set; }
 
-    public bool SupportMarkdown { get; set; }
     [JsonPropertyName("lastOperationTime")]
     public long LastOperationTime { get; set; }
 }

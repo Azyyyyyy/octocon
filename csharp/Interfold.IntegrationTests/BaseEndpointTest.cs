@@ -465,6 +465,27 @@ public class BaseEndpointTest
 
         return (response.StatusCode, body);
     }
+
+    internal static async Task<(HttpStatusCode StatusCode, string Body)> SendFrontSetAsync(
+        HttpClient client,
+        int alterId,
+        string principal,
+        string? comment = null)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/systems/me/front/set");
+        request.Content = JsonContent.Create(new
+        {
+            alterId,
+            comment,
+            idempotencyKey = Guid.NewGuid().ToString("N")
+        }, options: new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower });
+        AttachPrincipalAuth(request, client, principal);
+
+        var response = await client.SendAsync(request);
+        var body = await response.Content.ReadAsStringAsync();
+
+        return (response.StatusCode, body);
+    }
     
     internal static async Task AssertContainsAsync(
         HttpClient client,

@@ -980,9 +980,12 @@ public sealed class SimplyPluralImportService : ISimplyPluralImportService
     }
 
     // 0 = string/text, 1 = color, 2 = date, 3 = month, 4 = year, 5 = month+year, 6 = timestamp, 7 = month+day
-    private static string MapFieldType(int spType, bool supportMarkdown) => spType switch
+    // `supportMarkdown` is nullable on SpCustomFieldContent because SP's update300 migration
+    // emits `null` for legacy fields (see model comment). SP defaults missing to true, so we
+    // do the same: null/true -> "text" (markdown), explicit false -> "plaintext".
+    private static string MapFieldType(int spType, bool? supportMarkdown) => spType switch
     {
-        0 => supportMarkdown ? "text" : "plaintext",
+        0 => (supportMarkdown ?? true) ? "text" : "plaintext",
         1 => "colour",
         2 => "date",
         3 => "month",

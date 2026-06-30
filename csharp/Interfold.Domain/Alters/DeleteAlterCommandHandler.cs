@@ -11,15 +11,18 @@ namespace Interfold.Domain.Alters;
 public sealed class DeleteAlterCommandHandler : ICommandHandler<DeleteAlterCommand, AlterCommandResult>
 {
     private readonly IAlterRepository _alterRepository;
+    private readonly IJournalRepository _journalRepository;
     private readonly IIdempotencyStore _idempotencyStore;
     private readonly IClusterEventBus _eventBus;
 
     public DeleteAlterCommandHandler(
         IAlterRepository alterRepository,
+        IJournalRepository journalRepository,
         IIdempotencyStore idempotencyStore,
         IClusterEventBus eventBus)
     {
         _alterRepository = alterRepository;
+        _journalRepository = journalRepository;
         _idempotencyStore = idempotencyStore;
         _eventBus = eventBus;
     }
@@ -54,7 +57,14 @@ public sealed class DeleteAlterCommandHandler : ICommandHandler<DeleteAlterComma
         var exists = await _alterRepository.ExistsAsync(command.PrincipalId, command.Payload.AlterId, cancellationToken);
         if (!exists)
             return RejectInvariant(command, "alter:not_found");
-        
+
+        // Cascade BEFORE the alter row itself is removed so a journal-cleanup failure
+        // leaves the alter intact (caller can retry); the inverse order would orphan the
+        // journals if the alter delete succeeded but cleanup later threw. DeleteAllForAlterAsync
+        // also detaches the alter from any global journals it was attached to without
+        // deleting the global journal itself (multiple alters can share a group journal).
+        await _journalRepository.DeleteAllForAlterAsync(command.PrincipalId, command.Payload.AlterId, cancellationToken);
+
         var deleted = await _alterRepository.DeleteAsync(command.PrincipalId, command.Payload.AlterId, cancellationToken);
         if (!deleted)
             return RejectInvariant(command, "alter:delete_failed");

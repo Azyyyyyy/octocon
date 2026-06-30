@@ -205,6 +205,39 @@ public sealed class InMemoryJournalRepository : IJournalRepository
         return Task.FromResult(store.TryRemove(entryId, out _));
     }
 
+    public Task<int> DeleteAllForAlterAsync(string systemId, int alterId, CancellationToken cancellationToken = default)
+    {
+        var systemKey = GetSystemKey(systemId);
+        var removedAlterJournals = 0;
+
+        if (_alterEntriesBySystem.TryGetValue(systemKey, out var store))
+        {
+            // Snapshot the keys to remove first; mutating the ConcurrentDictionary while
+            // enumerating its values is undefined behaviour (entries may be skipped or
+            // double-visited).
+            var toRemove = store.Values.Where(e => e.AlterId == alterId).Select(e => e.EntryId).ToArray();
+            foreach (var entryId in toRemove)
+            {
+                if (store.TryRemove(entryId, out _))
+                {
+                    removedAlterJournals++;
+                }
+            }
+        }
+
+        // Detach from any global journals this alter was attached to. _entryAlters is keyed
+        // by (system, entry) and the inner dictionary's keys are alter ids; we don't need
+        // to know which global entries exist - just sweep every inner dict for this alter.
+        // Mirrors the Scylla path's global_journal_alters cleanup, where the row identity
+        // is (user_id, global_journal_id, alter_id) and only the alter_id rows are deleted.
+        foreach (var alters in _entryAlters.Values)
+        {
+            alters.TryRemove(alterId, out _);
+        }
+
+        return Task.FromResult(removedAlterJournals);
+    }
+
     public Task<bool> SetAlterLockedAsync(string systemId, string entryId, bool locked, CancellationToken cancellationToken = default)
     {
         var systemKey = GetSystemKey(systemId);

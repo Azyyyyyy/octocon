@@ -817,6 +817,56 @@ public sealed class SpImportTests : BaseEndpointTest
     }
 
     [Test]
+    public async Task CustomField_WithNullSupportMarkdown_IsStillImported()
+    {
+        // Real-world regression: SP's update300 migration (SimplyPluralApi/src/api/v1/user/updates/update300.ts:187)
+        // copies legacy field schemas via `insertOne({ ..., supportMarkdown: field.supportMarkdown })`
+        // where the legacy `field.supportMarkdown` is undefined for pre-markdown rows. Mongo stores
+        // undefined as null, the SP API serialises `"supportMarkdown":null`, and the importer's
+        // SpCustomFieldContent.SupportMarkdown used to be a non-nullable bool. Result: the whole
+        // customFields response failed to deserialise, FetchAsync's catch-all swallowed the
+        // exception, and the import silently skipped the entire fields step (with alters then
+        // landing with no Field values because the SP->our-id mapping was empty).
+        //
+        // Hand-written JSON here because anonymous types can't emit a JSON null for a bool member.
+        var sysId = Uid();
+        var systemId = Uid();
+        var alpha = MemberUuid();
+
+        const string spFieldIdHistorical = "671425cd02c63d13c59ba474";
+        var expectedInsertedAt = new DateTime(2024, 10, 19, 21, 34, 5, DateTimeKind.Utc);
+
+        var customFieldsJson = $$"""
+            [
+              {
+                "exists": true,
+                "id": "{{spFieldIdHistorical}}",
+                "content": {
+                  "name": "synthetic-legacy-migrated-field",
+                  "type": 0,
+                  "supportMarkdown": null,
+                  "buckets": []
+                }
+              }
+            ]
+            """;
+
+        var stub = BuildSp(sysId, alpha, customFieldsJson: customFieldsJson);
+        var (_, _, _, fieldRepo, _, _) = await RunImportAsync(stub, systemId);
+
+        var fields = await fieldRepo.ListAsync(systemId);
+        await Assert.That(fields.Count)
+            .IsEqualTo(1)
+            .Because("legacy SP fields with supportMarkdown:null must still be imported - they're the common case on systems migrated via SP's update300 path.");
+
+        // SP's own code defaults missing supportMarkdown to true (SimplyPluralApi/src/api/v2/user.ts:95,
+        // generateReport.ts:117), so a null on the wire should produce the markdown variant ("text"),
+        // not the plaintext variant.
+        await Assert.That(fields[0].Type).IsEqualTo("text");
+        await Assert.That(fields[0].InsertedAt).IsEqualTo(expectedInsertedAt);
+    }
+
+    [Test]
     public async Task CustomField_WithUnparseableSpId_IsSkippedAndWarned()
     {
         var sysId = Uid();
