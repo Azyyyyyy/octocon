@@ -73,6 +73,26 @@ internal static class PublishPhase
         var envPath = Path.Combine(Path.GetDirectoryName(composePath)!, ".env");
         FillEnvFile(envPath, AppContext.BaseDirectory, options.OutputDir, config, secrets, logger);
 
+        // Cassandra mode: stamp `pull_policy: never` onto the cassandra service in the emitted
+        // compose YAML. This is a defensive no-op-on-pull marker, NOT the update mechanism —
+        // updates to the cassandra image happen via a `docker build` inside
+        // CassandraImagePhase.EnsureBuiltAsync (called from LaunchPhase, DatabaseInitPhase, and
+        // UpdateImagesPhase BEFORE any compose lifecycle step). The stamp exists purely so
+        // `docker compose pull` inside update-images doesn't crash on `interfold-cassandra:local`
+        // — that tag is locally-built with no matching registry entry, so without the stamp
+        // compose would attempt a registry fetch, exit non-zero on "manifest not found", and
+        // halt update-images before the freshly-rebuilt image ID could feed into the post-pull
+        // digest diff / `up -d` recreate. With the stamp, compose reports the cassandra service
+        // as `Skipped` on pull (see pkg/compose/pull.go on docker/compose main, behaviour
+        // merged in docker/compose#9376 back in 2022) and every other lifecycle step (`up`,
+        // `build`, `restart`, ...) still runs against the locally-built image untouched.
+        // Net result: cassandra DOES get updated on `update-images` runs — the update just
+        // flows through `docker build` (from EnsureBuiltAsync) rather than `docker compose pull`.
+        if (CassandraImagePhase.IsCassandraDeployment(config))
+        {
+            StampCassandraPullPolicyNever(composePath, logger);
+        }
+
         logger.PhaseDone(Phase);
     }
 
@@ -342,6 +362,57 @@ internal static class PublishPhase
 
         File.WriteAllLines(envPath, lines);
         return (rewritten, skipped);
+    }
+
+    /// <summary>
+    /// Inserts a <c>pull_policy: never</c> line immediately after the
+    /// <c>image: "${CASSANDRA_IMAGE}"</c> line on the cassandra service, if not already
+    /// present. Idempotent: re-runs are no-ops.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Uses the exact <c>${CASSANDRA_IMAGE}</c> token as the anchor — that placeholder is
+    /// unique to the cassandra service in the compose file emitted by Aspire's
+    /// <c>AddDockerfile("cassandra", ...)</c> resource, so we never accidentally stamp
+    /// another service. A targeted find+insert is safer here than a full YAML parse/serialise
+    /// round-trip that could re-order Aspire's other keys (bind mounts, network aliases,
+    /// depends_on) or reflow the anchors compose relies on.
+    /// </para>
+    /// <para>
+    /// The three passes of <see cref="File.ReadAllLines(string)"/> +
+    /// <see cref="File.WriteAllLines(string, IEnumerable{string})"/> preserve the file's
+    /// existing line endings on the compose YAML: read via System.IO's newline-agnostic
+    /// splitter, write with the platform default. Linux hosts (the only cassandra deployment
+    /// target — the whole stack runs under docker compose on Linux) round-trip as LF.
+    /// </para>
+    /// </remarks>
+    internal static void StampCassandraPullPolicyNever(string composePath, PhaseLogger? logger = null)
+    {
+        var lines = File.ReadAllLines(composePath).ToList();
+        for (var i = 0; i < lines.Count; i++)
+        {
+            var line = lines[i];
+            if (!line.Contains("${CASSANDRA_IMAGE}", StringComparison.Ordinal)) continue;
+
+            // Idempotency guard: bail out if the next non-blank line already asserts the
+            // policy (re-runs of `bootstrap publish` must not double-stamp).
+            var next = lines.Skip(i + 1).FirstOrDefault(l => !string.IsNullOrWhiteSpace(l));
+            if (string.Equals(next?.Trim(), "pull_policy: never", StringComparison.Ordinal))
+            {
+                logger?.Info("    compose: cassandra service already has pull_policy: never");
+                return;
+            }
+
+            var indent = line[..(line.Length - line.TrimStart().Length)];
+            lines.Insert(i + 1, $"{indent}pull_policy: never");
+            File.WriteAllLines(composePath, lines);
+            logger?.Info("    compose: stamped pull_policy: never on cassandra service");
+            return;
+        }
+        // No match = no cassandra service in the compose file. Older cassandra-mode setups
+        // that never went through the AddDockerfile flow don't need the stamp; silently
+        // accept as a no-op rather than throwing.
+        logger?.Warn("compose: no ${CASSANDRA_IMAGE} anchor found; pull_policy stamp skipped");
     }
 
     private static string SetupAnchor()

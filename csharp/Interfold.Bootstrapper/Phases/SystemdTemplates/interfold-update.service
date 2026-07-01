@@ -1,0 +1,14 @@
+[Unit]
+Description=Interfold image update (docker compose pull + up -d, backed by pre-update backup)
+Documentation=https://github.com/Azyyyyyy/octocon
+After=interfold.service interfold-backup.service
+Wants=interfold.service
+
+[Service]
+Type=oneshot
+WorkingDirectory={{OUTPUT_DIR}}
+ExecStart={{BINARY_PATH}} update-images --config {{CONFIG_PATH}} --output-dir {{OUTPUT_DIR}}
+# Deliberately no TimeoutStartSec override: the update workflow can take several minutes
+# on a slow network (image pull) or a large database (pre-update backup) — pin to systemd's
+# default (900s) rather than baking a bespoke ceiling that would need to grow over time.
+# Operator-overridable via /etc/systemd/system/interfold-update.service.d/*.conf.

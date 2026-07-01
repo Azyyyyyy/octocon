@@ -60,6 +60,25 @@ internal static class Orchestrator
             return await SystemdInstallPhase.RunAsync(options, logger, ct).ConfigureAwait(false);
         }
 
+        // --- update-images short-circuit ---
+        // Wraps a pre-update backup, `docker compose pull`, `up -d`, and a bounded
+        // health check. On failure, either prints the restore recipe or (with
+        // --auto-restore) invokes RestorePhase inline. Skips prereqs/config/secrets
+        // for the same reason backup does — this is a runtime operation.
+        if (options.Command == BootstrapCommand.UpdateImages)
+        {
+            return await UpdateImagesPhase.RunAsync(options, logger, ct).ConfigureAwait(false);
+        }
+
+        // --- restore short-circuit ---
+        // Streams pg_restore + scylla `docker cp` against archives on disk. Destructive;
+        // requires --force in non-interactive mode. Reads config + secrets, never
+        // generates or rotates them.
+        if (options.Command == BootstrapCommand.Restore)
+        {
+            return await RestorePhase.RunAsync(options, logger, ct).ConfigureAwait(false);
+        }
+
         // Phase sequence per command:
         //   bootstrap       prereqs -> config -> secrets -> certs -> publish -> db-init -> launch
         //   publish         config  -> secrets -> certs -> publish

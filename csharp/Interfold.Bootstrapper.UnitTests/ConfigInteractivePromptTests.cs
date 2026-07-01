@@ -15,8 +15,8 @@ namespace Interfold.Bootstrapper.UnitTests;
 ///
 /// Interaction model after the form-only redesign:
 /// <list type="bullet">
-///   <item>The form is a single <c>SelectionPrompt&lt;int&gt;</c> with 42 field rows grouped
-///         under 9 section headers + a trailing <c>Confirm and save</c> entry. Section headers
+///   <item>The form is a single <c>SelectionPrompt&lt;int&gt;</c> with 47 field rows grouped
+///         under 10 section headers + a trailing <c>Confirm and save</c> entry. Section headers
 ///         are inert (not selectable); arrow-key navigation skips them.</item>
 ///   <item>Cursor starts at field index 0 (<c>Output directory</c>) — <see cref="SelectionPrompt{T}.DefaultValue"/>
 ///         defaults to <c>default(int)</c>.</item>
@@ -69,8 +69,13 @@ namespace Interfold.Bootstrapper.UnitTests;
 ///   <item>39 Backup retention (count per component) (Backup &amp; autostart)</item>
 ///   <item>40 Backup directory (absolute, blank=default) (Backup &amp; autostart)</item>
 ///   <item>41 Autostart server on boot              (Backup &amp; autostart)</item>
+///   <item>42 Chain updates after backup             (Updates)</item>
+///   <item>43 Health-check timeout (seconds)         (Updates)</item>
+///   <item>44 Auto-restore on failure                (Updates)</item>
+///   <item>45 Recreate containers on update          (Updates)</item>
+///   <item>46 Update service whitelist (blank=all)   (Updates)</item>
 /// </list>
-/// Navigate(42) lands on the trailing <c>Confirm and save</c> entry (one DownArrow per
+/// Navigate(47) lands on the trailing <c>Confirm and save</c> entry (one DownArrow per
 /// selectable row past field 0). Helpers <see cref="Navigate"/> / <see cref="ConfirmForm"/> /
 /// <see cref="EditField"/> below wrap the key sequences so the test bodies stay focused on
 /// "what is being edited", not "how many DownArrows that takes".
@@ -78,11 +83,11 @@ namespace Interfold.Bootstrapper.UnitTests;
 public sealed class ConfigInteractivePromptTests
 {
     /// <summary>Number of selectable field rows in the navigable form.</summary>
-    private const int FieldCount = 42;
+    private const int FieldCount = 47;
 
     /// <summary>
     /// Builds a fresh interactive <see cref="TestConsole"/> tall enough to render the entire
-    /// 52-row navigable form (42 fields + 9 section headers + Confirm entry) without Spectre
+    /// 58-row navigable form (47 fields + 10 section headers + Confirm entry) without Spectre
     /// paginating it. Default <see cref="TestConsole"/> height is 24 lines, which would clamp
     /// the menu to a single page and hide the top section header by the time the cursor
     /// reaches Confirm — breaking the "every label is in the captured output" assertions.
@@ -92,11 +97,11 @@ public sealed class ConfigInteractivePromptTests
     {
         var c = new TestConsole();
         c.Interactive();
-        // Bump well above the form's 52-row footprint so the form never paginates in
+        // Bump well above the form's 58-row footprint so the form never paginates in
         // tests (pagination clips top rows out of the captured output and breaks the
         // "every label is in the output" assertions).
-        c.Profile.Height = 100;
-        c.Profile.Width = 120;
+        c.Profile.Height = 120;
+        c.Profile.Width = 130;
         return c;
     }
 
@@ -137,19 +142,27 @@ public sealed class ConfigInteractivePromptTests
     }
 
     /// <summary>
-    /// Calls <see cref="ConfigPhase.PromptForConfig(IAnsiConsole, bool, Func{IPAddress?}?)"/>
-    /// with a null-returning <c>localAddressProbe</c> so the device-IP auto-default never fires
-    /// during unit tests. Every test below that doesn't specifically exercise the auto-default
-    /// goes through this wrapper — without it, a CI runner with a routable NIC would silently
-    /// pre-populate <c>Deployment.Hosts</c> with the runner's primary IP and break the existing
-    /// "fresh config = empty Hosts" assertion in <see cref="ConfirmingFormImmediatelyUsesDefaults"/>
-    /// (and incidentally pollute the derived-URL menu rows in tests that don't edit hosts).
-    /// The few tests that DO want a detected IP call
-    /// <see cref="ConfigPhase.PromptForConfig(IAnsiConsole, bool, Func{IPAddress?}?)"/> directly
-    /// with an explicit fake.
+    /// Calls <see cref="ConfigPhase.PromptForConfig(IAnsiConsole, bool, Func{IPAddress?}?, Func{string?}?)"/>
+    /// with null-returning <c>localAddressProbe</c> AND <c>hostnameProbe</c> so neither the
+    /// device-IP nor the mDNS-hostname auto-default fires during unit tests. Every test below
+    /// that doesn't specifically exercise the auto-default goes through this wrapper — without
+    /// it, a CI runner with a routable NIC would silently pre-populate <c>Deployment.Hosts</c>
+    /// with the runner's primary IP and break the existing "fresh config = empty Hosts"
+    /// assertion in <see cref="ConfirmingFormImmediatelyUsesDefaults"/> (and incidentally
+    /// pollute the derived-URL menu rows in tests that don't edit hosts). The
+    /// <c>hostnameProbe</c> default here is redundant (the prompt's own default is
+    /// <c>() =&gt; null</c>) but stated explicitly so a future refactor that flips
+    /// PromptForConfig's default to a live detector doesn't silently regress these tests.
+    /// The tests that DO want a detected IP call
+    /// <see cref="ConfigPhase.PromptForConfig(IAnsiConsole, bool, Func{IPAddress?}?, Func{string?}?)"/>
+    /// directly with an explicit fake.
     /// </summary>
     private static BootstrapConfig PromptWithoutDetection(IAnsiConsole console, bool maskSecrets = false) =>
-        ConfigPhase.PromptForConfig(console, maskSecrets, localAddressProbe: () => null);
+        ConfigPhase.PromptForConfig(
+            console,
+            maskSecrets,
+            localAddressProbe: () => null,
+            hostnameProbe: () => null);
 
     [Test]
     public async Task ConfirmingFormImmediatelyUsesDefaults()
@@ -222,6 +235,14 @@ public sealed class ConfigInteractivePromptTests
         await Assert.That(config.OAuth.DiscordClientSecret).IsEqualTo(string.Empty);
         await Assert.That(config.OAuth.AppleClientId).IsEqualTo(string.Empty);
         await Assert.That(config.OAuth.AppleClientSecret).IsEqualTo(string.Empty);
+
+        // Update-section defaults — every field defaults to a "manual only" stance so a
+        // stock bootstrap behaves identically to pre-feature deployments.
+        await Assert.That(config.Update.Enabled).IsFalse();
+        await Assert.That(config.Update.HealthCheckTimeoutSeconds).IsEqualTo(180);
+        await Assert.That(config.Update.AutoRestoreOnFailure).IsFalse();
+        await Assert.That(config.Update.RecreateOnUpdate).IsTrue();
+        await Assert.That(config.Update.Services.Length).IsEqualTo(0);
     }
 
     [Test]
@@ -363,6 +384,53 @@ public sealed class ConfigInteractivePromptTests
             localAddressProbe: () => IPAddress.Parse("10.0.0.42"));
 
         await Assert.That(Regex.IsMatch(console.Output, @"Public host\(s\)\s+10\.0\.0\.42")).IsTrue();
+    }
+
+    [Test]
+    public async Task HostsPrefillIncludesMdnsHostnameAndIp()
+    {
+        // Two-probe pre-fill: when the pre-prompt banner reports mDNS is working AND the
+        // device has a routable NIC, the hosts seed contains BOTH the {hostname}.local name
+        // (first, so HostParser.PickPrimary latches it as the primary host for leaf-cert /
+        // derived-URL purposes) AND the primary IP (second, for LAN-address-based reachability).
+        // Order matters — a regression that swaps them would silently change every derived
+        // URL to point at the IP instead of the hostname.
+        var console = NewConsole();
+        ConfirmForm(console);
+
+        var config = ConfigPhase.PromptForConfig(
+            console,
+            maskSecrets: false,
+            localAddressProbe: () => IPAddress.Parse("192.168.1.42"),
+            hostnameProbe: () => "workstation.local");
+
+        await Assert.That(config.Deployment.Hosts.Count).IsEqualTo(2);
+        await Assert.That(config.Deployment.Hosts[0]).IsEqualTo("workstation.local");
+        await Assert.That(config.Deployment.Hosts[1]).IsEqualTo("192.168.1.42");
+        // The menu row shows both values comma-joined (Show callback = string.Join(",", Hosts)).
+        // Pin the exact display so a future refactor that (say) prints only Hosts[0] gets caught.
+        await Assert.That(Regex.IsMatch(console.Output, @"Public host\(s\)\s+workstation\.local,192\.168\.1\.42")).IsTrue();
+    }
+
+    [Test]
+    public async Task HostsPrefillOmitsHostnameWhenProbeReturnsNull()
+    {
+        // The pre-prompt banner returns null when mDNS is unavailable (or the operator declined
+        // the install offer). In that case only the detected IP lands in the pre-fill — the
+        // hostname is deliberately omitted rather than pre-filled with an unresolvable name.
+        // Documents the "banner said mDNS is unavailable" flow and pins that a null probe
+        // never becomes an accidental empty-string / null entry in the Hosts list.
+        var console = NewConsole();
+        ConfirmForm(console);
+
+        var config = ConfigPhase.PromptForConfig(
+            console,
+            maskSecrets: false,
+            localAddressProbe: () => IPAddress.Parse("192.168.1.42"),
+            hostnameProbe: () => null);
+
+        await Assert.That(config.Deployment.Hosts.Count).IsEqualTo(1);
+        await Assert.That(config.Deployment.Hosts[0]).IsEqualTo("192.168.1.42");
     }
 
     [Test]
@@ -698,10 +766,10 @@ public sealed class ConfigInteractivePromptTests
     public async Task FormListsEverySectionHeader()
     {
         // Section headers are rendered by AddChoiceGroup as inert rows above each group. All
-        // nine headers (Deployment / Ports / Database / API / Cluster & telemetry / Storage /
-        // Performance tuning / OAuth credentials / Backup & autostart) must appear in the
-        // captured output. "API" subsumes the old single-row "API image" section now that the
-        // four ApiRuntime fields share the section.
+        // ten headers (Deployment / Ports / Database / API / Cluster & telemetry / Storage /
+        // Performance tuning / OAuth credentials / Backup & autostart / Updates) must appear
+        // in the captured output. "API" subsumes the old single-row "API image" section now
+        // that the four ApiRuntime fields share the section.
         var console = NewConsole();
         ConfirmForm(console);
 
@@ -723,6 +791,9 @@ public sealed class ConfigInteractivePromptTests
         // New Backup & autostart section sits after the credentials group; the framing is
         // the same as Storage.
         await Assert.That(output).Contains("Backup & autostart");
+        // Updates section sits at the tail; framed same as the others so this line matches
+        // the header, not e.g. the "Auto-restore" label in a row value.
+        await Assert.That(Regex.IsMatch(output, @"---\s+Updates\s+---")).IsTrue();
         // The title is part of every form render — assert it too so a future refactor that
         // accidentally drops the Title() call gets flagged immediately.
         await Assert.That(output).Contains("Configure interfold.bootstrap.json");
@@ -948,6 +1019,99 @@ public sealed class ConfigInteractivePromptTests
         // echo) — proving the test actually exercised the editor path it claims to. If this
         // assertion ever flipped, the test would be vacuously passing the masking guard above.
         await Assert.That(output).Contains(secret);
+    }
+
+    [Test]
+    public async Task EditingUpdateSectionCapturesValues()
+    {
+        // Five-row update section (rows 42..46). Exercises a happy-path edit of every row
+        // so the round-trip through PromptForConfig captures the operator input verbatim.
+        // Services row: comma-separated list validated against ValidUpdateServices.
+        var console = NewConsole();
+        EditField(console, fieldIndex: 42, "y");                                    // Enabled := true
+        EditField(console, fieldIndex: 43, "300");                                  // HealthCheckTimeoutSeconds
+        EditField(console, fieldIndex: 44, "y");                                    // AutoRestoreOnFailure := true
+        EditField(console, fieldIndex: 45, "n");                                    // RecreateOnUpdate := false
+        EditField(console, fieldIndex: 46, "interfold-api,octocon-web");            // Services
+        ConfirmForm(console);
+
+        var config = PromptWithoutDetection(console);
+
+        await Assert.That(config.Update.Enabled).IsTrue();
+        await Assert.That(config.Update.HealthCheckTimeoutSeconds).IsEqualTo(300);
+        await Assert.That(config.Update.AutoRestoreOnFailure).IsTrue();
+        await Assert.That(config.Update.RecreateOnUpdate).IsFalse();
+        await Assert.That(config.Update.Services.Length).IsEqualTo(2);
+        await Assert.That(config.Update.Services).Contains("interfold-api");
+        await Assert.That(config.Update.Services).Contains("octocon-web");
+    }
+
+    [Test]
+    public async Task UpdateHealthCheckTimeoutRePromptsOnOutOfRange()
+    {
+        // PromptInt bounded to [1..3600]. First input is 9999 (out of range); the second
+        // (valid) answer is what sticks. Same pattern as PortPromptRePromptsOnInvalidInt.
+        var console = NewConsole();
+        EditField(console, fieldIndex: 43, "9999", "60");
+        ConfirmForm(console);
+
+        var config = PromptWithoutDetection(console);
+
+        await Assert.That(config.Update.HealthCheckTimeoutSeconds).IsEqualTo(60);
+        await Assert.That(console.Output).Contains("must be an integer in");
+    }
+
+    [Test]
+    public async Task UpdateServicesPromptRejectsUnknownEntry()
+    {
+        // PromptUpdateServices validates every comma-separated entry against
+        // ConfigPhase.ValidUpdateServices. Typing an unknown name re-prompts; the
+        // second (valid) answer sticks.
+        var console = NewConsole();
+        EditField(console, fieldIndex: 46,
+            "msg-db,not-a-real-service",
+            "msg-db,scylla");
+        ConfirmForm(console);
+
+        var config = PromptWithoutDetection(console);
+
+        await Assert.That(config.Update.Services.Length).IsEqualTo(2);
+        await Assert.That(config.Update.Services).Contains("msg-db");
+        await Assert.That(config.Update.Services).Contains("scylla");
+        await Assert.That(console.Output).Contains("not a known compose service");
+    }
+
+    [Test]
+    public async Task UpdateServicesBlankClearsWhitelist()
+    {
+        // Blank input signals "every service" — the whitelist is stored as an empty array.
+        // Important because operators who set a whitelist once and later want to un-scope
+        // an update need a clean way to do it in the interactive form.
+        var console = NewConsole();
+        EditField(console, fieldIndex: 46, string.Empty);
+        ConfirmForm(console);
+
+        var config = PromptWithoutDetection(console);
+
+        await Assert.That(config.Update.Services.Length).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task UpdateSectionEmptyDefaults()
+    {
+        // Confirming the form without touching the update section leaves every field at
+        // its property-initialiser default — the "manual only" stance. Locked down here
+        // so a future refactor that flips a default gets caught immediately.
+        var console = NewConsole();
+        ConfirmForm(console);
+
+        var config = PromptWithoutDetection(console);
+
+        await Assert.That(config.Update.Enabled).IsFalse();
+        await Assert.That(config.Update.HealthCheckTimeoutSeconds).IsEqualTo(180);
+        await Assert.That(config.Update.AutoRestoreOnFailure).IsFalse();
+        await Assert.That(config.Update.RecreateOnUpdate).IsTrue();
+        await Assert.That(config.Update.Services.Length).IsEqualTo(0);
     }
 
     [Test]

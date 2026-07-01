@@ -6,8 +6,8 @@ using Interfold.Bootstrapper.Util;
 namespace Interfold.Bootstrapper.Phases;
 
 /// <summary>
-/// Installs (and optionally enables) the three systemd units that own the boot-up
-/// autostart + scheduled-backup wiring:
+/// Installs (and optionally enables) the systemd units that own the boot-up
+/// autostart, scheduled-backup, and image-update wiring:
 /// <list type="bullet">
 ///   <item><c>interfold.service</c> — Type=oneshot RemainAfterExit=yes; brings the compose
 ///         stack up via <c>docker compose -f {outputDir}/docker-compose.yaml up -d</c>.</item>
@@ -15,11 +15,22 @@ namespace Interfold.Bootstrapper.Phases;
 ///         <c>interfold-bootstrap backup</c>.</item>
 ///   <item><c>interfold-backup.timer</c> — fires the backup service on the schedule from
 ///         <see cref="BackupSection.Schedule"/>.</item>
+///   <item><c>interfold-update.service</c> — Type=oneshot; runs
+///         <c>interfold-bootstrap update-images</c>. Never scheduled directly —
+///         invoked either manually or via the OnSuccess= chain from the backup unit.</item>
 /// </list>
+/// When <see cref="UpdateSection.Enabled"/> is true the phase additionally writes a drop-in
+/// at <c>/etc/systemd/system/interfold-backup.service.d/50-chain-update.conf</c> with an
+/// <c>OnSuccess=interfold-update.service</c> directive so a successful backup triggers an
+/// update pass. That drop-in requires systemd >= 249 (Ubuntu 22.04+, Debian 12+, Fedora
+/// 35+); the phase runs a preflight version check and refuses to install the chain on
+/// older systemd with a clear error.
+/// <para>
 /// Templates ship as <c>systemd/*</c> manifest resources (see Interfold.Bootstrapper.csproj
 /// — distinct from the <c>support/</c> prefix consumed by
 /// <see cref="Util.EmbeddedSupportFiles"/>) so the unrendered template strings never land
 /// on disk where an operator might enable them by mistake.
+/// </para>
 /// </summary>
 internal static class SystemdInstallPhase
 {
@@ -31,12 +42,22 @@ internal static class SystemdInstallPhase
     /// <summary>Default basename for the bootstrapper binary inside the install dir.</summary>
     private const string DefaultBinaryName = "interfold-bootstrap";
 
-    /// <summary>Names of the three units this phase installs, in install order.</summary>
+    /// <summary>
+    /// Minimum systemd major version required for the <c>OnSuccess=</c> drop-in that
+    /// chains <c>interfold-update.service</c> onto <c>interfold-backup.service</c>.
+    /// Older systemd (247 and below, e.g. Ubuntu 20.04) rejects the directive; the
+    /// preflight in <see cref="RunAsync"/> refuses to install the drop-in on those
+    /// hosts and instructs the operator to upgrade or invoke update-images manually.
+    /// </summary>
+    internal const int MinSystemdVersionForOnSuccess = 249;
+
+    /// <summary>Names of the units this phase installs, in install order.</summary>
     internal static readonly string[] UnitNames =
     [
         "interfold.service",
         "interfold-backup.service",
         "interfold-backup.timer",
+        "interfold-update.service",
     ];
 
     public static async Task<int> RunAsync(BootstrapOptions options, PhaseLogger logger, CancellationToken ct)
@@ -80,6 +101,24 @@ internal static class SystemdInstallPhase
             var destination = Path.Combine(unitDir, unitName);
             await File.WriteAllTextAsync(destination, rendered, ct).ConfigureAwait(false);
             logger.Info($"    wrote {destination}");
+        }
+
+        // Update chaining drop-in. We install this ONLY when the operator opted in via
+        // config.update.enabled — otherwise the update service exists but is never
+        // triggered by anything. The drop-in requires systemd >= 249 for OnSuccess=;
+        // the preflight below refuses to install it on older systemd instead of
+        // silently writing a directive systemd will ignore or error on at load time.
+        if (config.Update.Enabled)
+        {
+            await EnsureSystemdSupportsOnSuccessAsync(logger, ct).ConfigureAwait(false);
+            await WriteBackupOnSuccessDropInAsync(unitDir, logger, ct).ConfigureAwait(false);
+        }
+        else
+        {
+            // Idempotency: if a previous install-service call wrote the drop-in and the
+            // operator has since flipped update.enabled=false, remove the stale file so
+            // a subsequent scheduled backup no longer fires the update chain.
+            RemoveBackupOnSuccessDropInIfPresent(unitDir, logger);
         }
 
         // systemd-analyze verify catches typos, missing tokens, and invalid directives
@@ -268,6 +307,134 @@ internal static class SystemdInstallPhase
                 $"systemctl {string.Join(' ', args)} exited {run.ExitCode}: {run.StdErr.Trim()}");
         }
         if (!string.IsNullOrWhiteSpace(run.StdOut)) logger.Info(run.StdOut.Trim());
+    }
+
+    /// <summary>
+    /// On-disk name of the systemd drop-in that adds <c>OnSuccess=interfold-update.service</c>
+    /// to <c>interfold-backup.service</c>. The <c>50-</c> prefix follows the systemd
+    /// convention for operator-installed drop-ins so a hand-written override at
+    /// e.g. <c>90-local.conf</c> still wins.
+    /// </summary>
+    internal const string BackupOnSuccessDropInDir = "interfold-backup.service.d";
+
+    /// <summary>File basename for the <see cref="BackupOnSuccessDropInDir"/> drop-in.</summary>
+    internal const string BackupOnSuccessDropInFile = "50-chain-update.conf";
+
+    /// <summary>
+    /// Writes the <c>OnSuccess=interfold-update.service</c> drop-in that chains the update
+    /// service onto a successful backup run. Template rendered verbatim (no
+    /// <c>{{TOKEN}}</c> substitutions needed). The drop-in directory is created if missing;
+    /// re-runs safely overwrite the file.
+    /// </summary>
+    internal static async Task WriteBackupOnSuccessDropInAsync(
+        string unitDir, PhaseLogger logger, CancellationToken ct)
+    {
+        var dropInDir = Path.Combine(unitDir, BackupOnSuccessDropInDir);
+        Directory.CreateDirectory(dropInDir);
+        var content = ReadEmbeddedTemplate("interfold-backup-onsuccess.conf");
+        var destination = Path.Combine(dropInDir, BackupOnSuccessDropInFile);
+        await File.WriteAllTextAsync(destination, content, ct).ConfigureAwait(false);
+        logger.Info($"    wrote {destination} (chains interfold-update.service after successful backup)");
+    }
+
+    /// <summary>
+    /// Removes any previously-installed drop-in from a prior <c>update.enabled=true</c>
+    /// run. Called on <c>update.enabled=false</c> installs so an operator that opts out
+    /// after opting in doesn't get surprised by lingering chain behaviour. No-op when
+    /// the file (or directory) isn't present.
+    /// </summary>
+    internal static void RemoveBackupOnSuccessDropInIfPresent(string unitDir, PhaseLogger logger)
+    {
+        var destination = Path.Combine(unitDir, BackupOnSuccessDropInDir, BackupOnSuccessDropInFile);
+        if (!File.Exists(destination)) return;
+        try
+        {
+            File.Delete(destination);
+            logger.Info($"    removed stale {destination} (config.update.enabled=false)");
+        }
+        catch (Exception ex)
+        {
+            logger.Warn($"failed to delete stale drop-in {destination}: {ex.Message}");
+        }
+    }
+
+    private static string ReadEmbeddedTemplate(string basename)
+    {
+        var resourceName = $"systemd/{basename}";
+        var asm = typeof(SystemdInstallPhase).Assembly;
+        using var stream = asm.GetManifestResourceStream(resourceName)
+            ?? throw new InvalidOperationException(
+                $"Embedded template '{resourceName}' missing. " +
+                "Check Interfold.Bootstrapper.csproj's <EmbeddedResource> entries.");
+        using var reader = new StreamReader(stream, Encoding.UTF8);
+        return reader.ReadToEnd();
+    }
+
+    /// <summary>
+    /// Fails the phase if the running systemd is too old to accept the
+    /// <c>OnSuccess=</c> directive. Systemd introduced OnSuccess= / OnFailure=Job=
+    /// in v249 (Ubuntu 22.04 ships 249, Debian 12 ships 252, Fedora 35+ ships 249+).
+    /// Skipped silently when <c>systemctl</c> isn't on PATH — the test path routes
+    /// through <c>--systemd-unit-dir</c> against a temp dir where a missing
+    /// <c>systemctl</c> is normal.
+    /// </summary>
+    internal static async Task EnsureSystemdSupportsOnSuccessAsync(PhaseLogger logger, CancellationToken ct)
+    {
+        if (!await ProcessRunner.ExistsOnPathAsync("systemctl", ct).ConfigureAwait(false))
+        {
+            logger.Warn("systemctl not on PATH; skipping systemd version preflight " +
+                        "for OnSuccess= chaining. If the target systemd is older than " +
+                        $"{MinSystemdVersionForOnSuccess}, the drop-in will fail at daemon-reload.");
+            return;
+        }
+
+        var run = await ProcessRunner.RunAsync("systemctl", ["--version"], ct: ct).ConfigureAwait(false);
+        if (run.ExitCode != 0)
+        {
+            throw new InvalidOperationException(
+                $"systemctl --version exited {run.ExitCode} while checking OnSuccess= support: {run.StdErr.Trim()}");
+        }
+
+        var version = ParseSystemdMajorVersion(run.StdOut);
+        if (version is null)
+        {
+            logger.Warn(
+                "could not parse systemd version from `systemctl --version` output; " +
+                $"proceeding with OnSuccess= drop-in install anyway. Requires systemd >= {MinSystemdVersionForOnSuccess}.");
+            return;
+        }
+        if (version.Value < MinSystemdVersionForOnSuccess)
+        {
+            throw new InvalidOperationException(
+                $"config.update.enabled=true requires systemd >= {MinSystemdVersionForOnSuccess} " +
+                $"(the target host is running systemd {version.Value}). " +
+                "Upgrade to Ubuntu 22.04+, Debian 12+, or Fedora 35+, or leave config.update.enabled=false " +
+                "and invoke `update-images` manually.");
+        }
+        logger.Info($"    systemd {version.Value} supports OnSuccess= chaining");
+    }
+
+    /// <summary>
+    /// Extracts the major systemd version integer from <c>systemctl --version</c>
+    /// output. The first line is canonically <c>systemd &lt;N&gt; (&lt;codename&gt;)</c>
+    /// (e.g. <c>systemd 249 (249.11-0ubuntu3.16)</c>); returns null if the line
+    /// doesn't parse, so callers can gracefully degrade rather than hard-fail on an
+    /// unfamiliar systemd fork. Internal for unit-test coverage.
+    /// </summary>
+    internal static int? ParseSystemdMajorVersion(string versionOutput)
+    {
+        if (string.IsNullOrWhiteSpace(versionOutput)) return null;
+        var firstLine = versionOutput.Split('\n', 2)[0].Trim();
+        // Expected: "systemd 249 (249.11-0ubuntu3.16)" — split on whitespace, take token 1.
+        var parts = firstLine.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length < 2) return null;
+        if (!parts[0].Equals("systemd", StringComparison.Ordinal)) return null;
+        // Some distros embed the version as "249.11" in field 1 — strip past the first dot.
+        var token = parts[1];
+        var dot = token.IndexOf('.');
+        if (dot > 0) token = token[..dot];
+        return int.TryParse(token, System.Globalization.NumberStyles.Integer,
+            System.Globalization.CultureInfo.InvariantCulture, out var v) ? v : null;
     }
 
 }

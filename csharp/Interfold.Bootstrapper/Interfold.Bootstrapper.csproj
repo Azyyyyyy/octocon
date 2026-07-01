@@ -120,6 +120,17 @@
                       LogicalName="systemd/interfold-backup.service" />
     <EmbeddedResource Include="Phases\SystemdTemplates\interfold-backup.timer"
                       LogicalName="systemd/interfold-backup.timer" />
+    <EmbeddedResource Include="Phases\SystemdTemplates\interfold-update.service"
+                      LogicalName="systemd/interfold-update.service" />
+    <!--
+      Drop-in template rendered into
+      /etc/systemd/system/interfold-backup.service.d/50-chain-update.conf ONLY when
+      config.update.enabled=true. Adds `OnSuccess=interfold-update.service` to the
+      backup unit so a successful scheduled backup triggers the update workflow.
+      No {{TOKEN}} substitutions needed — the template is copied verbatim.
+    -->
+    <EmbeddedResource Include="Phases\SystemdTemplates\interfold-backup-onsuccess.conf"
+                      LogicalName="systemd/interfold-backup-onsuccess.conf" />
   </ItemGroup>
 
 </Project>

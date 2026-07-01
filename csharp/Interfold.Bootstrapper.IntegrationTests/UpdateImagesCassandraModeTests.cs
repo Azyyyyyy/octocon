@@ -1,0 +1,163 @@
+using Interfold.Bootstrapper.IntegrationTests.Attributes;
+using Interfold.Bootstrapper.IntegrationTests.Fixtures;
+using TUnit.Core;
+
+namespace Interfold.Bootstrapper.IntegrationTests;
+
+/// <summary>
+/// Cassandra-mode integration tests for the <c>update-images</c> subcommand. Sibling of
+/// <see cref="UpdateImagesPhaseTests"/> (which exercises the scylla-mode compose stack).
+/// These tests pin the two behaviours unique to <c>databaseMode=cassandra</c>:
+/// <list type="bullet">
+///   <item>
+///     <c>bootstrap publish</c> stamps <c>pull_policy: never</c> onto the cassandra
+///     service in the emitted <c>docker-compose.yaml</c>, so <c>docker compose pull</c>
+///     skips the local-only <c>interfold-cassandra:local</c> tag instead of failing.
+///   </item>
+///   <item>
+///     <c>update-images</c> rebuilds <c>interfold-cassandra:local</c> before the pull
+///     (so Dockerfile changes take effect via update-images alone), scoped to whether
+///     the effective service whitelist includes <c>cassandra</c>.
+///   </item>
+/// </list>
+/// </summary>
+/// <remarks>
+/// <para>
+/// Uses the dedicated <see cref="UbuntuCassandraDinDFixture"/> so the extra
+/// <c>cassandra:5</c> base image is pre-pulled once per session — the DinD is otherwise
+/// network-isolated (the API image is loaded from a bind-mounted tar), so a first-run
+/// pull of <c>cassandra:5</c> inside the test would exceed the fixture's warm-up budget.
+/// </para>
+/// <para>
+/// The health-check side of <c>update-images</c> (post-pull compose up + nodetool status
+/// probe) is deliberately not asserted here — cassandra:5 takes ~90s to reach UN in a
+/// DinD environment, which would dominate the CI runtime. The scylla-mode sibling suite
+/// covers the health-check code path; these tests scope to the cassandra-specific
+/// build + pull-skip contract by driving `update-images` with the whitelist narrowed
+/// to non-cassandra services (so no cassandra recreate happens) OR by asserting on the
+/// pull-phase output before recreate begins.
+/// </para>
+/// </remarks>
+[RequiresDocker]
+[ClassDataSource<UbuntuCassandraDinDFixture>(Shared = SharedType.PerTestSession)]
+public class UpdateImagesCassandraModeTests(UbuntuCassandraDinDFixture dinD)
+{
+    private static string TestConfigJsonPath =>
+        Path.Combine(AppContext.BaseDirectory, "fixtures", "interfold.bootstrap.test.cassandra.json");
+
+    [After(Test)]
+    public async Task DumpOnFailure(TestContext ctx)
+    {
+        if (ctx.Execution.Result?.State == TestState.Failed)
+        {
+            await dinD.CaptureFailureArtifactsAsync(ctx.Metadata.TestName);
+        }
+        await dinD.TearDownComposeAsync(ctx.Metadata.TestName);
+    }
+
+    [Test]
+    public async Task PublishInCassandraModeStampsPullPolicyOnComposeYaml()
+    {
+        // The narrowest test in the file: run just the `publish` subcommand (no compose up),
+        // then read the emitted docker-compose.yaml and assert the cassandra service block
+        // carries `pull_policy: never`. Fast — no health check, no image pull, no compose up.
+        // Locks down PublishPhase.StampCassandraPullPolicyNever's happy-path contract in a
+        // real end-to-end publish, not just the unit test's synthetic YAML.
+        var scratch = await dinD.CreateScratchAsync(nameof(PublishInCassandraModeStampsPullPolicyOnComposeYaml), TestConfigJsonPath);
+
+        var publish = await dinD.RunBootstrapperAsync(nameof(PublishInCassandraModeStampsPullPolicyOnComposeYaml),
+            ["publish", "--config", scratch.ConfigPath, "--output-dir", scratch.OutputDir,
+             "--non-interactive", "--skip-prereqs"]);
+        await Assert.That(publish.ExitCode).IsEqualTo(0).Because($"publish failed: {publish.Stderr}");
+
+        // grep -A 1 pulls the line after each `${CASSANDRA_IMAGE}` match; we assert the
+        // policy shows up in that immediate neighbourhood. Portable across compose-yaml
+        // layout tweaks (indent, blank lines, extra volume keys under the service) as long
+        // as pull_policy: never lands next to the image key.
+        var grep = await dinD.ExecAsync(["sh", "-c",
+            $"grep -A 1 -F '${{CASSANDRA_IMAGE}}' {scratch.OutputDir}/docker-compose.yaml"]);
+        await Assert.That(grep.ExitCode).IsEqualTo(0L)
+            .Because($"the cassandra service must contain the ${{CASSANDRA_IMAGE}} anchor: {grep.Stderr}");
+        await Assert.That(grep.Stdout).Contains("pull_policy: never")
+            .Because("PublishPhase.StampCassandraPullPolicyNever must land pull_policy: never right after the image key");
+    }
+
+    [Test]
+    public async Task UpdateInCassandraModeSkipsCassandraOnPullAndRebuildsLocalImage()
+    {
+        // End-to-end pull-side contract: after a full bootstrap in cassandra mode, an
+        // update-images run must (1) rebuild interfold-cassandra:local before pulling
+        // (log line "cassandra mode: rebuilding") and (2) let `docker compose pull`
+        // skip the cassandra service natively via pull_policy: never rather than
+        // failing on the non-registry-backed tag.
+        //
+        // We scope the update to interfold-api via --service so the recreate step
+        // doesn't touch the (slow-to-warm-up) cassandra container. The rebuild fires
+        // regardless of scope for the "all services" case; here we deliberately test
+        // the "cassandra in scope" branch by including cassandra in the --service list
+        // alongside interfold-api.
+        var scratch = await dinD.CreateScratchAsync(nameof(UpdateInCassandraModeSkipsCassandraOnPullAndRebuildsLocalImage), TestConfigJsonPath);
+
+        var bootstrap = await dinD.RunBootstrapperAsync($"{nameof(UpdateInCassandraModeSkipsCassandraOnPullAndRebuildsLocalImage)}-bootstrap",
+            ["bootstrap", "--config", scratch.ConfigPath, "--output-dir", scratch.OutputDir,
+             "--non-interactive", "--skip-prereqs"]);
+        await Assert.That(bootstrap.ExitCode).IsEqualTo(0).Because($"bootstrap failed: {bootstrap.Stderr}");
+
+        // Sanity: the local image was built by bootstrap. `docker images -q` returns
+        // the image ID (non-empty) if the tag exists locally.
+        var imgBefore = await dinD.ExecAsync(["sh", "-c", "docker images -q interfold-cassandra:local"]);
+        await Assert.That(imgBefore.Stdout.Trim().Length).IsGreaterThan(0)
+            .Because("bootstrap should have built interfold-cassandra:local via CassandraImagePhase.EnsureBuiltAsync");
+
+        var update = await dinD.RunBootstrapperAsync(nameof(UpdateInCassandraModeSkipsCassandraOnPullAndRebuildsLocalImage),
+            ["update-images", "--config", scratch.ConfigPath, "--output-dir", scratch.OutputDir,
+             "--service", "interfold-api", "--service", "cassandra",
+             "--skip-pre-update-backup", "--non-interactive"]);
+        await Assert.That(update.ExitCode).IsEqualTo(0).Because($"update-images failed: {update.Stderr}");
+
+        var combined = update.Stdout + update.Stderr;
+
+        // Rebuild log line: proves ShouldRebuildCassandra + EnsureBuiltAsync fired.
+        await Assert.That(combined).Contains("cassandra mode: rebuilding interfold-cassandra:local")
+            .Because("update-images in cassandra mode with cassandra in scope must rebuild the local image");
+
+        // Pull-skip evidence: docker compose reports the cassandra service as "Skipped"
+        // (compose behaviour when pull_policy: never — see pkg/compose/pull.go on
+        // docker/compose main). Absent this, the pull would fail with a manifest-not-found
+        // error on interfold-cassandra:local, so seeing exit 0 above is already necessary
+        // proof; the string match here pins the branch as well.
+        await Assert.That(combined).Contains("Skipped")
+            .Because("`docker compose pull` should skip the cassandra service due to pull_policy: never");
+
+        // Image is still present after the update (rebuild is idempotent at the Docker
+        // layer-cache level, so the ID may or may not have changed depending on cache
+        // hits; either way the tag must resolve).
+        var imgAfter = await dinD.ExecAsync(["sh", "-c", "docker images -q interfold-cassandra:local"]);
+        await Assert.That(imgAfter.Stdout.Trim().Length).IsGreaterThan(0)
+            .Because("interfold-cassandra:local must still exist after the update-images rebuild");
+    }
+
+    [Test]
+    public async Task UpdateInCassandraModeWithMsgDbWhitelistSkipsRebuild()
+    {
+        // The scoping guard: narrowing an update with `--service msg-db` in cassandra mode
+        // must NOT trigger an unrelated Cassandra rebuild. Locks down ShouldRebuildCassandra's
+        // "whitelist excludes cassandra" branch in a real invocation.
+        var scratch = await dinD.CreateScratchAsync(nameof(UpdateInCassandraModeWithMsgDbWhitelistSkipsRebuild), TestConfigJsonPath);
+
+        var bootstrap = await dinD.RunBootstrapperAsync($"{nameof(UpdateInCassandraModeWithMsgDbWhitelistSkipsRebuild)}-bootstrap",
+            ["bootstrap", "--config", scratch.ConfigPath, "--output-dir", scratch.OutputDir,
+             "--non-interactive", "--skip-prereqs"]);
+        await Assert.That(bootstrap.ExitCode).IsEqualTo(0).Because($"bootstrap failed: {bootstrap.Stderr}");
+
+        var update = await dinD.RunBootstrapperAsync(nameof(UpdateInCassandraModeWithMsgDbWhitelistSkipsRebuild),
+            ["update-images", "--config", scratch.ConfigPath, "--output-dir", scratch.OutputDir,
+             "--service", "msg-db",
+             "--skip-pre-update-backup", "--non-interactive"]);
+        await Assert.That(update.ExitCode).IsEqualTo(0).Because($"update-images failed: {update.Stderr}");
+
+        var combined = update.Stdout + update.Stderr;
+        await Assert.That(combined).DoesNotContain("cassandra mode: rebuilding")
+            .Because("--service msg-db must not trigger a cassandra rebuild");
+    }
+}

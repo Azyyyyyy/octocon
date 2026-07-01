@@ -70,6 +70,17 @@ public abstract class DinDFixtureBase : IAsyncInitializer, IAsyncDisposable
     /// <summary>If false, the fixture skips the API image pre-load / external image pre-pull (used by the Alpine negative-path).</summary>
     protected virtual bool PreloadImages => true;
 
+    /// <summary>
+    /// Extra registry images the concrete fixture wants pre-pulled into the inner Docker daemon,
+    /// in addition to the baseline (<c>timescale/timescaledb:latest-pg18</c> +
+    /// <c>scylladb/scylla:2026.1</c>) that every fixture shares. Only consulted when
+    /// <see cref="PreloadImages"/> is true. Empty by default; the cassandra-mode fixture
+    /// overrides this to include <c>cassandra:5</c> so the local Cassandra image build
+    /// (<c>db/cassandra/Dockerfile</c>, <c>FROM cassandra:5</c>) doesn't have to fetch its
+    /// base from the network on every test run.
+    /// </summary>
+    protected virtual IReadOnlyList<string> AdditionalPreloadImages => [];
+
     public virtual async Task InitializeAsync()
     {
         _publishedBootstrapperDir = await BootstrapperBuild.PublishedDirectory.Value.ConfigureAwait(false);
@@ -105,6 +116,10 @@ public abstract class DinDFixtureBase : IAsyncInitializer, IAsyncDisposable
             await ExecAsync(["docker", "load", "-i", "/opt/api-image.tar"]).ConfigureAwait(false);
             await ExecAsync(["docker", "pull", "timescale/timescaledb:latest-pg18"]).ConfigureAwait(false);
             await ExecAsync(["docker", "pull", "scylladb/scylla:2026.1"]).ConfigureAwait(false);
+            foreach (var image in AdditionalPreloadImages)
+            {
+                await ExecAsync(["docker", "pull", image]).ConfigureAwait(false);
+            }
         }
 
         // Provision the in-container scratch root once. Each test will mkdir its own

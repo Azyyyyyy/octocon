@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using Interfold.Bootstrapper.Cli;
 using Interfold.Bootstrapper.Configuration;
+using Interfold.Bootstrapper.Util;
 using Spectre.Console;
 
 namespace Interfold.Bootstrapper.Phases;
@@ -21,6 +22,13 @@ internal static class ConfigPhase
 
         var configPath = options.ConfigPath ?? Path.Combine(options.OutputDir, "interfold.bootstrap.json");
         BootstrapConfig config;
+        // Tracks whether the persisted JSON on disk came from THIS run (i.e. we just wrote it
+        // via PromptForConfig + PersistAsync). Used by the post-fill mDNS gate below to decide
+        // whether it's safe to overwrite the file after stripping .local hosts: the interactive
+        // branch persists its own output verbatim, so re-persisting after mutation keeps the
+        // JSON honest; the JSON-load branch deliberately does NOT re-persist so we don't
+        // silently rewrite the operator's own file.
+        var persistedInThisRun = false;
 
         if (File.Exists(configPath))
         {
@@ -39,11 +47,23 @@ internal static class ConfigPhase
         else if (!Console.IsInputRedirected)
         {
             logger.Info($"    no config at {configPath}; entering interactive setup");
+            // Pre-prompt mDNS banner: probes {hostname}.local BEFORE we render the prompt so
+            // the operator sees the mDNS story up-front. Returns the hostname to seed the
+            // "Public host(s)" row with when mDNS works (or the operator opts into installing
+            // avahi and the re-probe passes), null otherwise. On null the pre-fill omits the
+            // .local name entirely — no point silently pre-filling something that won't
+            // resolve on the LAN.
+            var mdnsHostname = await ApplyPreFillMdnsCheckAsync(options, logger, ct).ConfigureAwait(false);
+
             // Real TTY path: mask the OAuth secret prompts so onlookers can't shoulder-surf
             // values being typed. The test path passes maskSecrets:false to avoid Spectre's
             // ReadKey-driven secret path (which complicates TestConsole input pushing).
-            config = PromptForConfig(AnsiConsole.Console, maskSecrets: true);
+            config = PromptForConfig(
+                AnsiConsole.Console,
+                maskSecrets: true,
+                hostnameProbe: () => mdnsHostname);
             await PersistAsync(config, configPath, ct).ConfigureAwait(false);
+            persistedInThisRun = true;
         }
         else
         {
@@ -54,6 +74,30 @@ internal static class ConfigPhase
         }
 
         Validate(config);
+
+        // Post-fill mDNS safety gate: only for the `bootstrap` subcommand. `publish` /
+        // `update-images` / `backup` / `restore` load the persisted JSON verbatim and never
+        // mutate hosts — re-running the check there would be misleading noise. If the
+        // operator's persisted JSON is stale (e.g. .local names that no longer resolve),
+        // they re-run `bootstrap` and pick up the strip + warning path here.
+        if (options.Command == BootstrapCommand.Bootstrap)
+        {
+            var mutated = await ApplyMdnsGateAsync(config, options, logger, ct).ConfigureAwait(false);
+            if (mutated)
+            {
+                // Strip could have emptied the list — re-validate to fail loudly rather than
+                // producing a cert with zero SANs later. Matches the "hosts must contain at
+                // least one entry" invariant Validate enforces on JSON-loaded configs too.
+                Validate(config);
+                // Only overwrite the on-disk JSON on the interactive branch (we just wrote it
+                // and it's ours to keep in sync). The JSON-load branch belongs to the operator;
+                // the log warning is enough of a signal there.
+                if (persistedInThisRun)
+                {
+                    await PersistAsync(config, configPath, ct).ConfigureAwait(false);
+                }
+            }
+        }
 
         // Align the config's outputDir with the CLI override (if the operator passed --output-dir).
         if (!string.Equals(Path.GetFullPath(config.Deployment.OutputDir), options.OutputDir, StringComparison.Ordinal))
@@ -94,8 +138,8 @@ internal static class ConfigPhase
     /// Test seam for the device-IP pre-fill on the <c>Public host(s)</c> row. When the
     /// freshly-constructed <see cref="DeploymentSection.Hosts"/> list is empty (the property's
     /// shipped default) and the probe returns a non-null <see cref="IPAddress"/>, that address
-    /// is stored verbatim as the first <c>Hosts</c> entry so the menu row paints it as the
-    /// Enter-to-accept default and the operator can override or keep it. Defaults to
+    /// is stored verbatim as the second <c>Hosts</c> entry (after the mDNS hostname when the
+    /// hostname probe supplied one). Defaults to
     /// <see cref="LocalAddressDetector.TryDetectPrimaryIp"/> (live NIC enumeration with
     /// loopback / virtual-bridge / link-local filtering); unit tests pass <c>() =&gt; null</c>
     /// to keep the empty-Hosts default deterministic, or a concrete <see cref="IPAddress"/>
@@ -103,22 +147,48 @@ internal static class ConfigPhase
     /// JSON-load branch + <see cref="Validate"/>) never consult the probe, so the fail-fast
     /// contract on a JSON file with no <c>hosts</c> stays intact.
     /// </param>
+    /// <param name="hostnameProbe">
+    /// Test seam for the mDNS-hostname pre-fill on the <c>Public host(s)</c> row. When the
+    /// freshly-constructed <see cref="DeploymentSection.Hosts"/> list is empty and the probe
+    /// returns a non-null string, that value (typically <c>{hostname}.local</c>) is stored
+    /// verbatim as the FIRST <c>Hosts</c> entry — landing before the detected IP so the leaf
+    /// cert's primary-host derivation (see
+    /// <see cref="Phases.ConfigPhase.ResolveDerivedDefaults"/>) latches onto the mDNS name.
+    /// <para>
+    /// Deliberately defaults to <c>() =&gt; null</c> rather than a live
+    /// <see cref="HostnameDetector.TryDetectMdnsHostname"/> call: the "should we pre-fill a
+    /// .local name?" decision is owned by <see cref="ApplyPreFillMdnsCheckAsync"/> (which
+    /// probes mDNS resolvability, prints a banner, and optionally offers to install avahi
+    /// before returning a hostname). Making the default null here means the hostname can
+    /// never sneak into the pre-fill on a path that skipped the banner — e.g. a
+    /// non-interactive JSON-load run, or a unit test that only asked about IP pre-fill.
+    /// Production callers (only <see cref="RunAsync"/>) pass the banner's return value
+    /// wrapped in a lambda: <c>hostnameProbe: () =&gt; mdnsHostname</c>.
+    /// </para>
+    /// </param>
     internal static BootstrapConfig PromptForConfig(
         IAnsiConsole console,
         bool maskSecrets = false,
-        Func<IPAddress?>? localAddressProbe = null)
+        Func<IPAddress?>? localAddressProbe = null,
+        Func<string?>? hostnameProbe = null)
     {
         var c = new BootstrapConfig();
 
-        // Auto-default the "Public host(s)" row to the device's primary unicast IP on a fresh
-        // interactive bootstrap. The probe is the only place this runs — RunAsync's JSON-load
-        // branch and Validate stay untouched, so a non-interactive caller passing a config
-        // file with empty `hosts` still hard-fails fast (per the explicit contract on
-        // DeploymentSection.Hosts). The check guards on `Hosts.Count == 0` rather than calling
-        // the probe unconditionally so it costs nothing when an existing config is being
-        // re-edited and the operator has already populated the list.
+        // Auto-default the "Public host(s)" row on a fresh interactive bootstrap. The two
+        // probes fire only when the shipped-empty Hosts list is untouched — RunAsync's
+        // JSON-load branch + Validate stay untouched, so a non-interactive caller passing a
+        // config file with empty `hosts` still hard-fails fast (per the explicit contract on
+        // DeploymentSection.Hosts). Order matters: hostname first, IP second, so
+        // HostParser.PickPrimary latches the mDNS name for the leaf cert / derived URLs when
+        // both are present.
         if (c.Deployment.Hosts.Count == 0)
         {
+            var seed = new List<string>();
+            var hostname = (hostnameProbe ?? (() => null))();
+            if (hostname is not null)
+            {
+                seed.Add(hostname);
+            }
             var detected = (localAddressProbe ?? LocalAddressDetector.TryDetectPrimaryIp)();
             if (detected is not null)
             {
@@ -127,7 +197,11 @@ internal static class ConfigPhase
                 // we want serialised back into the JSON file. Downstream consumers do their
                 // own bracketing where required (URL derivation in ResolveDerivedDefaults
                 // via HostParser.ToUrlHost) so the SAN encoding stays correct.
-                c.Deployment.Hosts = [detected.ToString()];
+                seed.Add(detected.ToString());
+            }
+            if (seed.Count > 0)
+            {
+                c.Deployment.Hosts = seed;
             }
         }
 
@@ -379,6 +453,23 @@ internal static class ConfigPhase
                                                 () => c.Backup.Directory = PromptStr("Backup directory (absolute path; leave blank to default to {outputDir}/backups)", c.Backup.Directory)),
             ("Autostart server on boot",        () => c.Backup.AutostartServer.ToString(),
                                                 () => c.Backup.AutostartServer = PromptBool("Autostart the server on host boot (installs interfold.service)", c.Backup.AutostartServer)),
+
+            // --- Updates ---
+            // Chain interfold-update.service after interfold-backup.service via a
+            // systemd OnSuccess= drop-in. Off by default: manual `update-images`
+            // works regardless.
+            ("Chain updates after backup",      () => c.Update.Enabled.ToString(),
+                                                () => c.Update.Enabled = PromptBool("Chain interfold-update.service after each successful backup", c.Update.Enabled)),
+            ("Health-check timeout (seconds)",  () => c.Update.HealthCheckTimeoutSeconds.ToString(),
+                                                () => c.Update.HealthCheckTimeoutSeconds = PromptInt("Health-check timeout after pull+recreate (seconds)", c.Update.HealthCheckTimeoutSeconds, 1, 3600)),
+            ("Auto-restore on failure",         () => c.Update.AutoRestoreOnFailure.ToString(),
+                                                () => c.Update.AutoRestoreOnFailure = PromptBool("Auto-restore the pre-update backup on health-check failure (destructive)", c.Update.AutoRestoreOnFailure)),
+            ("Recreate containers on update",   () => c.Update.RecreateOnUpdate.ToString(),
+                                                () => c.Update.RecreateOnUpdate = PromptBool("Recreate containers on update (uses 'up -d'; disable only for staged pulls)", c.Update.RecreateOnUpdate)),
+            // Services whitelist. Blank = "every service"; non-empty is a
+            // comma-separated list validated against ValidUpdateServices.
+            ("Update service whitelist (blank=all)", () => c.Update.Services.Length == 0 ? "<all>" : string.Join(",", c.Update.Services),
+                                                () => c.Update.Services = PromptUpdateServices(console, c.Update.Services)),
         };
 
         // Section boundaries for the menu's grouped layout. Each row is (0-based index of the
@@ -406,11 +497,12 @@ internal static class ConfigPhase
             // — heterogeneous fields but all "knobs the operator probably leaves alone".
             (25, "Performance tuning"),
             (30, "OAuth credentials"),
-            // Backup + autostart section sits at the end of the form because most
-            // operators leave its five fields at their no-op defaults; surfacing it
-            // after the credentials block keeps the high-traffic fields earlier in the
-            // menu where they're easy to find.
+            // Backup + autostart section sits after the credentials block because
+            // most operators leave its five fields at their no-op defaults.
             (36, "Backup & autostart"),
+            // Updates section: five new rows under the backup group; the same
+            // reasoning applies (opt-in feature, low interaction rate).
+            (41, "Updates"),
         };
 
         // Sentinels: -1 = "Confirm and save" (commits the form and returns). The 0..fields.Count-1
@@ -433,11 +525,11 @@ internal static class ConfigPhase
                 .Title(
                     "[bold]Configure interfold.bootstrap.json[/]\n" +
                     "[grey]Use arrow keys to navigate, Enter to edit, choose [green]Confirm and save[/] when done.[/]")
-                // Default Spectre page size is 10; the form has 42 fields + 9 headers + 1 confirm
-                // = 52 rows. Sizing the page to fit them all means no scrolling on a 55+ row
+                // Default Spectre page size is 10; the form has 47 fields + 10 headers + 1 confirm
+                // = 58 rows. Sizing the page to fit them all means no scrolling on a 60+ row
                 // terminal; smaller TTYs still paginate cleanly with the MoreChoicesText hint
                 // below. Operators on a 24-row TTY will scroll but every row is reachable.
-                .PageSize(53)
+                .PageSize(58)
                 .MoreChoicesText("[grey](move up/down to reveal more)[/]")
                 // Markup.Escape on the value because some fields legitimately contain markup-like
                 // characters (e.g. ApiImage's `ghcr.io/...:latest` is safe but a future operator
@@ -564,6 +656,40 @@ internal static class ConfigPhase
     }
 
     /// <summary>
+    /// Prompt for the <see cref="UpdateSection.Services"/> whitelist. Blank input clears
+    /// the list back to "every service" (the shipped default); a comma-separated list is
+    /// validated inline against <see cref="ValidUpdateServices"/> so a typo (e.g.
+    /// <c>msg-database</c>) is caught before the operator saves the form, not later
+    /// when <c>docker compose pull</c> reports "no such service".
+    /// </summary>
+    private static string[] PromptUpdateServices(IAnsiConsole console, string[] fallback)
+    {
+        var fallbackText = string.Join(",", fallback);
+        var raw = console.Prompt(
+            new TextPrompt<string>(
+                "Update service whitelist (comma-separated; blank = every service):")
+                .DefaultValue(fallbackText)
+                .AllowEmpty()
+                .Validate(s =>
+                {
+                    if (string.IsNullOrWhiteSpace(s)) return ValidationResult.Success();
+                    var parts = s.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                    foreach (var part in parts)
+                    {
+                        if (!ValidUpdateServices.Contains(part, StringComparer.Ordinal))
+                        {
+                            return ValidationResult.Error(
+                                $"[red]'{part}' is not a known compose service. Expected one of: {string.Join(", ", ValidUpdateServices)}[/]");
+                        }
+                    }
+                    return ValidationResult.Success();
+                }));
+
+        if (string.IsNullOrWhiteSpace(raw)) return [];
+        return raw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToArray();
+    }
+
+    /// <summary>
     /// Show-callback helper for the two derivable <see cref="ApiRuntimeSection"/> single-value
     /// fields (<see cref="ApiRuntimeSection.CallbackBaseUrl"/> / <see cref="ApiRuntimeSection.JwtAuthority"/>).
     /// Runs <see cref="ResolveDerivedDefaults"/> on a working copy of the
@@ -655,6 +781,26 @@ internal static class ConfigPhase
     /// the <c>auxiliary</c> default at runtime.
     /// </summary>
     internal static readonly string[] ValidNodeGroups = ["primary", "auxiliary", "sidecar"];
+
+    /// <summary>
+    /// Whitelist of compose service names <see cref="UpdateSection.Services"/> may reference.
+    /// Must stay aligned with the <c>builder.AddContainer(...)</c> names in
+    /// <c>InterfoldAppHost.Configure</c>. Multi-region Scylla adds one service per region
+    /// (<c>scylla-nam</c>, <c>scylla-eur</c>, ...); the seven regional identifiers here match
+    /// <see cref="ValidScyllaKeyspaces"/> so an operator restricting the update whitelist to
+    /// "just the API tier" or "just one Scylla region" doesn't have to memorise a second list.
+    /// The validator surfaces the canonical set in its error message so a typo is easy to fix.
+    /// </summary>
+    internal static readonly string[] ValidUpdateServices =
+    [
+        "msg-db",
+        "scylla",
+        "scylla-nam", "scylla-eur", "scylla-sam", "scylla-sas",
+        "scylla-eas", "scylla-ocn", "scylla-gdpr",
+        "cassandra",
+        "interfold-api",
+        "octocon-web",
+    ];
 
     /// <summary>The default port for the <c>http</c> URI scheme (RFC 7230 §2.7.1).</summary>
     private const int DefaultHttpPort = 80;
@@ -1015,6 +1161,34 @@ internal static class ConfigPhase
                 "(systemd-driven backup invocations have an unpredictable CWD; relative paths " +
                 "would not resolve consistently). Leave blank to default to '{outputDir}/backups'.");
         }
+
+        // Update section: the health-check timeout must sit in a range that covers a
+        // realistic cold-start (Postgres+Scylla+API on modest hardware routinely reach
+        // 60-120s) without letting a broken image loop indefinitely — 3600s = 1h upper
+        // bound matches the "give up eventually" contract UpdateImagesPhase relies on.
+        ValidateIntRange(
+            config.Update.HealthCheckTimeoutSeconds, 1, 3600,
+            "config.update.healthCheckTimeoutSeconds");
+
+        // Every entry in the whitelist must be a known compose service name. Empty
+        // (the default) means "every service" and is valid; only non-empty entries
+        // are checked so an operator that ignores the feature entirely still produces
+        // a valid config.
+        foreach (var svc in config.Update.Services)
+        {
+            if (string.IsNullOrWhiteSpace(svc))
+            {
+                throw new InvalidOperationException(
+                    "config.update.services contains a blank entry. Remove it or " +
+                    $"replace with one of: {string.Join(", ", ValidUpdateServices)}.");
+            }
+            if (!ValidUpdateServices.Contains(svc, StringComparer.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    $"config.update.services entry '{svc}' is not a known compose service. " +
+                    $"Expected one of: {string.Join(", ", ValidUpdateServices)}.");
+            }
+        }
     }
 
     /// <summary>
@@ -1099,5 +1273,288 @@ internal static class ConfigPhase
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         var json = JsonSerializer.Serialize(config, BootstrapJsonContext.Default.BootstrapConfig);
         await File.WriteAllTextAsync(path, json, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Pre-prompt mDNS status banner. Runs before <see cref="PromptForConfig"/> on the
+    /// interactive fresh-config branch of <see cref="RunAsync"/>. Detects the device hostname,
+    /// probes whether <c>{hostname}.local</c> resolves via the local mDNS stack, prints a
+    /// status banner up-front, and (when mDNS is unavailable AND we have a TTY) optionally
+    /// offers to install <c>avahi-daemon</c> + <c>libnss-mdns</c> right there. Returns the
+    /// hostname to seed the "Public host(s)" prompt with, or <c>null</c> if we should skip the
+    /// pre-fill (no hostname detected, non-Linux, probe failed and operator declined install,
+    /// install completed but the re-probe still failed).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is Tier 1 of the two-tier mDNS design. Tier 2 (<see cref="ApplyMdnsGateAsync"/>)
+    /// runs after <see cref="Validate"/> and catches <c>.local</c> entries that survived the
+    /// operator's typing regardless of what the banner said, plus JSON-load paths that
+    /// bypass the banner entirely. Both tiers share the same underlying probe / install
+    /// primitives from <see cref="MdnsAvailability"/> and <see cref="PrerequisitesPhase.RunInstallAsync"/>.
+    /// </para>
+    /// <para>
+    /// Non-interactive callers are short-circuited immediately: the banner is a TTY-only
+    /// concept (there's no operator to talk to). The gate handles unresolvable <c>.local</c>
+    /// entries in that flow.
+    /// </para>
+    /// </remarks>
+    /// <param name="options">Bootstrap options; the <see cref="BootstrapOptions.NonInteractive"/> flag short-circuits.</param>
+    /// <param name="logger">Phase logger for the info/warn banner messages.</param>
+    /// <param name="ct">Cancellation token propagated into the probe and (optional) install.</param>
+    /// <param name="hostnameFactory">
+    /// Test seam for the hostname detection step. Defaults to
+    /// <see cref="HostnameDetector.TryDetectMdnsHostname"/> in production; unit tests inject
+    /// a fake returning either a canned <c>"workstation.local"</c> or <c>null</c> to exercise
+    /// the no-hostname branch deterministically.
+    /// </param>
+    /// <param name="probe">
+    /// Test seam for the resolvability probe. Defaults to
+    /// <see cref="MdnsAvailability.IsHostnameResolvableAsync"/> in production; unit tests
+    /// inject a fake returning <c>true</c> / <c>false</c> / <c>null</c> to exercise the
+    /// resolves / broken / non-Linux branches without shelling out to getent.
+    /// </param>
+    internal static async Task<string?> ApplyPreFillMdnsCheckAsync(
+        BootstrapOptions options,
+        PhaseLogger logger,
+        CancellationToken ct,
+        Func<string?>? hostnameFactory = null,
+        Func<string, CancellationToken, Task<bool?>>? probe = null)
+    {
+        // Non-interactive callers get no banner — no TTY to talk to. The post-fill gate
+        // still handles any .local entries the operator supplied in their config file.
+        if (options.NonInteractive)
+        {
+            return null;
+        }
+
+        var hostname = (hostnameFactory ?? HostnameDetector.TryDetectMdnsHostname)();
+        if (hostname is null)
+        {
+            logger.Info("    mDNS pre-check: no suitable short hostname detected; skipping .local pre-fill");
+            return null;
+        }
+
+        var probeFn = probe ?? MdnsAvailability.IsHostnameResolvableAsync;
+        var initial = await probeFn(hostname, ct).ConfigureAwait(false);
+        if (initial is null)
+        {
+            logger.Info($"    mDNS pre-check: platform doesn't support probing; skipping {hostname} pre-fill");
+            return null;
+        }
+        if (initial == true)
+        {
+            logger.Info($"    mDNS pre-check: {hostname} resolves; will pre-fill it in the hosts prompt");
+            return hostname;
+        }
+
+        // mDNS is unavailable. Warn the operator up-front so they see the status BEFORE any
+        // hosts prompt appears; then, if we have a TTY, offer to install avahi. If they
+        // decline (or the install fails), we omit the .local name from the pre-fill.
+        var distro = DistroInfo.Read();
+        logger.Warn($"mDNS is unavailable on this device — {hostname} will NOT resolve on the LAN.");
+        logger.Warn($"    to enable it: {MdnsAvailability.ManualInstallHint(distro.Family)}");
+
+        // Console.IsInputRedirected == true means we can't drive a confirmation prompt (the
+        // unit-test path lands here). Skip the offer and let the operator handle it later
+        // via the install hint above. Same guard the outer RunAsync uses.
+        if (Console.IsInputRedirected)
+        {
+            logger.Warn($"    no TTY for install prompt; {hostname} will be omitted from the pre-fill");
+            return null;
+        }
+
+        var install = AnsiConsole.Prompt(new ConfirmationPrompt(
+            $"Install avahi-daemon + nss-mdns now so {hostname} can be included in the hosts list?")
+        { DefaultValue = true });
+        if (!install)
+        {
+            logger.Warn($"    operator declined install — {hostname} will be omitted from the pre-fill");
+            return null;
+        }
+
+        var packages = MdnsAvailability.InstallPackages(distro.Family);
+        if (packages.Count == 0)
+        {
+            logger.Warn($"    unsupported distro family {distro.Family}; skipping install and .local pre-fill");
+            return null;
+        }
+        logger.Info($"    installing avahi ({string.Join(" ", packages)}) ...");
+        try
+        {
+            await PrerequisitesPhase.RunInstallAsync(distro, packages, logger, ct).ConfigureAwait(false);
+            // Try to bring the daemon up. Failure here isn't fatal — some minimal environments
+            // won't have systemctl at all, in which case the operator can `service avahi-daemon
+            // start` manually. We swallow errors and fall through to the re-probe, which will
+            // decide whether things now work.
+            try
+            {
+                await ProcessRunner.RunAsync(
+                    "systemctl", ["enable", "--now", "avahi-daemon"], ct: ct).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                logger.Warn($"    could not `systemctl enable --now avahi-daemon` ({ex.GetType().Name}: {ex.Message}); " +
+                            "start it manually if the re-probe below fails.");
+            }
+        }
+        catch (Exception ex)
+        {
+            logger.Warn($"    avahi install failed ({ex.GetType().Name}: {ex.Message}); {hostname} will be omitted from the pre-fill");
+            return null;
+        }
+
+        var recheck = await probeFn(hostname, ct).ConfigureAwait(false);
+        if (recheck == true)
+        {
+            logger.Info($"    mDNS now resolvable; pre-filling {hostname}");
+            return hostname;
+        }
+        logger.Warn($"    avahi installed but {hostname} still doesn't resolve; omitting from pre-fill");
+        return null;
+    }
+
+    /// <summary>
+    /// Post-fill mDNS safety gate. Runs after <see cref="Validate"/> on the
+    /// <see cref="BootstrapCommand.Bootstrap"/> command only. Probes every <c>.local</c> entry
+    /// in the finalised <see cref="DeploymentSection.Hosts"/> list; if any fail to resolve,
+    /// interactively offers to install avahi (identical to the pre-prompt banner's install
+    /// path) and, when that's declined / fails / non-interactive, strips the unresolvable
+    /// entries with a warning + copy-pasteable install hint. Bootstrap always continues:
+    /// re-running <c>bootstrap</c> after installing mDNS is <em>optional recovery</em>, not
+    /// a required next step.
+    /// </summary>
+    /// <returns>
+    /// True when the hosts list was mutated (caller must re-validate and, on the interactive
+    /// branch, re-persist the config to keep the JSON in sync). False when the gate was a
+    /// no-op — no <c>.local</c> entries, non-Linux short-circuit, everything resolved
+    /// successfully, or the install completed and the re-probe now passes.
+    /// </returns>
+    /// <remarks>
+    /// Partial mDNS resolution is treated as broken — if ANY <c>.local</c> in the list fails
+    /// to resolve, we ask about install / strip the failing entries. Reasoning: a leaf cert
+    /// SAN chain is trust-all-or-nothing; issuing a cert where half the SANs point at names
+    /// that don't resolve gives the operator a broken deployment that fails only for some
+    /// clients, which is worse than a smaller-but-consistent SAN set.
+    /// </remarks>
+    /// <param name="config">Config being bootstrapped; mutated in place when entries are stripped.</param>
+    /// <param name="options">Bootstrap options; drives the interactive-vs-strip fork.</param>
+    /// <param name="logger">Phase logger for the warn + install-hint messages.</param>
+    /// <param name="ct">Cancellation token propagated into the probe and (optional) install.</param>
+    /// <param name="probe">
+    /// Test seam for the resolvability probe. Defaults to
+    /// <see cref="MdnsAvailability.IsHostnameResolvableAsync"/> in production; unit tests
+    /// inject a fake to drive skip / accept / strip / re-validate branches without shelling
+    /// out to getent.
+    /// </param>
+    internal static async Task<bool> ApplyMdnsGateAsync(
+        BootstrapConfig config,
+        BootstrapOptions options,
+        PhaseLogger logger,
+        CancellationToken ct,
+        Func<string, CancellationToken, Task<bool?>>? probe = null)
+    {
+        var localHosts = config.Deployment.Hosts
+            .Where(h => h.EndsWith(".local", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        if (localHosts.Count == 0)
+        {
+            return false;
+        }
+
+        var probeFn = probe ?? MdnsAvailability.IsHostnameResolvableAsync;
+
+        // Probe every .local host up-front. A null result from any of them means "can't
+        // probe on this platform" — same short-circuit the pre-fill banner uses. We could
+        // in principle only check the first .local and treat that as representative, but
+        // running getent per-entry means a mid-list rename to a resolvable name doesn't
+        // mask an earlier broken one.
+        var broken = new List<string>();
+        foreach (var host in localHosts)
+        {
+            var result = await probeFn(host, ct).ConfigureAwait(false);
+            if (result is null)
+            {
+                return false;
+            }
+            if (result == false)
+            {
+                broken.Add(host);
+            }
+        }
+        if (broken.Count == 0)
+        {
+            logger.Info($"    mDNS ok: {string.Join(", ", localHosts)} all resolvable");
+            return false;
+        }
+
+        // Interactive install offer — only when we have a TTY. Non-interactive callers fall
+        // straight through to the strip + warn path below. The banner may already have asked
+        // this question, but the operator could still have typed a .local name manually in
+        // the "Public host(s)" prompt after declining, and JSON-load runs never see the
+        // banner at all; either way, offering here catches the "changed my mind, install
+        // now" case.
+        if (!options.NonInteractive && !Console.IsInputRedirected)
+        {
+            var distro = DistroInfo.Read();
+            var install = AnsiConsole.Prompt(new ConfirmationPrompt(
+                $"mDNS is unavailable but your hosts list contains {string.Join(", ", broken)}. " +
+                "Install avahi-daemon + nss-mdns now?")
+            { DefaultValue = true });
+            if (install)
+            {
+                var packages = MdnsAvailability.InstallPackages(distro.Family);
+                if (packages.Count > 0)
+                {
+                    logger.Info($"    installing avahi ({string.Join(" ", packages)}) ...");
+                    try
+                    {
+                        await PrerequisitesPhase.RunInstallAsync(distro, packages, logger, ct).ConfigureAwait(false);
+                        try
+                        {
+                            await ProcessRunner.RunAsync(
+                                "systemctl", ["enable", "--now", "avahi-daemon"], ct: ct).ConfigureAwait(false);
+                        }
+                        catch (Exception ex)
+                        {
+                            logger.Warn($"    could not `systemctl enable --now avahi-daemon` ({ex.GetType().Name}: {ex.Message}); " +
+                                        "start it manually and re-run bootstrap if the re-probe below still fails.");
+                        }
+                        // Re-probe every previously-broken host. If any still fail (e.g. NAT'd
+                        // LAN, the daemon isn't advertising us yet), we fall through to strip
+                        // so the current run still produces a usable cert.
+                        var stillBroken = false;
+                        foreach (var host in broken)
+                        {
+                            if (await probeFn(host, ct).ConfigureAwait(false) != true)
+                            {
+                                stillBroken = true;
+                                break;
+                            }
+                        }
+                        if (!stillBroken)
+                        {
+                            logger.Info("    mDNS now resolvable for all .local hosts");
+                            return false;
+                        }
+                        logger.Warn($"avahi installed but {string.Join(", ", broken)} still doesn't resolve; removing from hosts.");
+                    }
+                    catch (Exception ex)
+                    {
+                        logger.Warn($"avahi install failed ({ex.GetType().Name}: {ex.Message}); removing unresolvable .local host(s).");
+                    }
+                }
+            }
+        }
+
+        // Strip + warn + continue. Bootstrap does NOT halt — it finishes with the reduced
+        // hosts list. The install hint tells the operator how to re-enable those names on a
+        // future `bootstrap` run if they want them back; it's recovery advice, not a
+        // requirement for the current run to succeed.
+        var installHint = MdnsAvailability.ManualInstallHint(DistroInfo.Read().Family);
+        logger.Warn($"removing unresolvable .local host(s) from config.deployment.hosts: {string.Join(", ", broken)}");
+        logger.Warn($"    bootstrap will continue with the remaining hosts. To restore these entries on a future run, set up mDNS first: {installHint}");
+        config.Deployment.Hosts = [.. config.Deployment.Hosts.Except(broken, StringComparer.OrdinalIgnoreCase)];
+        return true;
     }
 }

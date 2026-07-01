@@ -138,6 +138,18 @@ public sealed class BootstrapConfig
     /// </summary>
     [JsonPropertyName("backup")]
     public BackupSection Backup { get; set; } = new();
+
+    /// <summary>
+    /// Image-update preferences consumed by the <c>update-images</c> subcommand and by
+    /// the systemd chaining that <see cref="Phases.SystemdInstallPhase"/> wires into
+    /// <c>interfold-backup.service</c>'s <c>OnSuccess=</c> hook. All fields default to a
+    /// "manual only" stance: <c>update-images</c> always works from the CLI regardless,
+    /// but <see cref="UpdateSection.Enabled"/> must be flipped (and <c>install-service</c>
+    /// re-run) before the backup timer will chain into an update after each scheduled
+    /// backup.
+    /// </summary>
+    [JsonPropertyName("update")]
+    public UpdateSection Update { get; set; } = new();
 }
 
 /// <summary>
@@ -551,4 +563,70 @@ public sealed class BackupSection
     /// </summary>
     [JsonPropertyName("autostartServer")]
     public bool AutostartServer { get; set; } = false;
+}
+
+/// <summary>
+/// Image-update preferences consumed by the <c>update-images</c> subcommand. Every field
+/// defaults to a "manual only" stance so a stock bootstrap behaves identically to
+/// pre-feature deployments — operators opt in explicitly by flipping
+/// <see cref="Enabled"/> in <c>interfold.bootstrap.json</c> or via the interactive
+/// prompt, then re-running <c>install-service</c> to materialise the systemd chaining
+/// drop-in that fires an update after each successful scheduled backup.
+/// </summary>
+public sealed class UpdateSection
+{
+    /// <summary>
+    /// Master toggle for the systemd chain that runs <c>update-images</c> after each
+    /// successful scheduled backup. When <c>false</c>,
+    /// <see cref="Phases.SystemdInstallPhase"/> writes <c>interfold-update.service</c> but
+    /// does NOT install the <c>interfold-backup.service.d/50-chain-update.conf</c>
+    /// drop-in — so no unattended updates ever fire. The one-shot <c>update-images</c>
+    /// subcommand always works regardless of this flag.
+    /// </summary>
+    [JsonPropertyName("enabled")]
+    public bool Enabled { get; set; } = false;
+
+    /// <summary>
+    /// Bound on how long <see cref="Phases.UpdateImagesPhase"/> waits after
+    /// <c>docker compose up -d</c> before it declares the stack unhealthy and either
+    /// prints the manual restore recipe or (with <see cref="AutoRestoreOnFailure"/>)
+    /// invokes <see cref="Phases.RestorePhase"/> inline. Bounded 1..3600 by the
+    /// validator; default 180s covers the typical Postgres + Scylla + API cold start
+    /// on modest hardware without letting a broken image loop indefinitely.
+    /// </summary>
+    [JsonPropertyName("healthCheckTimeoutSeconds")]
+    public int HealthCheckTimeoutSeconds { get; set; } = 180;
+
+    /// <summary>
+    /// Config-side equivalent of the CLI <c>--auto-restore</c> flag. When <c>true</c>,
+    /// a failing health check after image pull triggers an automatic
+    /// <see cref="Phases.RestorePhase"/> invocation against the pre-update backup archives
+    /// captured in the same run. Defaults to <c>false</c> because a rollback is a
+    /// destructive operation that most operators want to gate behind an explicit opt-in.
+    /// </summary>
+    [JsonPropertyName("autoRestoreOnFailure")]
+    public bool AutoRestoreOnFailure { get; set; } = false;
+
+    /// <summary>
+    /// Controls whether <c>update-images</c> uses <c>docker compose up -d</c> (the
+    /// default; compose recreates only containers whose image changed) or
+    /// <c>docker compose restart</c>. Set to <c>false</c> only when an operator wants
+    /// to stage pulls without recreating containers immediately — an image-change
+    /// pull with <c>restart</c> alone will NOT run the new image until a subsequent
+    /// <c>up -d</c>, so the flag exists purely as an escape hatch for the two-step
+    /// manual recreate workflow.
+    /// </summary>
+    [JsonPropertyName("recreateOnUpdate")]
+    public bool RecreateOnUpdate { get; set; } = true;
+
+    /// <summary>
+    /// Whitelist of compose services to pull + recreate. Empty (the default) means
+    /// "every service in the compose file". Each entry must be one of the AppHost's
+    /// canonical service names (<c>msg-db</c>, <c>scylla</c>/<c>scylla-nam</c>/...,
+    /// <c>cassandra</c>, <c>interfold-api</c>, <c>octocon-web</c>) — the validator
+    /// rejects unknown names to catch typos before they surface as
+    /// "no such service" errors from docker compose.
+    /// </summary>
+    [JsonPropertyName("services")]
+    public string[] Services { get; set; } = [];
 }

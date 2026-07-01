@@ -656,4 +656,114 @@ public sealed class PublishEnvPostProcessingTests
         var serverName = PublishPhase.PickServerName(["192.168.1.42"]);
         await Assert.That(serverName).IsEqualTo("192.168.1.42");
     }
+
+    [Test]
+    public async Task StampCassandraPullPolicyNeverInsertsPolicyAfterImageLine()
+    {
+        // The stamper's job: after the `image: "${CASSANDRA_IMAGE}"` line, insert
+        // `pull_policy: never` at the same indent so `docker compose pull` skips the
+        // service instead of failing on the non-registry-backed tag. Docker Compose's
+        // pull command explicitly skips services with pull_policy: never — the
+        // integration test in UpdateImagesCassandraModeTests confirms the observable
+        // "Skipped" behaviour end-to-end; this unit test locks down the file mutation
+        // shape.
+        var tmp = Path.Combine(Path.GetTempPath(), $"compose-stamp-{Guid.NewGuid():N}.yaml");
+        try
+        {
+            var original = string.Join("\n", new[]
+            {
+                "services:",
+                "  cassandra:",
+                "    image: \"${CASSANDRA_IMAGE}\"",
+                "    volumes:",
+                "      - cassandra-data:/var/lib/cassandra",
+                "  interfold-api:",
+                "    image: interfold-api:test",
+                "",
+            });
+            await File.WriteAllTextAsync(tmp, original);
+
+            PublishPhase.StampCassandraPullPolicyNever(tmp);
+
+            var lines = await File.ReadAllLinesAsync(tmp);
+            var imageIdx = Array.FindIndex(lines, l => l.Contains("${CASSANDRA_IMAGE}", StringComparison.Ordinal));
+            await Assert.That(imageIdx).IsGreaterThanOrEqualTo(0)
+                .Because("baseline: the anchor line must still be present after stamping");
+            await Assert.That(lines[imageIdx + 1]).IsEqualTo("    pull_policy: never")
+                .Because("stamp must land on the very next line, at the same 4-space indent as the image key");
+        }
+        finally
+        {
+            if (File.Exists(tmp)) File.Delete(tmp);
+        }
+    }
+
+    [Test]
+    public async Task StampCassandraPullPolicyNeverIsIdempotent()
+    {
+        // Re-running `bootstrap publish` (or `bootstrap` itself) is a supported operator
+        // action — the stamper must not double-stamp. Idempotency here means: calling the
+        // stamper twice in a row lands exactly one `pull_policy: never` line, not two.
+        var tmp = Path.Combine(Path.GetTempPath(), $"compose-stamp-idem-{Guid.NewGuid():N}.yaml");
+        try
+        {
+            var original = string.Join("\n", new[]
+            {
+                "services:",
+                "  cassandra:",
+                "    image: \"${CASSANDRA_IMAGE}\"",
+                "    volumes:",
+                "      - cassandra-data:/var/lib/cassandra",
+                "",
+            });
+            await File.WriteAllTextAsync(tmp, original);
+
+            PublishPhase.StampCassandraPullPolicyNever(tmp);
+            PublishPhase.StampCassandraPullPolicyNever(tmp);
+
+            var lines = await File.ReadAllLinesAsync(tmp);
+            var count = lines.Count(l => string.Equals(l.Trim(), "pull_policy: never", StringComparison.Ordinal));
+            await Assert.That(count).IsEqualTo(1)
+                .Because("second invocation must be a no-op — one policy line, not two");
+        }
+        finally
+        {
+            if (File.Exists(tmp)) File.Delete(tmp);
+        }
+    }
+
+    [Test]
+    public async Task StampCassandraPullPolicyNeverIsNoOpWhenCassandraAnchorAbsent()
+    {
+        // Defensive branch: a scylla-mode compose file (no ${CASSANDRA_IMAGE} anchor)
+        // handed to the stamper by accident must leave the file untouched rather than
+        // throwing or corrupting a random service block. The publish path only calls
+        // the stamper when CassandraImagePhase.IsCassandraDeployment(config) is true,
+        // so this is belt-and-braces — but it's cheap coverage and keeps the stamper
+        // safe to call in any future context (e.g. an operator running it manually).
+        var tmp = Path.Combine(Path.GetTempPath(), $"compose-stamp-noop-{Guid.NewGuid():N}.yaml");
+        try
+        {
+            var original = string.Join("\n", new[]
+            {
+                "services:",
+                "  scylla:",
+                "    image: scylladb/scylla:2026.1",
+                "  interfold-api:",
+                "    image: interfold-api:test",
+                "",
+            });
+            await File.WriteAllTextAsync(tmp, original);
+
+            PublishPhase.StampCassandraPullPolicyNever(tmp);
+
+            var after = await File.ReadAllTextAsync(tmp);
+            await Assert.That(after.Contains("pull_policy", StringComparison.Ordinal)).IsFalse()
+                .Because("no ${CASSANDRA_IMAGE} anchor means nothing to stamp; the file must be untouched");
+        }
+        finally
+        {
+            if (File.Exists(tmp)) File.Delete(tmp);
+        }
+    }
 }

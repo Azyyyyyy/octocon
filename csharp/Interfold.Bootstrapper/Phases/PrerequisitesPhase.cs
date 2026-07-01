@@ -324,6 +324,46 @@ internal static partial class PrerequisitesPhase
         }
     }
 
+    /// <summary>
+    /// Distro-family-aware apt/dnf install seam reused by
+    /// <see cref="ConfigPhase.ApplyPreFillMdnsCheckAsync"/> and
+    /// <see cref="ConfigPhase.ApplyMdnsGateAsync"/> when the operator opts into installing
+    /// avahi + nss-mdns from the mDNS banner / gate prompt. Dispatches to the existing
+    /// private <see cref="RunAptInstallAsync"/> / <see cref="RunDnfInstallAsync"/> helpers
+    /// so both callers speak the same DEBIAN_FRONTEND / <c>-y</c> shape and the "installer
+    /// exited non-zero" error surfaces identically no matter who invoked it.
+    /// </summary>
+    /// <remarks>
+    /// Kept internal (not public) so this only widens the phase's surface to sibling code in
+    /// the bootstrapper assembly. The bootstrapper's existing prereqs flow keeps calling the
+    /// private helpers directly — no behavioural change to the primary prereqs path.
+    /// Non-Linux hosts throw: mDNS install only makes sense on the Linux families the
+    /// bootstrapper otherwise supports, and short-circuiting there earlier is the caller's
+    /// job (both <see cref="MdnsAvailability.IsHostnameResolvableAsync"/> and the
+    /// <see cref="MdnsAvailability.InstallPackages"/> lookup return null / empty on
+    /// unknown-family so we never reach this method with an unknown distro).
+    /// </remarks>
+    internal static async Task RunInstallAsync(
+        DistroInfo distro,
+        IEnumerable<string> packages,
+        PhaseLogger logger,
+        CancellationToken ct)
+    {
+        switch (distro.Family)
+        {
+            case DistroFamily.Debian:
+                await RunAptInstallAsync(packages, logger, ct).ConfigureAwait(false);
+                break;
+            case DistroFamily.RedHat:
+                await RunDnfInstallAsync(packages, logger, ct).ConfigureAwait(false);
+                break;
+            default:
+                throw new InvalidOperationException(
+                    $"Cannot install packages on unsupported distro family {distro.Family}. " +
+                    $"Manual install required. Distro: {distro.PrettyName ?? distro.Id}.");
+        }
+    }
+
     private static async Task RunAptInstallAsync(IEnumerable<string> packages, PhaseLogger logger, CancellationToken ct)
     {
         var env = new Dictionary<string, string?> { ["DEBIAN_FRONTEND"] = "noninteractive" };

@@ -743,6 +743,120 @@ public sealed class ConfigValidationTests
     }
 
     [Test]
+    public async Task UpdateHealthCheckTimeoutZeroFailsValidation()
+    {
+        // Lower bound is 1s; a zero timeout would starve every probe on start. The
+        // validator error names the field so the operator can find the offending key
+        // in interfold.bootstrap.json.
+        var cfg = MakeValid();
+        cfg.Update.HealthCheckTimeoutSeconds = 0;
+
+        var ex = Assert.Throws<InvalidOperationException>(() => ConfigPhase.Validate(cfg));
+        await Assert.That(ex.Message).Contains("healthCheckTimeoutSeconds");
+    }
+
+    [Test]
+    public async Task UpdateHealthCheckTimeoutAboveMaxFailsValidation()
+    {
+        // Upper bound is 3600s (1h). Anything higher signals a bug; the operator should
+        // instead investigate WHY the stack takes over an hour to come up.
+        var cfg = MakeValid();
+        cfg.Update.HealthCheckTimeoutSeconds = 3601;
+
+        var ex = Assert.Throws<InvalidOperationException>(() => ConfigPhase.Validate(cfg));
+        await Assert.That(ex.Message).Contains("healthCheckTimeoutSeconds");
+    }
+
+    [Test]
+    public async Task UpdateHealthCheckTimeoutInRangePasses()
+    {
+        // Boundary values are inclusive; 1s and 3600s are both accepted.
+        var cfg = MakeValid();
+        cfg.Update.HealthCheckTimeoutSeconds = 1;
+        ConfigPhase.Validate(cfg);
+
+        cfg.Update.HealthCheckTimeoutSeconds = 3600;
+        ConfigPhase.Validate(cfg);
+
+        await Task.CompletedTask;
+    }
+
+    [Test]
+    public async Task UpdateServicesUnknownEntryFailsValidation()
+    {
+        // The whitelist is the source of truth for compose service names. Typos here
+        // would surface later as a docker compose "no such service" error, which is
+        // harder to diagnose than "config.update.services entry 'foo' is not a known
+        // compose service".
+        var cfg = MakeValid();
+        cfg.Update.Services = ["msg-database"];
+
+        var ex = Assert.Throws<InvalidOperationException>(() => ConfigPhase.Validate(cfg));
+        await Assert.That(ex.Message).Contains("msg-database");
+        await Assert.That(ex.Message).Contains("msg-db");
+    }
+
+    [Test]
+    public async Task UpdateServicesBlankEntryFailsValidation()
+    {
+        // A stray empty string in the array probably means the JSON was hand-edited
+        // to something like `["msg-db", ""]`; reject it so the operator notices.
+        var cfg = MakeValid();
+        cfg.Update.Services = ["msg-db", ""];
+
+        var ex = Assert.Throws<InvalidOperationException>(() => ConfigPhase.Validate(cfg));
+        await Assert.That(ex.Message).Contains("blank entry");
+    }
+
+    [Test]
+    public async Task UpdateServicesKnownEntriesPassValidation()
+    {
+        // Every whitelisted service must be accepted individually.
+        foreach (var svc in ConfigPhase.ValidUpdateServices)
+        {
+            var cfg = MakeValid();
+            cfg.Update.Services = [svc];
+            ConfigPhase.Validate(cfg);
+        }
+        await Task.CompletedTask;
+    }
+
+    [Test]
+    public async Task UpdateServicesEmptyPasses()
+    {
+        // The default: "every service". Represented on the wire as an empty array; the
+        // validator must not turn this into an error since it's the most common state.
+        var cfg = MakeValid();
+        cfg.Update.Services = [];
+
+        ConfigPhase.Validate(cfg);
+        await Task.CompletedTask;
+    }
+
+    [Test]
+    public async Task UpdateTogglePassesIndependently()
+    {
+        // The Enabled / AutoRestoreOnFailure / RecreateOnUpdate toggles are orthogonal;
+        // the validator accepts every combination so the operator can opt into each
+        // behaviour independently.
+        foreach (var enabled in new[] { true, false })
+        {
+            foreach (var autoRestore in new[] { true, false })
+            {
+                foreach (var recreate in new[] { true, false })
+                {
+                    var cfg = MakeValid();
+                    cfg.Update.Enabled = enabled;
+                    cfg.Update.AutoRestoreOnFailure = autoRestore;
+                    cfg.Update.RecreateOnUpdate = recreate;
+                    ConfigPhase.Validate(cfg);
+                }
+            }
+        }
+        await Task.CompletedTask;
+    }
+
+    [Test]
     public async Task MalformedJsonReturnsClearError()
     {
         // ConfigPhase.RunAsync uses JsonSerializer.Deserialize, which surfaces a JsonException

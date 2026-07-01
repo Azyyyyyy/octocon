@@ -47,8 +47,11 @@ public class SystemdInstallTests(UbuntuDinDFixture dinD)
              "--non-interactive"]);
         await Assert.That(result.ExitCode).IsEqualTo(0).Because($"install-service failed: {result.Stderr}");
 
-        // Each of the three units must be present on disk.
-        foreach (var name in new[] { "interfold.service", "interfold-backup.service", "interfold-backup.timer" })
+        // Each of the four units must be present on disk. interfold-update.service is
+        // always rendered — the OnSuccess drop-in that enables the chain is what depends
+        // on update.enabled, but the target unit exists regardless so manual invocations
+        // (`update-images`) always have a service to point at.
+        foreach (var name in new[] { "interfold.service", "interfold-backup.service", "interfold-backup.timer", "interfold-update.service" })
         {
             var probe = await dinD.ExecAsync(["test", "-f", $"{unitDir}/{name}"]);
             await Assert.That(probe.ExitCode).IsEqualTo(0L)
@@ -92,6 +95,165 @@ public class SystemdInstallTests(UbuntuDinDFixture dinD)
     }
 
     [Test]
+    public async Task WritesUpdateServiceWhenPresentInUnitNames()
+    {
+        // interfold-update.service is always rendered alongside the three baseline units.
+        // Even when config.update.enabled=false the .service file exists (manual
+        // `update-images` invocations use it); only the OnSuccess= drop-in is conditional.
+        var scratch = await dinD.CreateScratchAsync(nameof(WritesUpdateServiceWhenPresentInUnitNames), TestConfigJsonPath);
+        var unitDir = $"{scratch.Root}/systemd-units";
+        await dinD.ExecAsync(["mkdir", "-p", unitDir]);
+
+        var result = await dinD.RunBootstrapperAsync(nameof(WritesUpdateServiceWhenPresentInUnitNames),
+            ["install-service",
+             "--config", scratch.ConfigPath,
+             "--output-dir", scratch.OutputDir,
+             "--systemd-unit-dir", unitDir,
+             "--binary-path", "/opt/bootstrapper/interfold-bootstrap",
+             "--non-interactive"]);
+        await Assert.That(result.ExitCode).IsEqualTo(0).Because($"install-service failed: {result.Stderr}");
+
+        var probe = await dinD.ExecAsync(["test", "-f", $"{unitDir}/interfold-update.service"]);
+        await Assert.That(probe.ExitCode).IsEqualTo(0L)
+            .Because("interfold-update.service should always be rendered even when update.enabled=false");
+
+        var updateService = Encoding.UTF8.GetString(await dinD.CopyOutAsync($"{unitDir}/interfold-update.service"));
+        await Assert.That(updateService).Contains("ExecStart=/opt/bootstrapper/interfold-bootstrap update-images");
+        await Assert.That(updateService).Contains($"--config {scratch.ConfigPath}");
+        await Assert.That(updateService).Contains($"--output-dir {scratch.OutputDir}");
+        await Assert.That(updateService).Contains("Type=oneshot");
+    }
+
+    [Test]
+    public async Task WhenUpdateEnabledDropInIsWritten()
+    {
+        // Flip update.enabled=true in a copy of the test config, run install-service, and
+        // assert the OnSuccess drop-in appears at the exact path SystemdInstallPhase
+        // documents (interfold-backup.service.d/50-chain-update.conf) with the correct
+        // OnSuccess= directive.
+        var scratch = await dinD.CreateScratchAsync(nameof(WhenUpdateEnabledDropInIsWritten), TestConfigJsonPath);
+        var unitDir = $"{scratch.Root}/systemd-units";
+        await dinD.ExecAsync(["mkdir", "-p", unitDir]);
+
+        await OverlayUpdateConfigAsync(scratch.ConfigPath, updateEnabled: true);
+
+        var result = await dinD.RunBootstrapperAsync(nameof(WhenUpdateEnabledDropInIsWritten),
+            ["install-service",
+             "--config", scratch.ConfigPath,
+             "--output-dir", scratch.OutputDir,
+             "--systemd-unit-dir", unitDir,
+             "--binary-path", "/opt/bootstrapper/interfold-bootstrap",
+             "--non-interactive"]);
+        await Assert.That(result.ExitCode).IsEqualTo(0).Because($"install-service failed: {result.Stderr}");
+
+        var dropInPath = $"{unitDir}/interfold-backup.service.d/50-chain-update.conf";
+        var probe = await dinD.ExecAsync(["test", "-f", dropInPath]);
+        await Assert.That(probe.ExitCode).IsEqualTo(0L)
+            .Because($"expected drop-in {dropInPath} when update.enabled=true");
+
+        var content = Encoding.UTF8.GetString(await dinD.CopyOutAsync(dropInPath));
+        await Assert.That(content).Contains("OnSuccess=interfold-update.service")
+            .Because("drop-in exists to chain the update service after a successful backup");
+        await Assert.That(content).Contains("[Unit]")
+            .Because("drop-in must be a valid systemd unit fragment");
+    }
+
+    [Test]
+    public async Task WhenUpdateDisabledDropInIsAbsent()
+    {
+        // Baseline config leaves update.enabled=false — the drop-in must NOT be written,
+        // even though the .service template it references was rendered. Guards the
+        // "manual updates only" default stance so operators who never touch the update
+        // section don't wake up to auto-chained updates.
+        var scratch = await dinD.CreateScratchAsync(nameof(WhenUpdateDisabledDropInIsAbsent), TestConfigJsonPath);
+        var unitDir = $"{scratch.Root}/systemd-units";
+        await dinD.ExecAsync(["mkdir", "-p", unitDir]);
+
+        var result = await dinD.RunBootstrapperAsync(nameof(WhenUpdateDisabledDropInIsAbsent),
+            ["install-service",
+             "--config", scratch.ConfigPath,
+             "--output-dir", scratch.OutputDir,
+             "--systemd-unit-dir", unitDir,
+             "--binary-path", "/opt/bootstrapper/interfold-bootstrap",
+             "--non-interactive"]);
+        await Assert.That(result.ExitCode).IsEqualTo(0).Because($"install-service failed: {result.Stderr}");
+
+        var probe = await dinD.ExecAsync(["test", "-e", $"{unitDir}/interfold-backup.service.d/50-chain-update.conf"]);
+        await Assert.That(probe.ExitCode).IsNotEqualTo(0L)
+            .Because("drop-in must be absent when update.enabled=false (default stance)");
+    }
+
+    [Test]
+    public async Task DropInIsRemovedWhenUpdateFlippedOff()
+    {
+        // Two-phase run: first install with update.enabled=true (writes the drop-in),
+        // then re-install with update.enabled=false and assert the drop-in was removed.
+        // Pins the idempotency contract — flipping the config off must clean up stale
+        // drop-ins so a subsequent backup no longer fires the update chain.
+        var scratch = await dinD.CreateScratchAsync(nameof(DropInIsRemovedWhenUpdateFlippedOff), TestConfigJsonPath);
+        var unitDir = $"{scratch.Root}/systemd-units";
+        await dinD.ExecAsync(["mkdir", "-p", unitDir]);
+
+        // Phase 1: install with update.enabled=true.
+        await OverlayUpdateConfigAsync(scratch.ConfigPath, updateEnabled: true);
+        var install1 = await dinD.RunBootstrapperAsync($"{nameof(DropInIsRemovedWhenUpdateFlippedOff)}-1",
+            ["install-service",
+             "--config", scratch.ConfigPath,
+             "--output-dir", scratch.OutputDir,
+             "--systemd-unit-dir", unitDir,
+             "--binary-path", "/opt/bootstrapper/interfold-bootstrap",
+             "--non-interactive"]);
+        await Assert.That(install1.ExitCode).IsEqualTo(0).Because(install1.Stderr);
+
+        var probeExists = await dinD.ExecAsync(["test", "-f", $"{unitDir}/interfold-backup.service.d/50-chain-update.conf"]);
+        await Assert.That(probeExists.ExitCode).IsEqualTo(0L)
+            .Because("phase 1 should have written the drop-in");
+
+        // Phase 2: flip off and re-install.
+        await OverlayUpdateConfigAsync(scratch.ConfigPath, updateEnabled: false);
+        var install2 = await dinD.RunBootstrapperAsync($"{nameof(DropInIsRemovedWhenUpdateFlippedOff)}-2",
+            ["install-service",
+             "--config", scratch.ConfigPath,
+             "--output-dir", scratch.OutputDir,
+             "--systemd-unit-dir", unitDir,
+             "--binary-path", "/opt/bootstrapper/interfold-bootstrap",
+             "--non-interactive"]);
+        await Assert.That(install2.ExitCode).IsEqualTo(0).Because(install2.Stderr);
+
+        var probeGone = await dinD.ExecAsync(["test", "-e", $"{unitDir}/interfold-backup.service.d/50-chain-update.conf"]);
+        await Assert.That(probeGone.ExitCode).IsNotEqualTo(0L)
+            .Because("phase 2 must have removed the stale drop-in when update.enabled flipped to false");
+    }
+
+    /// <summary>
+    /// Rewrites the in-DinD config file to set (or unset) <c>update.enabled</c>. Reads the
+    /// existing config, merges an <c>update</c> block via <c>jq</c> (already present in the
+    /// DinD image), and writes it back atomically so a follow-up install-service run sees
+    /// the flipped flag.
+    /// </summary>
+    private async Task OverlayUpdateConfigAsync(string configPath, bool updateEnabled)
+    {
+        // Install jq on demand — the base DinD image doesn't include it. Cached inside the
+        // fixture container for the lifetime of the test session, so the first test pays
+        // the cost and the rest are free.
+        var install = await dinD.ExecAsync(["sh", "-c",
+            "command -v jq >/dev/null 2>&1 || (apt-get update >/dev/null 2>&1 && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends jq >/dev/null 2>&1)"]);
+        await Assert.That(install.ExitCode).IsEqualTo(0L)
+            .Because($"installing jq inside DinD failed: {install.Stderr}");
+
+        var enabledLiteral = updateEnabled ? "true" : "false";
+        // Merge (+ operator) so any pre-existing update block wins on collision except for
+        // enabled, which the outer setter forces. Writes to a sibling tempfile then moves
+        // into place so partial writes don't leave the config half-parsed.
+        var script =
+            $"jq '. + {{ update: ((.update // {{}}) + {{ enabled: {enabledLiteral} }}) }}' {configPath} " +
+            $"> {configPath}.tmp && mv {configPath}.tmp {configPath}";
+        var overlay = await dinD.ExecAsync(["sh", "-c", script]);
+        await Assert.That(overlay.ExitCode).IsEqualTo(0L)
+            .Because($"overlaying update.enabled={updateEnabled} onto {configPath} failed: {overlay.Stderr}");
+    }
+
+    [Test]
     public async Task SystemdAnalyzeAcceptsRenderedUnits()
     {
         // Install the `systemd` apt package on demand and run `systemd-analyze verify` against
@@ -123,6 +285,8 @@ public class SystemdInstallTests(UbuntuDinDFixture dinD)
             .Because("install-service should report a successful verification line for interfold.service");
         await Assert.That(result.Stdout + result.Stderr).Contains("verified interfold-backup.service");
         await Assert.That(result.Stdout + result.Stderr).Contains("verified interfold-backup.timer");
+        await Assert.That(result.Stdout + result.Stderr).Contains("verified interfold-update.service")
+            .Because("install-service should verify the new update service alongside the baseline three");
         await Assert.That(result.Stdout + result.Stderr).Contains("calendar 'daily' parses OK")
             .Because("install-service should report systemd-analyze acceptance for the schedule");
     }

@@ -123,4 +123,164 @@ public sealed class SystemdUnitRenderingTests
                 .Because($"template '{unitName}' must render to a non-empty unit body");
         }
     }
+
+    [Test]
+    public async Task InterfoldUpdateServiceContainsExpectedExecStart()
+    {
+        // The update service delegates to `interfold-bootstrap update-images` and points
+        // at the operator's resolved config + outputDir. Chained to backup via the
+        // OnSuccess= drop-in when config.update.enabled=true; also invocable directly.
+        var rendered = SystemdInstallPhase.RenderUnit("interfold-update.service", MakeInput());
+
+        await Assert.That(rendered).Contains(
+            "ExecStart=/opt/interfold/interfold-bootstrap update-images " +
+            "--config /srv/interfold/deploy/interfold.bootstrap.json " +
+            "--output-dir /srv/interfold/deploy");
+        await Assert.That(rendered).Contains("Type=oneshot");
+        await Assert.That(rendered).Contains("WorkingDirectory=/srv/interfold/deploy");
+        // Same "soft" dependency shape as the backup service — the update is a runtime
+        // operation, not part of the boot critical path.
+        await Assert.That(rendered).Contains("Wants=interfold.service");
+    }
+
+    [Test]
+    public async Task UpdateServiceIsInUnitNames()
+    {
+        // Pin that interfold-update.service is part of the canonical install set so
+        // SystemdInstallPhase writes it on every install-service invocation. Actually
+        // enabling / chaining it is a separate decision (config.update.enabled).
+        await Assert.That(SystemdInstallPhase.UnitNames).Contains("interfold-update.service");
+    }
+
+    [Test]
+    public async Task WhenUpdateEnabledDropInIsWritten()
+    {
+        // The drop-in template is copied verbatim (no token substitution), so this test
+        // exercises the write path directly against a temp unit dir. Confirms the file
+        // lands at the systemd-conventional path and contains the OnSuccess= directive.
+        var tmp = Path.Combine(Path.GetTempPath(), "interfold-dropin-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tmp);
+        try
+        {
+            var logger = new Interfold.Bootstrapper.Cli.PhaseLogger(
+                new Interfold.Bootstrapper.Cli.BootstrapOptions(
+                    Command: Interfold.Bootstrapper.Cli.BootstrapCommand.InstallService,
+                    ConfigPath: null, OutputDir: tmp,
+                    SkipPrereqs: false, RotateSecrets: false, RotateCerts: false,
+                    NonInteractive: true, FaultInject: null, PrintPhaseStatus: false));
+
+            await SystemdInstallPhase.WriteBackupOnSuccessDropInAsync(tmp, logger, CancellationToken.None);
+
+            var dropInPath = Path.Combine(tmp,
+                SystemdInstallPhase.BackupOnSuccessDropInDir,
+                SystemdInstallPhase.BackupOnSuccessDropInFile);
+            await Assert.That(File.Exists(dropInPath)).IsTrue()
+                .Because($"drop-in must be written to {dropInPath}");
+            var content = await File.ReadAllTextAsync(dropInPath);
+            await Assert.That(content).Contains("[Unit]");
+            await Assert.That(content).Contains("OnSuccess=interfold-update.service");
+        }
+        finally
+        {
+            try { Directory.Delete(tmp, recursive: true); } catch { /* best effort */ }
+        }
+    }
+
+    [Test]
+    public async Task RemoveDropInIsNoOpWhenAbsent()
+    {
+        // Idempotency: an install-service with update.enabled=false against a host that
+        // never had the drop-in must not throw. RemoveIfPresent silently no-ops when
+        // the file (or the directory) is missing.
+        var tmp = Path.Combine(Path.GetTempPath(), "interfold-dropin-abs-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tmp);
+        try
+        {
+            var logger = new Interfold.Bootstrapper.Cli.PhaseLogger(
+                new Interfold.Bootstrapper.Cli.BootstrapOptions(
+                    Command: Interfold.Bootstrapper.Cli.BootstrapCommand.InstallService,
+                    ConfigPath: null, OutputDir: tmp,
+                    SkipPrereqs: false, RotateSecrets: false, RotateCerts: false,
+                    NonInteractive: true, FaultInject: null, PrintPhaseStatus: false));
+
+            SystemdInstallPhase.RemoveBackupOnSuccessDropInIfPresent(tmp, logger);
+
+            var dropInPath = Path.Combine(tmp,
+                SystemdInstallPhase.BackupOnSuccessDropInDir,
+                SystemdInstallPhase.BackupOnSuccessDropInFile);
+            await Assert.That(File.Exists(dropInPath)).IsFalse();
+        }
+        finally
+        {
+            try { Directory.Delete(tmp, recursive: true); } catch { /* best effort */ }
+        }
+    }
+
+    [Test]
+    public async Task RemoveDropInDeletesExistingFile()
+    {
+        // The other half of the idempotency contract: a previous install wrote the
+        // drop-in and the operator has since flipped update.enabled=false. On the
+        // next install-service run we must delete the stale file so a scheduled
+        // backup no longer fires the update chain.
+        var tmp = Path.Combine(Path.GetTempPath(), "interfold-dropin-del-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tmp);
+        try
+        {
+            var dropInDir = Path.Combine(tmp, SystemdInstallPhase.BackupOnSuccessDropInDir);
+            Directory.CreateDirectory(dropInDir);
+            var dropInPath = Path.Combine(dropInDir, SystemdInstallPhase.BackupOnSuccessDropInFile);
+            await File.WriteAllTextAsync(dropInPath, "[Unit]\nOnSuccess=interfold-update.service\n");
+
+            var logger = new Interfold.Bootstrapper.Cli.PhaseLogger(
+                new Interfold.Bootstrapper.Cli.BootstrapOptions(
+                    Command: Interfold.Bootstrapper.Cli.BootstrapCommand.InstallService,
+                    ConfigPath: null, OutputDir: tmp,
+                    SkipPrereqs: false, RotateSecrets: false, RotateCerts: false,
+                    NonInteractive: true, FaultInject: null, PrintPhaseStatus: false));
+
+            SystemdInstallPhase.RemoveBackupOnSuccessDropInIfPresent(tmp, logger);
+
+            await Assert.That(File.Exists(dropInPath)).IsFalse();
+        }
+        finally
+        {
+            try { Directory.Delete(tmp, recursive: true); } catch { /* best effort */ }
+        }
+    }
+
+    [Test]
+    public async Task ParseSystemdMajorVersionAcceptsUbuntuFormat()
+    {
+        // Ubuntu 22.04 output: "systemd 249 (249.11-0ubuntu3.16)".
+        await Assert.That(SystemdInstallPhase.ParseSystemdMajorVersion("systemd 249 (249.11-0ubuntu3.16)\n+PAM +AUDIT ..."))
+            .IsEqualTo(249);
+    }
+
+    [Test]
+    public async Task ParseSystemdMajorVersionAcceptsFedoraFormat()
+    {
+        // Fedora 40 output: "systemd 255 (255.10-1.fc40)".
+        await Assert.That(SystemdInstallPhase.ParseSystemdMajorVersion("systemd 255 (255.10-1.fc40)"))
+            .IsEqualTo(255);
+    }
+
+    [Test]
+    public async Task ParseSystemdMajorVersionAcceptsDottedToken()
+    {
+        // Some builds emit "systemd 253.1"; strip past the first dot.
+        await Assert.That(SystemdInstallPhase.ParseSystemdMajorVersion("systemd 253.1 (253.1-1)"))
+            .IsEqualTo(253);
+    }
+
+    [Test]
+    public async Task ParseSystemdMajorVersionRejectsMalformed()
+    {
+        await Assert.That(SystemdInstallPhase.ParseSystemdMajorVersion(""))
+            .IsNull();
+        await Assert.That(SystemdInstallPhase.ParseSystemdMajorVersion("something completely unrelated"))
+            .IsNull();
+        await Assert.That(SystemdInstallPhase.ParseSystemdMajorVersion("systemd"))
+            .IsNull();
+    }
 }

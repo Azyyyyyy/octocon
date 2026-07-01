@@ -7,7 +7,8 @@ namespace Interfold.Bootstrapper.Cli;
 /// <summary>
 /// Entry point and command tree for the bootstrapper CLI.
 /// Commands: <c>bootstrap</c> (default), <c>publish</c>, <c>up</c>, <c>rotate-secrets</c>,
-/// <c>rotate-certs</c>, <c>show-trust</c>, <c>backup</c>, <c>install-service</c>.
+/// <c>rotate-certs</c>, <c>show-trust</c>, <c>backup</c>, <c>install-service</c>,
+/// <c>update-images</c>, <c>restore</c>.
 /// </summary>
 public static class RootCli
 {
@@ -79,6 +80,50 @@ public static class RootCli
         var binaryPathOpt = new Option<string?>("--binary-path")
         {
             Description = "Override the bootstrapper binary path baked into interfold-backup.service (default: AppContext.BaseDirectory/interfold-bootstrap)."
+        };
+
+        // --- update-images-specific options ---
+        // Rollback default is manual: --auto-restore opts into the destructive path.
+        // --skip-pre-update-backup is an escape hatch for operators who took a fresh
+        // manual snapshot immediately before running update-images and don't want the
+        // duplicate archive.
+        var autoRestoreOpt = new Option<bool>("--auto-restore")
+        {
+            Description = "On health-check failure, invoke `restore --force` against the pre-update backup instead of just printing the recipe. Overrides config.update.autoRestoreOnFailure."
+        };
+        var skipPreUpdateBackupOpt = new Option<bool>("--skip-pre-update-backup")
+        {
+            Description = "DANGEROUS: skip the pre-update database backup. Use only when a fresh backup already exists on disk. Off by default."
+        };
+        var updateServicesOpt = new Option<string[]>("--service")
+        {
+            Description = "Compose services to pull + recreate. Repeatable; e.g. --service interfold-api --service octocon-web. Empty (the default) means every service.",
+            AllowMultipleArgumentsPerToken = true,
+        };
+        var healthCheckTimeoutOpt = new Option<int?>("--health-check-timeout")
+        {
+            Description = "Override config.update.healthCheckTimeoutSeconds for this run. Bounded [1..3600]."
+        };
+
+        // --- restore-specific options ---
+        // Two path selectors + a mtime resolver + a --force to skip the confirmation
+        // prompt. Restoring nothing (all three archive selectors omitted with --restore-latest
+        // false) is caught by RestorePhase, not here.
+        var restorePostgresOpt = new Option<string?>("--restore-postgres")
+        {
+            Description = "Path to a specific pg_dump archive (custom format) to restore. Mutually exclusive with --restore-latest for the postgres component."
+        };
+        var restoreScyllaOpt = new Option<string?>("--restore-scylla")
+        {
+            Description = "Path to a specific scylla .tar.gz archive to restore. Mutually exclusive with --restore-latest for the scylla component."
+        };
+        var restoreLatestOpt = new Option<bool>("--restore-latest")
+        {
+            Description = "Pick the newest archive by mtime under {backupRoot}/{component}/ for every component that wasn't explicitly named on the CLI."
+        };
+        var restoreForceOpt = new Option<bool>("--force")
+        {
+            Description = "Skip the interactive 'this will wipe your data volumes' confirmation. Required in non-interactive mode."
         };
 
         var root = new RootCommand(
@@ -170,6 +215,46 @@ public static class RootCli
             binaryPathOpt: binaryPathOpt));
         root.Subcommands.Add(installServiceCmd);
 
+        // ---------- update-images ----------
+        var updateImagesCmd = new Command("update-images",
+            "Backup DB, `docker compose pull`, `up -d`, health-check, then either succeed, print restore recipe on failure, or `--auto-restore`.");
+        AddSharedOptions(updateImagesCmd, configOpt, outputDirOpt, skipPrereqsOpt, nonInteractiveOpt, faultInjectOpt, printPhaseStatusOpt);
+        updateImagesCmd.Options.Add(autoRestoreOpt);
+        updateImagesCmd.Options.Add(skipPreUpdateBackupOpt);
+        updateImagesCmd.Options.Add(updateServicesOpt);
+        updateImagesCmd.Options.Add(healthCheckTimeoutOpt);
+        updateImagesCmd.Options.Add(backupDirOpt);
+        updateImagesCmd.Options.Add(backupRetainOpt);
+        updateImagesCmd.SetAction((parse, ct) => InvokeAsync(BootstrapCommand.UpdateImages, parse,
+            configOpt, outputDirOpt, skipPrereqsOpt, nonInteractiveOpt, faultInjectOpt, printPhaseStatusOpt,
+            rotateSecrets: false, rotateCerts: false, ct,
+            backupRetainOpt: backupRetainOpt,
+            backupDirOpt: backupDirOpt,
+            autoRestoreOpt: autoRestoreOpt,
+            skipPreUpdateBackupOpt: skipPreUpdateBackupOpt,
+            updateServicesOpt: updateServicesOpt,
+            healthCheckTimeoutOpt: healthCheckTimeoutOpt));
+        root.Subcommands.Add(updateImagesCmd);
+
+        // ---------- restore ----------
+        var restoreCmd = new Command("restore",
+            "Restore DB state from backup archives. Destructive — requires --force in non-interactive mode.");
+        AddSharedOptions(restoreCmd, configOpt, outputDirOpt, skipPrereqsOpt, nonInteractiveOpt, faultInjectOpt, printPhaseStatusOpt);
+        restoreCmd.Options.Add(restorePostgresOpt);
+        restoreCmd.Options.Add(restoreScyllaOpt);
+        restoreCmd.Options.Add(restoreLatestOpt);
+        restoreCmd.Options.Add(restoreForceOpt);
+        restoreCmd.Options.Add(backupDirOpt);
+        restoreCmd.SetAction((parse, ct) => InvokeAsync(BootstrapCommand.Restore, parse,
+            configOpt, outputDirOpt, skipPrereqsOpt, nonInteractiveOpt, faultInjectOpt, printPhaseStatusOpt,
+            rotateSecrets: false, rotateCerts: false, ct,
+            backupDirOpt: backupDirOpt,
+            restorePostgresOpt: restorePostgresOpt,
+            restoreScyllaOpt: restoreScyllaOpt,
+            restoreLatestOpt: restoreLatestOpt,
+            restoreForceOpt: restoreForceOpt));
+        root.Subcommands.Add(restoreCmd);
+
         // No subcommand -> default to `bootstrap`.
         AddSharedOptions(root, configOpt, outputDirOpt, skipPrereqsOpt, nonInteractiveOpt, faultInjectOpt, printPhaseStatusOpt);
         root.SetAction((parse, ct) => InvokeAsync(BootstrapCommand.Bootstrap, parse,
@@ -214,7 +299,15 @@ public static class RootCli
         Option<bool>? enableAutostartOpt = null,
         Option<bool>? enableBackupTimerOpt = null,
         Option<string?>? systemdUnitDirOpt = null,
-        Option<string?>? binaryPathOpt = null)
+        Option<string?>? binaryPathOpt = null,
+        Option<bool>? autoRestoreOpt = null,
+        Option<bool>? skipPreUpdateBackupOpt = null,
+        Option<string[]>? updateServicesOpt = null,
+        Option<int?>? healthCheckTimeoutOpt = null,
+        Option<string?>? restorePostgresOpt = null,
+        Option<string?>? restoreScyllaOpt = null,
+        Option<bool>? restoreLatestOpt = null,
+        Option<bool>? restoreForceOpt = null)
     {
         var options = new BootstrapOptions(
             Command: command,
@@ -232,7 +325,15 @@ public static class RootCli
             EnableAutostart: enableAutostartOpt is not null && parse.GetValue(enableAutostartOpt),
             EnableBackupTimer: enableBackupTimerOpt is not null && parse.GetValue(enableBackupTimerOpt),
             SystemdUnitDir: systemdUnitDirOpt is null ? null : parse.GetValue(systemdUnitDirOpt),
-            BinaryPathOverride: binaryPathOpt is null ? null : parse.GetValue(binaryPathOpt));
+            BinaryPathOverride: binaryPathOpt is null ? null : parse.GetValue(binaryPathOpt),
+            AutoRestore: autoRestoreOpt is not null && parse.GetValue(autoRestoreOpt),
+            SkipPreUpdateBackup: skipPreUpdateBackupOpt is not null && parse.GetValue(skipPreUpdateBackupOpt),
+            UpdateServices: updateServicesOpt is null ? null : parse.GetValue(updateServicesOpt),
+            HealthCheckTimeoutOverride: healthCheckTimeoutOpt is null ? null : parse.GetValue(healthCheckTimeoutOpt),
+            RestorePostgresArchive: restorePostgresOpt is null ? null : parse.GetValue(restorePostgresOpt),
+            RestoreScyllaArchive: restoreScyllaOpt is null ? null : parse.GetValue(restoreScyllaOpt),
+            RestoreLatest: restoreLatestOpt is not null && parse.GetValue(restoreLatestOpt),
+            RestoreForce: restoreForceOpt is not null && parse.GetValue(restoreForceOpt));
 
         var logger = new PhaseLogger(options);
 
