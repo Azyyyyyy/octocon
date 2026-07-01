@@ -141,7 +141,14 @@ internal static class UpdateImagesPhase
             throw new InvalidOperationException(
                 $"docker compose pull exited {pull.ExitCode}: {pull.StdErr.Trim()}");
         }
+        // Forward BOTH streams on success — docker compose writes machine-readable payloads
+        // (rare for `pull`) to stdout but per-service progress (`msg-db Pulling`,
+        // `cassandra Skipped`, `msg-db Pulled`) to stderr. Suppressing stderr on success
+        // would hide the "which services actually pulled anything" signal from the operator
+        // (and from the integration tests that assert on the `Skipped` marker to prove
+        // `pull_policy: never` fired for locally-built images like `interfold-cassandra:local`).
         if (!string.IsNullOrWhiteSpace(pull.StdOut)) logger.Info(pull.StdOut.Trim());
+        if (!string.IsNullOrWhiteSpace(pull.StdErr)) logger.Info(pull.StdErr.Trim());
 
         // Compare digests. If nothing changed, we've paid for the backup and the pull
         // (which was a no-op at the layer level) — but we can skip the recreate + health

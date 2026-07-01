@@ -22,14 +22,6 @@ internal static class ConfigPhase
 
         var configPath = options.ConfigPath ?? Path.Combine(options.OutputDir, "interfold.bootstrap.json");
         BootstrapConfig config;
-        // Tracks whether the persisted JSON on disk came from THIS run (i.e. we just wrote it
-        // via PromptForConfig + PersistAsync). Used by the post-fill mDNS gate below to decide
-        // whether it's safe to overwrite the file after stripping .local hosts: the interactive
-        // branch persists its own output verbatim, so re-persisting after mutation keeps the
-        // JSON honest; the JSON-load branch deliberately does NOT re-persist so we don't
-        // silently rewrite the operator's own file.
-        var persistedInThisRun = false;
-
         if (File.Exists(configPath))
         {
             logger.Info($"    loading config from {configPath}");
@@ -63,7 +55,6 @@ internal static class ConfigPhase
                 maskSecrets: true,
                 hostnameProbe: () => mdnsHostname);
             await PersistAsync(config, configPath, ct).ConfigureAwait(false);
-            persistedInThisRun = true;
         }
         else
         {
@@ -89,13 +80,16 @@ internal static class ConfigPhase
                 // producing a cert with zero SANs later. Matches the "hosts must contain at
                 // least one entry" invariant Validate enforces on JSON-loaded configs too.
                 Validate(config);
-                // Only overwrite the on-disk JSON on the interactive branch (we just wrote it
-                // and it's ours to keep in sync). The JSON-load branch belongs to the operator;
-                // the log warning is enough of a signal there.
-                if (persistedInThisRun)
-                {
-                    await PersistAsync(config, configPath, ct).ConfigureAwait(false);
-                }
+                // Re-persist the config so subsequent `bootstrap` runs see the pruned list
+                // and don't re-emit the same warning for the same broken hosts. Applies to
+                // both the interactive branch (we just wrote it and it's ours to keep in
+                // sync) AND the JSON-load branch (operator's file gets one clean line of
+                // "was updated" logging above so the mutation isn't silent). The alternative
+                // — never rewriting the operator's JSON — would surface the same "removing
+                // unresolvable .local host(s)" warning on every future run indefinitely,
+                // which is louder noise than a one-time file touch.
+                logger.Info($"    updated {configPath} to reflect the mDNS strip");
+                await PersistAsync(config, configPath, ct).ConfigureAwait(false);
             }
         }
 
