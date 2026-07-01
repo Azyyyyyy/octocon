@@ -145,9 +145,12 @@ public class BackupPhaseTests(UbuntuDinDFixture dinD)
     [Test]
     public async Task BackupWithoutComposeFailsClearly()
     {
-        // Backup against a directory with no docker-compose.yaml must fail with a clear,
-        // actionable error rather than dying inside docker compose. This is the
-        // most-likely operator misuse: running `backup` before `bootstrap` / `publish`.
+        // Backup against a bare scratch directory (no compose, no secrets, nothing but the
+        // config file) must fail with a clear, actionable error rather than dying inside
+        // docker compose. This is the most-likely operator misuse: running `backup` before
+        // `bootstrap` / `publish`. The phase runs several prerequisite checks and any of
+        // them is a legitimate signal — the important contract is that the error names a
+        // specific missing artifact and tells the operator to run `bootstrap` first.
         var scratch = await dinD.CreateScratchAsync(nameof(BackupWithoutComposeFailsClearly), TestConfigJsonPath);
 
         // Write the config but skip the bootstrap. The scratch's outputDir has only the
@@ -157,8 +160,16 @@ public class BackupPhaseTests(UbuntuDinDFixture dinD)
              "--component", "postgres", "--non-interactive"]);
 
         await Assert.That(result.ExitCode).IsNotEqualTo(0)
-            .Because("backup against a missing compose stack must fail");
-        await Assert.That(result.Stdout + result.Stderr).Contains("docker-compose.yaml")
-            .Because("error must name the missing artifact");
+            .Because("backup against a bare scratch (no compose, no secrets) must fail");
+
+        var combined = result.Stdout + result.Stderr;
+        // Either message satisfies the "clear, actionable error" contract — the phase
+        // checks secrets before the compose file so a bare scratch trips the secrets
+        // check first; a stack with secrets but no compose file trips the compose check.
+        // Both name a specific missing artifact and point at `bootstrap` for the fix.
+        await Assert.That(combined).Contains("docker-compose.yaml").Or.Contains("secrets/secrets.json")
+            .Because("error must name a specific missing artifact");
+        await Assert.That(combined).Contains("bootstrap")
+            .Because("error must guide the operator to `bootstrap` as the fix");
     }
 }

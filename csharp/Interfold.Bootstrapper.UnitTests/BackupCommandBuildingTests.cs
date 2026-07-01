@@ -61,7 +61,7 @@ public sealed class BackupCommandBuildingTests
     [Test]
     public async Task ScyllaSnapshotArgsTargetCorrectService()
     {
-        var (snap, tar, clear) = BackupPhase.BuildScyllaSnapshotArgs(
+        var (snap, resolveContainer, clear) = BackupPhase.BuildScyllaSnapshotArgs(
             composeFile: "/srv/deploy/docker-compose.yaml",
             service: "scylla",
             dataPath: "/var/lib/scylla",
@@ -74,13 +74,14 @@ public sealed class BackupCommandBuildingTests
             "nodetool", "snapshot", "-t", "interfold-backup-20260301-120000",
         });
 
-        // tar argv must -C into the data dir + emit to stdout. The leading "." (vs "./") is
-        // intentional — both work with GNU tar; "." matches what the spec in the plan documents.
-        await Assert.That(tar).IsEquivalentTo(new[]
+        // ResolveContainer argv resolves the seed's runtime container id via `docker compose
+        // ps -q`. The archive itself is streamed out of the container by the host-side
+        // `docker cp` step (see BuildContainerCpArgs) because the scylladb/scylla image
+        // ships no `tar` binary — an in-container tar exits 127.
+        await Assert.That(resolveContainer).IsEquivalentTo(new[]
         {
             "compose", "-f", "/srv/deploy/docker-compose.yaml",
-            "exec", "-T", "scylla",
-            "tar", "-C", "/var/lib/scylla", "-czf", "-", ".",
+            "ps", "-q", "scylla",
         });
 
         await Assert.That(clear).IsEquivalentTo(new[]
@@ -89,6 +90,37 @@ public sealed class BackupCommandBuildingTests
             "exec", "-T", "scylla",
             "nodetool", "clearsnapshot", "-t", "interfold-backup-20260301-120000",
         });
+    }
+
+    [Test]
+    public async Task BuildContainerCpArgsStreamsPathToStdout()
+    {
+        // `docker cp <id>:<path> -` is a daemon-level operation: it does not require any
+        // binary inside the container. Passing `-` as the destination emits a raw tar
+        // archive of the source path's contents on stdout, which BackupPhase then wraps
+        // in a host-side GZipStream to produce the final .tar.gz on disk.
+        var args = BackupPhase.BuildContainerCpArgs(
+            containerId: "63fe606f0e95",
+            dataPath: "/var/lib/scylla");
+
+        await Assert.That(args).IsEquivalentTo(new[]
+        {
+            "cp", "63fe606f0e95:/var/lib/scylla", "-",
+        });
+    }
+
+    [Test]
+    public async Task BuildContainerCpArgsRejectsBlankInputs()
+    {
+        // Defensive: the caller resolves the container id from `docker compose ps -q` at
+        // runtime — an empty result would silently produce `cp :<path> -` which docker
+        // would interpret as a source-side host path, not a container path. Rejecting
+        // early gives a clear error at the phase boundary.
+        Assert.Throws<ArgumentException>(
+            () => BackupPhase.BuildContainerCpArgs(containerId: "", dataPath: "/var/lib/scylla"));
+        Assert.Throws<ArgumentException>(
+            () => BackupPhase.BuildContainerCpArgs(containerId: "abc", dataPath: "   "));
+        await Task.CompletedTask;
     }
 
     [Test]

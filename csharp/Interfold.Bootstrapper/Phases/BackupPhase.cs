@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.IO.Compression;
 using Interfold.Bootstrapper.Cli;
 using Interfold.Bootstrapper.Configuration;
 using Interfold.Bootstrapper.Util;
@@ -24,8 +25,14 @@ namespace Interfold.Bootstrapper.Phases;
 ///         <c>secrets/secrets.json</c> via the <c>PGPASSWORD</c> env var so it never
 ///         appears on the docker argv.</item>
 ///   <item><c>scylla</c>: <c>.tar.gz</c> of <c>nodetool snapshot</c> contents from the
-///         seed node only. Multi-DC operators that want all seven regional nodes captured
-///         do that with their own wrapper — documented in <see cref="DatabaseMode"/>.</item>
+///         seed node only. The archive is produced host-side via <c>docker cp
+///         &lt;container&gt;:/var/lib/scylla -</c> piped through a <see cref="GZipStream"/> —
+///         the official <c>scylladb/scylla</c> image is distroless-ish and ships no
+///         <c>tar</c>, so an in-container <c>tar</c> exits 127. <c>docker cp</c> is a
+///         daemon-level operation that streams a raw tar of the source path to stdout
+///         regardless of what binaries the container has. Multi-DC operators that want
+///         all seven regional nodes captured do that with their own wrapper — documented
+///         in <see cref="DatabaseMode"/>.</item>
 /// </list>
 /// </para>
 /// <para>
@@ -206,29 +213,33 @@ internal static class BackupPhase
     }
 
     /// <summary>
-    /// Builds the docker-compose exec argv for the Scylla/Cassandra snapshot+tar pipeline.
-    /// Returns three argv lists (snapshot, tar, clearsnapshot) so the caller can run each
-    /// phase with the right stdout redirection (only the middle one streams the tarball).
+    /// Builds the docker-compose exec argv for the Scylla/Cassandra nodetool snapshot
+    /// bracket. Returns three argv lists (snapshot, resolve-container, clearsnapshot) so
+    /// the caller can drive each step in sequence. The middle list resolves the seed
+    /// node's container id (via <c>docker compose ps -q</c>) so the caller can then
+    /// <c>docker cp</c> the snapshot contents out — the archive itself is produced
+    /// host-side (see <see cref="BuildContainerCpArgs"/>) because the
+    /// <c>scylladb/scylla</c> image ships no <c>tar</c> binary.
     /// Internal so unit tests can assert the argv shape without invoking docker.
     /// </summary>
-    internal static (IReadOnlyList<string> Snapshot, IReadOnlyList<string> Tar, IReadOnlyList<string> Clear)
+    internal static (IReadOnlyList<string> Snapshot, IReadOnlyList<string> ResolveContainer, IReadOnlyList<string> Clear)
         BuildScyllaSnapshotArgs(string composeFile, string service, string dataPath, string tag)
     {
+        _ = dataPath; // consumed by BuildContainerCpArgs downstream; kept in the signature so
+                     // callers pass one cohesive set of parameters, and to preserve the
+                     // symmetry with BuildPostgresDumpArgs.
         var snapshot = new[]
         {
             "compose", "-f", composeFile,
             "exec", "-T", service,
             "nodetool", "snapshot", "-t", tag,
         };
-        // tar -C to the data dir so the archive is relative-pathed (operator can untar
-        // straight into a fresh /var/lib/scylla without stripping leading components).
-        // -c writes to stdout (the leading -); docker compose exec forwards that to the
-        // process's stdout, which we redirect into the .tar.gz file on the host.
-        var tar = new[]
+        // Container id is a runtime handle (docker assigns it when compose brings the
+        // service up), so we can't bake it into an argv template — this step resolves it.
+        var resolveContainer = new[]
         {
             "compose", "-f", composeFile,
-            "exec", "-T", service,
-            "tar", "-C", dataPath, "-czf", "-", ".",
+            "ps", "-q", service,
         };
         var clear = new[]
         {
@@ -236,7 +247,28 @@ internal static class BackupPhase
             "exec", "-T", service,
             "nodetool", "clearsnapshot", "-t", tag,
         };
-        return (snapshot, tar, clear);
+        return (snapshot, resolveContainer, clear);
+    }
+
+    /// <summary>
+    /// Builds the top-level <c>docker cp</c> argv for streaming a container path to the
+    /// host as a raw tar archive on stdout. Piping the container id (not the compose
+    /// service name) because <c>docker cp</c> is a daemon-level API that only speaks
+    /// container ids/names, and passing <c>-</c> as the destination emits the tar to
+    /// stdout instead of writing a file on the host. Internal so unit tests can assert
+    /// the argv shape without invoking docker.
+    /// </summary>
+    internal static IReadOnlyList<string> BuildContainerCpArgs(string containerId, string dataPath)
+    {
+        if (string.IsNullOrWhiteSpace(containerId))
+        {
+            throw new ArgumentException("containerId must be non-empty.", nameof(containerId));
+        }
+        if (string.IsNullOrWhiteSpace(dataPath))
+        {
+            throw new ArgumentException("dataPath must be non-empty.", nameof(dataPath));
+        }
+        return ["cp", $"{containerId}:{dataPath}", "-"];
     }
 
     private static async Task BackupPostgresAsync(
@@ -297,7 +329,8 @@ internal static class BackupPhase
         // run. The tag is purely a name on disk inside the container.
         var tag = $"interfold-backup-{timestamp}";
 
-        var (snapshotArgs, tarArgs, clearArgs) = BuildScyllaSnapshotArgs(composeFile, service, dataPath, tag);
+        var (snapshotArgs, resolveContainerArgs, clearArgs) =
+            BuildScyllaSnapshotArgs(composeFile, service, dataPath, tag);
 
         logger.Info($"    scylla: nodetool snapshot -t {tag} (service={service})");
         var snapshot = await ProcessRunner.RunAsync("docker", snapshotArgs, ct: ct).ConfigureAwait(false);
@@ -308,17 +341,43 @@ internal static class BackupPhase
                 $"nodetool snapshot exited {snapshot.ExitCode} on {service}: {snapshot.StdErr.Trim()}");
         }
 
-        logger.Info($"    scylla: tar -czf - {dataPath} -> {archivePath}");
         try
         {
-            await StreamProcessStdoutToFileAsync("docker", tarArgs, environment: null, archivePath, ct)
+            // docker cp is a daemon-level API that only accepts container ids / names, so
+            // resolve the seed's runtime id first. `docker compose ps -q <service>` prints
+            // one id per line; take the first (there is only ever one for the seed
+            // service in the compose graph the AppHost emits).
+            var resolve = await ProcessRunner.RunAsync("docker", resolveContainerArgs, ct: ct).ConfigureAwait(false);
+            if (resolve.ExitCode != 0 || string.IsNullOrWhiteSpace(resolve.StdOut))
+            {
+                logger.PhaseFail(Phase, "resolve-scylla-container");
+                throw new InvalidOperationException(
+                    $"Failed to resolve container id for compose service '{service}'. " +
+                    $"Exit={resolve.ExitCode}, stderr='{resolve.StdErr.Trim()}'. " +
+                    "Is the stack running? Try `docker compose ps` under the output directory.");
+            }
+            var containerId = resolve.StdOut
+                .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .First();
+
+            logger.Info($"    scylla: docker cp {service}({containerId[..Math.Min(12, containerId.Length)]}):{dataPath} -> {archivePath}");
+
+            // docker cp <id>:<path> - writes a raw tar of <path>'s contents to stdout.
+            // We wrap the destination stream in a GZipStream on the host so what lands on
+            // disk is a real .tar.gz that pairs with the .tar.gz filename convention.
+            // This deliberately does NOT shell out to gzip — keeping the pipe entirely
+            // in-process avoids the sh/pipefail semantics headache and works identically
+            // on any host with just docker installed.
+            var cpArgs = BuildContainerCpArgs(containerId, dataPath);
+            await StreamProcessStdoutToFileAsync(
+                "docker", cpArgs, environment: null, archivePath, ct, compress: true)
                 .ConfigureAwait(false);
         }
         finally
         {
-            // Best-effort clearsnapshot regardless of tar success/failure — leftover
+            // Best-effort clearsnapshot regardless of cp success/failure — leftover
             // snapshots eat disk on the scylla container indefinitely otherwise. Failure
-            // here is logged but doesn't fail the phase (the tar already succeeded or
+            // here is logged but doesn't fail the phase (the cp already succeeded or
             // already failed; the dispositive verdict is the operator-visible archive).
             var clear = await ProcessRunner.RunAsync("docker", clearArgs, ct: ct).ConfigureAwait(false);
             if (clear.ExitCode != 0)
@@ -379,10 +438,17 @@ internal static class BackupPhase
     /// non-zero; partial output is preserved on disk for diagnosis but the caller deletes
     /// it before propagating the exception when it's known to be empty/corrupt.
     /// </summary>
+    /// <param name="compress">
+    /// When true, the destination file is wrapped in a <see cref="GZipStream"/> so the
+    /// process's stdout is written as gzip-compressed bytes on disk. Used by the Scylla
+    /// path where <c>docker cp</c> emits an uncompressed tar but the target filename is
+    /// <c>.tar.gz</c>. Postgres path leaves this false — <c>pg_dump -Fc</c> already emits
+    /// a compressed custom-format archive.
+    /// </param>
     private static async Task StreamProcessStdoutToFileAsync(
         string fileName, IReadOnlyList<string> arguments,
         IDictionary<string, string?>? environment, string destinationPath,
-        CancellationToken ct)
+        CancellationToken ct, bool compress = false)
     {
         var psi = new System.Diagnostics.ProcessStartInfo
         {
@@ -415,7 +481,20 @@ internal static class BackupPhase
         {
             await using (var fs = File.Create(destinationPath))
             {
-                await proc.StandardOutput.BaseStream.CopyToAsync(fs, ct).ConfigureAwait(false);
+                if (compress)
+                {
+                    // CompressionLevel.Fastest keeps CPU well below the docker-cp / disk
+                    // throughput ceiling on typical backup data (SSTables compress poorly
+                    // anyway because they're already LZ4-compressed internally). Higher
+                    // levels would burn CPU for a marginal size win on already-compressed
+                    // payload.
+                    await using var gz = new GZipStream(fs, CompressionLevel.Fastest, leaveOpen: false);
+                    await proc.StandardOutput.BaseStream.CopyToAsync(gz, ct).ConfigureAwait(false);
+                }
+                else
+                {
+                    await proc.StandardOutput.BaseStream.CopyToAsync(fs, ct).ConfigureAwait(false);
+                }
             }
             await proc.WaitForExitAsync(ct).ConfigureAwait(false);
         }
