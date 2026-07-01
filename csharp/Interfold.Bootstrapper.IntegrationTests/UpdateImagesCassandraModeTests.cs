@@ -91,11 +91,15 @@ public class UpdateImagesCassandraModeTests(UbuntuCassandraDinDFixture dinD)
         // skip the cassandra service natively via pull_policy: never rather than
         // failing on the non-registry-backed tag.
         //
-        // We scope the update to interfold-api via --service so the recreate step
-        // doesn't touch the (slow-to-warm-up) cassandra container. The rebuild fires
-        // regardless of scope for the "all services" case; here we deliberately test
-        // the "cassandra in scope" branch by including cassandra in the --service list
-        // alongside interfold-api.
+        // We scope the update to msg-db (a registry-backed TimescaleDB image the DinD
+        // has cached) + cassandra via --service. The msg-db entry gives compose pull
+        // something registry-backed to work against so it produces observable output;
+        // the cassandra entry drives ShouldRebuildCassandra's "cassandra in scope"
+        // branch. interfold-api is deliberately excluded — interfold-api:test is a
+        // locally-loaded tag with no registry manifest, so including it would cause
+        // `docker compose pull` to exit non-zero with "pull access denied" before the
+        // cassandra pull-skip evidence could land. See the class remarks on
+        // UpdateImagesPhaseTests for the general "locally-built API image" caveat.
         var scratch = await dinD.CreateScratchAsync(nameof(UpdateInCassandraModeSkipsCassandraOnPullAndRebuildsLocalImage), TestConfigJsonPath);
 
         var bootstrap = await dinD.RunBootstrapperAsync($"{nameof(UpdateInCassandraModeSkipsCassandraOnPullAndRebuildsLocalImage)}-bootstrap",
@@ -111,7 +115,7 @@ public class UpdateImagesCassandraModeTests(UbuntuCassandraDinDFixture dinD)
 
         var update = await dinD.RunBootstrapperAsync(nameof(UpdateInCassandraModeSkipsCassandraOnPullAndRebuildsLocalImage),
             ["update-images", "--config", scratch.ConfigPath, "--output-dir", scratch.OutputDir,
-             "--service", "interfold-api", "--service", "cassandra",
+             "--service", "msg-db", "--service", "cassandra",
              "--skip-pre-update-backup", "--non-interactive"]);
         await Assert.That(update.ExitCode).IsEqualTo(0).Because($"update-images failed: {update.Stderr}");
 

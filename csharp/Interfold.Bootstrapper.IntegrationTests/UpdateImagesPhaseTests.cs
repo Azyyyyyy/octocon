@@ -15,16 +15,30 @@ namespace Interfold.Bootstrapper.IntegrationTests;
 /// <para>
 /// These tests exercise the happy path only: the DinD fixture pre-loads
 /// <c>interfold-api:test</c> and <c>scylladb/scylla:2026.1</c> as fixed image IDs, so a
-/// <c>docker compose pull</c> in a network-isolated DinD is a no-op at the digest level.
-/// That's exactly the "no changes" branch we want to pin — the fail branches
-/// (image bump, health check failure, auto-restore recovery) require registry mutation
-/// and are intentionally deferred to a follow-up PR that stands up an in-DinD registry
-/// container.
+/// <c>docker compose pull</c> in a network-isolated DinD against the registry-backed
+/// services (<c>msg-db</c> = TimescaleDB, <c>scylla</c> = ScyllaDB) is a no-op at the
+/// digest level. That's exactly the "no changes" branch we want to pin — the fail
+/// branches (image bump, health check failure, auto-restore recovery) require registry
+/// mutation and are intentionally deferred to a follow-up PR that stands up an in-DinD
+/// registry container.
 /// </para>
 /// <para>
 /// The "no changes" case is still worth wiring end-to-end because it exercises the full
 /// argv/parse pipeline: config load, compose discovery, backup invocation, pull, digest
 /// diff, and the early-exit branch — all against a real running stack, not a mock.
+/// </para>
+/// <para>
+/// Every <c>update-images</c> invocation here scopes to <c>--service msg-db --service
+/// scylla</c> because <c>interfold-api:test</c> is a locally-loaded tag with no
+/// matching registry manifest; a bare <c>docker compose pull</c> would exit non-zero
+/// with <c>"pull access denied for interfold-api"</c> before the phase's digest diff
+/// even ran. Skipping the api service on the pull side loses no coverage of the
+/// pipeline mechanics under test (the "no-op", pre-update backup, and
+/// <c>--skip-pre-update-backup</c> branches are all orthogonal to which services get
+/// pulled). The general "operator uses a locally-built API image" case is a separate
+/// product concern — see the pull-skip discussion in
+/// <see cref="Phases.PublishPhase.StampCassandraPullPolicyNever"/> for the pattern
+/// that would extend it to the api service too.
 /// </para>
 /// </remarks>
 [RequiresDocker]
@@ -69,6 +83,7 @@ public class UpdateImagesPhaseTests(UbuntuDinDFixture dinD)
 
         var update = await dinD.RunBootstrapperAsync(nameof(UpdateWithNoChangedImagesIsNoOp),
             ["update-images", "--config", scratch.ConfigPath, "--output-dir", scratch.OutputDir,
+             "--service", "msg-db", "--service", "scylla",
              "--non-interactive"]);
         await Assert.That(update.ExitCode).IsEqualTo(0).Because($"update-images failed: {update.Stderr}");
 
@@ -108,6 +123,7 @@ public class UpdateImagesPhaseTests(UbuntuDinDFixture dinD)
 
         var update = await dinD.RunBootstrapperAsync(nameof(UpdatePerformsPreUpdateBackup),
             ["update-images", "--config", scratch.ConfigPath, "--output-dir", scratch.OutputDir,
+             "--service", "msg-db", "--service", "scylla",
              "--non-interactive"]);
         await Assert.That(update.ExitCode).IsEqualTo(0).Because($"update-images failed: {update.Stderr}");
 
@@ -138,6 +154,7 @@ public class UpdateImagesPhaseTests(UbuntuDinDFixture dinD)
 
         var update = await dinD.RunBootstrapperAsync(nameof(UpdateWithSkipPreUpdateBackupDoesNotWriteArchives),
             ["update-images", "--config", scratch.ConfigPath, "--output-dir", scratch.OutputDir,
+             "--service", "msg-db", "--service", "scylla",
              "--skip-pre-update-backup", "--non-interactive"]);
         await Assert.That(update.ExitCode).IsEqualTo(0).Because($"update-images failed: {update.Stderr}");
 

@@ -46,16 +46,22 @@ public class MdnsGateTests(UbuntuDinDFixture dinD)
     [Test]
     public async Task NonInteractiveBootstrapStripsUnresolvableLocalHostsAndContinues()
     {
-        // Publish (not full bootstrap) is enough — the mDNS gate runs inside ConfigPhase which
-        // is the first phase both commands execute, and publish avoids the compose-up + healthcheck
-        // overhead that would slow this test down without adding gate coverage.
+        // Must invoke `bootstrap` (not `publish`) — ApplyMdnsGateAsync is deliberately gated to
+        // BootstrapCommand.Bootstrap only (see ConfigPhase.cs's `if (options.Command == BootstrapCommand.Bootstrap)`
+        // guard around the gate call). The `publish` / `up` / `update-images` / etc. paths
+        // load the persisted JSON verbatim and never re-warn about stale .local entries — the
+        // operator re-runs `bootstrap` to pick up the strip. To keep the test fast we pair
+        // `bootstrap` with --skip-prereqs (avoids apt install) and --fault-inject=after-publish
+        // (halts cleanly right after PublishPhase, so certs + compose YAML are produced but
+        // db-init / launch / compose-up never run).
         var scratch = await dinD.CreateScratchAsync(
             nameof(NonInteractiveBootstrapStripsUnresolvableLocalHostsAndContinues),
             MdnsGateConfigPath);
 
         var result = await dinD.RunBootstrapperAsync(
             nameof(NonInteractiveBootstrapStripsUnresolvableLocalHostsAndContinues),
-            ["publish", "--config", scratch.ConfigPath, "--output-dir", scratch.OutputDir, "--non-interactive"]);
+            ["bootstrap", "--config", scratch.ConfigPath, "--output-dir", scratch.OutputDir,
+             "--non-interactive", "--skip-prereqs", "--fault-inject=after-publish"]);
 
         // Exit 0 pins the "bootstrap always continues" contract. A regression that (say) started
         // treating the strip as a fatal error would flip this to non-zero and fail loudly.
